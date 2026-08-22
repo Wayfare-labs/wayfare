@@ -53,9 +53,10 @@ permissions:
   pull-requests: write
   checks: read
 
-concurrency:
-  group: auto-merge-${{ github.event.pull_request.number || github.event.workflow_run.head_sha }}
-  cancel-in-progress: true
+# No concurrency group: the script deduplicates comments via the
+# <!-- auto-merge-gate --> marker, and the workflow_run re-evaluation
+# after CI finishes must not be cancelled by the earlier pull_request_target
+# run — it is the one that sees the final check-runs state.
 
 jobs:
   gate:
