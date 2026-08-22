@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/checks"
 )
 
 // Wire types for a measured corridor. These are the single JSON contract
@@ -84,6 +85,12 @@ type CorridorJSON struct {
 	// Stale describes the stored reading's age, and is present only when
 	// Live is false.
 	Stale *StaleJSON `json:"stale,omitempty"`
+
+	// Findings are check results: facts about the counterparties this
+	// corridor depends on. They qualify the headline and never move it —
+	// Integrity and Verdict above are computed without reference to them,
+	// and nothing here feeds back into either.
+	Findings *checks.FindingsJSON `json:"findings,omitempty"`
 
 	Finding    string     `json:"finding"`
 	Rungs      []RungJSON `json:"rungs"`
@@ -198,4 +205,32 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 		out.Rungs = append(out.Rungs, rj)
 	}
 	return out
+}
+
+// WithFindings attaches check results to a rendered corridor.
+//
+// This is the composition point, and it is deliberately the only one: it takes
+// findings as input and returns a document whose headline fields are copied
+// unchanged from the input. There is no branch here on severity, on failure
+// counts, or on any check's identity.
+//
+// The rule it enforces is that checks qualify the headline and never move it.
+// Integrity, the verdict on every rung, the loss figures and the recommendation
+// are all computed before this function is reachable, from pathfinding and a
+// reference rate. Letting an observation about a third party rewrite any of
+// them would make the headline unfalsifiable — a reader could no longer tell
+// whether a corridor was downgraded because its liquidity moved or because
+// somebody added a check.
+//
+// TestFindingsDoNotMoveTheHeadline attacks this function specifically.
+func WithFindings(c CorridorJSON, f *checks.Findings) CorridorJSON {
+	if f == nil || (len(f.Checks) == 0 && len(f.Metrics) == 0) {
+		// Absent and empty must not look the same. An empty findings block
+		// would read as "checked, nothing found", which is a different
+		// claim from "not checked".
+		return c
+	}
+	j := f.ToJSON()
+	c.Findings = &j
+	return c
 }
