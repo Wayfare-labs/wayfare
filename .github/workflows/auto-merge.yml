@@ -179,7 +179,7 @@ jobs:
           # wait for itself forever — every run would report "1 check still
           # running" and exit, and nothing would ever merge.
           runs=$(gh api --paginate "repos/$REPO/commits/$head_sha/check-runs" \
-                   --jq --arg self "$SELF_CHECK" \
+                   | jq --arg self "$SELF_CHECK" -r \
                    '.check_runs[] | select(.name != $self)
                     | "\(.name)\t\(.status)\t\(.conclusion // "-")"')
 
@@ -228,7 +228,7 @@ jobs:
           # Filter by commit_id so we read the review for *this* commit, not
           # an older one left over from a previous push.
           rabbit_body=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
-            --jq --arg sha "$head_sha" \
+            | jq --arg sha "$head_sha" -r \
             '[.[] | select(.user.login | test("coderabbit"; "i")
                           and .commit_id == $sha)] | last | .body // ""')
 
