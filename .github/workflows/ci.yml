@@ -101,6 +101,15 @@ jobs:
       - name: run tests with no network
         run: |
           set -euo pipefail
+
+          # Ubuntu 24.04 runners restrict unprivileged user namespaces through
+          # AppArmor, so plain `unshare -rn` fails with EPERM on uid_map.
+          # Lifting the restriction is preferable to running the tests under
+          # sudo: as root the Go module and build caches resolve to a
+          # different HOME, the warmed modules are missed, and the download
+          # that follows is the very thing being blocked.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
           unshare -rn bash -c 'ip link set lo up 2>/dev/null; go test -count=1 ./...'
 
   # The image is how the monitor actually runs. Building it only at deploy
