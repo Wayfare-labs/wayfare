@@ -230,7 +230,8 @@ jobs:
           # an older one left over from a previous push.
           rabbit_body=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
             | jq --arg sha "$head_sha" -r \
-            '[.[] | select(.user.login | test("coderabbit"; "i")
+            '[.[] | select((.user | type) == "object"
+                          and .user.login | test("coderabbit"; "i")
                           and .commit_id == $sha)] | last | .body // ""')
 
           if [ -z "$rabbit_body" ]; then
