@@ -28,12 +28,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Wayfare-labs/wayfare/api"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/monitor"
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
+	"github.com/Wayfare-labs/wayfare/server"
 )
 
 func main() {
@@ -125,7 +125,7 @@ func main() {
 	}
 
 	if *serve {
-		srv := &api.Server{Engine: engine, Store: store, Timeout: *timeout}
+		srv := &server.Server{Engine: engine, Store: store, Timeout: *timeout}
 		httpSrv := &http.Server{
 			Addr:              *addr,
 			Handler:           srv.Handler(),

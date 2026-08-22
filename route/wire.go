@@ -7,7 +7,7 @@ import (
 )
 
 // Wire types for a measured corridor. These are the single JSON contract
-// shared by the HTTP API (api.Server) and cmd/ladder's -json mode. A second,
+// shared by the HTTP API (server.Server) and cmd/ladder's -json mode. A second,
 // independently-maintained shape for the same measurement is exactly the
 // kind of drift this project exists to catch, so there is only one.
 //

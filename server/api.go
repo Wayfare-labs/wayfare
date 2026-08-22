@@ -3,7 +3,7 @@
 // The wire shape for a measured corridor lives in package route
 // (route.CorridorJSON / route.ToCorridorJSON) so that this HTTP handler and
 // cmd/ladder's -json mode emit identical JSON from the same conversion code.
-package api
+package server
 
 import (
 	"context"

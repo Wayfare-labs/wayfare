@@ -14,7 +14,7 @@ A monitor that measures only while somebody has a page open is not a monitor.
 Its history would have holes exactly where nobody was looking, which is
 precisely when a corridor breaking is most worth having recorded.
 
-That is why `monitor.Scheduler` imports nothing from `api` and runs with no
+That is why `monitor.Scheduler` imports nothing from `server` and runs with no
 server at all. **The same failure can arrive through infrastructure**, and the
 settings below exist to prevent it.
 

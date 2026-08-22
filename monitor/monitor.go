@@ -7,7 +7,7 @@
 // would have holes exactly where nobody was looking, which is precisely when a
 // corridor breaking is most worth having recorded.
 //
-// So this package imports nothing from api. A Scheduler is constructible and
+// So this package imports nothing from server. A Scheduler is constructible and
 // runnable with no server at all, and wayfared -serve=false does exactly that.
 // The dependency runs one way: the server may read what the scheduler wrote,
 // and the scheduler never needs the server to exist.

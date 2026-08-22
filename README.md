@@ -94,7 +94,7 @@ stablecoin → fiat-token corridor.
                      │                             │
                      ▼                             ▼
         ┌────────────────────────┐   ┌──────────────────────────┐
-        │ monitor.Scheduler      │   │ api.Server               │
+        │ monitor.Scheduler      │   │ server.Server            │
         │   every 6h, headless   │   │   /api/corridor  (live)  │
         └───────────┬────────────┘   │   /  single-file UI      │
                     │                └────────────┬─────────────┘
@@ -109,7 +109,7 @@ stablecoin → fiat-token corridor.
 Two things about this shape are deliberate.
 
 **The scheduler does not depend on the server.** `monitor` imports nothing
-from `api`, and `wayfared -serve=false` runs measurements with no HTTP at all.
+from `server`, and `wayfared -serve=false` runs measurements with no HTTP at all.
 A monitor that only measures while somebody has a page open would leave holes
 in its history exactly where nobody was looking.
 
@@ -237,7 +237,7 @@ Full spec: **[docs/run-store.md](docs/run-store.md)**
 | `runstore` | Hash-chained measurement history |
 | `monitor` | Scheduled measurement, independent of HTTP |
 | `snapshot` | Record and replay upstream responses |
-| `api` | HTTP surface and the embedded single-file UI |
+| `server` | HTTP surface and the embedded single-file UI |
 | `cmd/ladder` | Measurement CLI |
 | `cmd/wayfared` | Server and scheduler |
 
