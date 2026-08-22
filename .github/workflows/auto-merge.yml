@@ -294,7 +294,17 @@ jobs:
           # ---------------------------------------------------------------
           if [ ${#reasons[@]} -eq 0 ]; then
             echo "all gates satisfied; merging"
-            gh pr merge "$PR" --repo "$REPO" --squash --delete-branch
+            # Rebase, not squash: squash is disabled on this repository and
+            # required_linear_history forbids a merge commit, so rebase is the
+            # only method available.
+            #
+            # It is also the better fit here. This project's commit messages
+            # carry the reasoning behind each decision, and squashing a
+            # multi-commit branch concatenates them into one body nobody reads.
+            # Rebase keeps each commit addressable and bisectable, which is the
+            # same property the hash-chained run store exists to give the
+            # measurements.
+            gh pr merge "$PR" --repo "$REPO" --rebase --delete-branch
             # Describe what landed, then say plainly what was and was not
             # verified. A merge notice that only says "approved" invites a
             # reader to assume more was checked than actually was.
