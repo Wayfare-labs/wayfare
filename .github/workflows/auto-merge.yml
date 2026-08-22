@@ -218,17 +218,31 @@ jobs:
           # arrived yet, and the pull_request_review and issue_comment triggers
           # bring us back when it does.
           # ---------------------------------------------------------------
-          rabbit_reviews=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
-            --jq '[.[] | select(.user.login | test("coderabbit"; "i"))] | length')
-          rabbit_comments=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
-            --jq '[.[] | select(.user.login | test("coderabbit"; "i"))] | length')
-          rabbit_total=$(( rabbit_reviews + rabbit_comments ))
+          rabbit_body=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
+            --jq '[.[] | select(.user.login | test("coderabbit"; "i"))] | last | .body // ""')
 
-          echo "coderabbit: $rabbit_reviews review(s), $rabbit_comments comment(s)"
-
-          if [ "$rabbit_total" -eq 0 ]; then
+          if [ -z "$rabbit_body" ]; then
             echo "::notice::no CodeRabbit review yet; will re-evaluate when one arrives"
             exit 0
+          fi
+
+          # CodeRabbit opens its review with "Actionable comments posted: N".
+          # That number is the review verdict: zero means it found nothing it
+          # wants changed. Configured with request_changes_workflow: false it
+          # never blocks a merge itself, so this is the signal that carries
+          # whether the review was actually clean.
+          actionable=$(grep -oiE 'actionable comments posted:[[:space:]]*[0-9]+' <<<"$rabbit_body" \
+            | grep -oE '[0-9]+' | head -1 || true)
+
+          if [ -z "$actionable" ]; then
+            # Format changed, or the review is of a shape we do not recognise.
+            # Hold rather than guess: merging on an unparsed review would be
+            # claiming it passed without having read it.
+            reasons+=("CodeRabbit's review could not be parsed for a verdict, so it is not known to be clean")
+          elif [ "$actionable" -gt 0 ]; then
+            reasons+=("CodeRabbit raised $actionable actionable comment(s)")
+          else
+            echo "coderabbit: review clean (0 actionable comments)"
           fi
 
           # ---------------------------------------------------------------
@@ -319,7 +333,7 @@ jobs:
               echo "### What was verified"
               echo
               echo "- Every check green: $(awk -F'\t' '{print $1}' <<<"$runs" | paste -sd ', ' -)"
-              echo "- CodeRabbit reviewed this pull request"
+              echo "- CodeRabbit reviewed it and raised no actionable comments"
               [ -n "$scope_note" ] && echo "- Scope: $scope_note"
               echo "- No maintainer-owned path touched — nothing here can alter a published figure"
               echo "- No dependency change"
