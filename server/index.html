@@ -186,6 +186,8 @@ function render(d) {
     parts.push(`<div class="panel"><h2>Measurements</h2><div class="scroll">${table(d.rungs)}</div></div>`);
   }
 
+  parts.push(legend());
+
   if (d.findings) parts.push(findings(d.findings));
 
   parts.push(caseStudy(d));
@@ -318,6 +320,20 @@ function findings(f) {
     verdict are computed from pathfinding and the reference rate alone.
     <strong>Undetermined is not a failure</strong> &mdash; an anchor that publishes
     nothing is a different fact from one that publishes something broken.</p>
+  </div>`;
+}
+
+function legend() {
+  return `<div class="panel" style="font-size:.85rem; color:var(--muted)">
+    <h2>Verdict thresholds</h2>
+    <p>Loss is how far the achieved rate falls below the reference mid.</p>
+    <p>
+      <span class="v-good" style="font-weight:600">GOOD</span> ≤ 3% &middot;
+      <span class="v-fair">FAIR</span> ≤ 8% &middot;
+      <span class="v-poor">POOR</span> ≤ 20% &middot;
+      <span class="v-unusable">UNUSABLE</span> &gt; 20%
+    </p>
+    <p>When no size produces a verdict of POOR or better, nothing is recommended.</p>
   </div>`;
 }
 
