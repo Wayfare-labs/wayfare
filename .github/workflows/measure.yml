@@ -1,0 +1,71 @@
+# Measure the corridors on a schedule and commit the result.
+#
+# This is the monitor running continuously without a host. The runner is the
+# clock; wayfared -once performs exactly the sweep a deployed scheduler would,
+# appends to the same hash-chained store, and exits.
+#
+# The history therefore lives in the repository, which is stronger evidence
+# than a hosted instance in one respect: anyone can clone it and run
+# `wayfared -verify-store -data ./data` to check that no past record was
+# edited. Nobody has to trust a server they cannot inspect.
+
+name: measure
+
+on:
+  schedule:
+    # Every six hours. Matches monitor.DefaultInterval — the corridors move on
+    # the scale of days, so a shorter cadence would multiply load on a shared
+    # public service for resolution nobody needs.
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+# One sweep at a time. The store is append-only and chained, so two concurrent
+# runs would race to extend the same chain and one would be rejected on the
+# next open. Queue rather than cancel: a skipped measurement is a gap in the
+# history, which is the thing this workflow exists to prevent.
+concurrency:
+  group: measure
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Measure corridors
+        run: go run ./cmd/wayfared -once -data ./data
+
+      # Before committing, not after. A chain that does not verify must never
+      # reach the repository: appending to a broken one buries the break under
+      # later valid records, and runstore.Open refuses to load it afterwards.
+      - name: Verify the chain
+        run: go run ./cmd/wayfared -verify-store -data ./data
+
+      - name: Commit the measurement
+        run: |
+          if [ -z "$(git status --porcelain data/)" ]; then
+            echo "no change to the store; nothing to commit"
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+
+          summary=$(go run ./cmd/wayfared -verify-store -data ./data | sed 's/^/  /')
+          git commit -m "measure: corridor sweep $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                     -m "$summary"
+
+          # Another sweep may have landed while this one ran. Rebase rather
+          # than merge so the chain stays a straight line.
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

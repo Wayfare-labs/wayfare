@@ -3,6 +3,7 @@
 //	wayfared                          # serve on :8080 and measure every 6h
 //	wayfared -serve=false             # scheduler only, no HTTP
 //	wayfared -schedule=0              # server only, no scheduled measurement
+//	wayfared -once                    # one sweep, record, exit (CI schedules this)
 //	wayfared -verify-store            # walk the hash chains and exit
 //
 // The two halves are independent on purpose. A monitor that only measures
@@ -44,6 +45,7 @@ func main() {
 		schedule = flag.Duration("schedule", monitor.DefaultInterval, "measurement interval; 0 disables the scheduler")
 		serve    = flag.Bool("serve", true, "serve HTTP")
 		verify   = flag.Bool("verify-store", false, "verify every corridor chain and exit")
+		once     = flag.Bool("once", false, "measure every corridor once, record, and exit")
 		logLevel = flag.String("log-level", envOr("WAYFARE_LOG_LEVEL", "info"), "debug, info, warn or error")
 	)
 	flag.Parse()
@@ -70,7 +72,7 @@ func main() {
 		os.Exit(verifyStore(store, logger))
 	}
 
-	if !*serve && *schedule == 0 {
+	if !*once && !*serve && *schedule == 0 {
 		logger.Error("nothing to do: -serve=false with -schedule=0")
 		os.Exit(2)
 	}
@@ -88,6 +90,19 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// One sweep and exit. This is how a scheduled CI job drives the monitor:
+	// the runner is the clock, so the process does not need to be long-lived,
+	// and the chain it appends to is the same one a hosted instance would
+	// write. Nothing about the measurement differs.
+	if *once {
+		sched := &monitor.Scheduler{Engine: engine, Store: store, Logger: logger}
+		if err := sched.RunOnce(ctx); err != nil {
+			logger.Error("sweep failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	var wg sync.WaitGroup
 

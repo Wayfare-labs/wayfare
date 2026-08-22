@@ -20,6 +20,55 @@ settings below exist to prevent it.
 
 ---
 
+## Two ways to run it continuously
+
+**Scheduled CI** (`.github/workflows/measure.yml`) — a workflow measures every
+six hours and commits the hash-chained store back to the repository. No host,
+no bill, no credentials.
+
+**A hosted instance** (the rest of this document) — serves the API and UI at a
+public URL, and measures on its own schedule.
+
+They are not alternatives so much as different products. Pick on what you need:
+
+| | Scheduled CI | Hosted |
+|:---|:---|:---|
+| Measures continuously | yes | yes |
+| History is publicly auditable | **yes — it is in the repo** | only via the running instance |
+| Live `/api/corridor` and UI | no | yes |
+| Cost | none | a few dollars a month |
+| Credentials to manage | none | a Fly account |
+
+The CI path has one genuine advantage over hosting, and it is not cost.
+**Anyone can clone the repository and run `wayfared -verify-store -data ./data`
+themselves.** The chain is the evidence, and it is in their hands rather than
+on a server they have to trust. A hosted instance asks you to believe its
+history; a committed chain lets you check it.
+
+Its limitation is equally real: a scheduled workflow is best-effort. GitHub
+delays or drops cron runs under load, so the cadence is approximate and gaps
+are possible. Every record still carries its own `recorded_at`, so a gap is
+visible rather than silently smoothed over — but do not read the schedule as a
+guarantee.
+
+### Running the CI path
+
+Nothing to configure. The workflow needs `contents: write`, which it declares,
+and runs on the repository's default token.
+
+To measure on demand:
+
+```bash
+gh workflow run measure --repo <owner>/<repo>
+```
+
+The chain is verified **before** anything is committed. A chain that does not
+verify must never reach the repository: appending to a broken one buries the
+break under later valid records, and `runstore.Open` refuses to load it
+afterwards.
+
+---
+
 ## First deploy
 
 ```bash
