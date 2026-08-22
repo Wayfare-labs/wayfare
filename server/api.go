@@ -29,6 +29,17 @@ type Server struct {
 	// measurement is an error, exactly as it was before history existed.
 	Store runstore.Store
 
+	// HistoryFirst serves the most recent stored run instead of measuring,
+	// unless the caller asks for a live reading with ?live=1.
+	//
+	// This is for deployments that cannot hold a request open long enough to
+	// price a twelve-rung ladder — a serverless function, typically. The
+	// honesty properties are unchanged either way: a stored reading is
+	// labelled live:false and carries its age, and with no stored run the
+	// request errors rather than inventing one. What changes is only which
+	// is tried first.
+	HistoryFirst bool
+
 	// Timeout bounds a single corridor measurement. A full ladder is a
 	// dozen round trips to Horizon, so this is generous by HTTP standards.
 	Timeout time.Duration
@@ -93,6 +104,19 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// History-first: answer from the chain unless a live reading was asked
+	// for. The stored document is the same shape, so a client needs no
+	// special casing — see staleJSON.
+	if s.HistoryFirst && r.URL.Query().Get("live") == "" {
+		if stale, ok := s.staleFor(r.Context(), sendAsset.Code, recvAsset.Code,
+			pegBase+"/"+pegQuote); ok {
+			writeJSON(w, http.StatusOK, stale)
+			return
+		}
+		// No history yet. Fall through and measure rather than erroring:
+		// a first deploy with an empty chain should still answer.
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.timeout())
