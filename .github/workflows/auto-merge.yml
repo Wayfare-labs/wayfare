@@ -230,9 +230,9 @@ jobs:
           # an older one left over from a previous push.
           rabbit_body=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
             | jq --arg sha "$head_sha" -r \
-            '[.[] | select((.user | type) == "object"
-                          and .user.login | test("coderabbit"; "i")
-                          and .commit_id == $sha)] | last | .body // ""')
+            '[.[] | select(((.user | type) == "object")
+                          and ((.user.login // "") | test("coderabbit"; "i"))
+                          and (.commit_id == $sha))] | last | .body // ""')
 
           if [ -z "$rabbit_body" ]; then
             echo "::notice::no CodeRabbit review yet; will re-evaluate when one arrives"
