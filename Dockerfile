@@ -26,12 +26,32 @@ FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=build /out/wayfared /wayfared
 
-# The run store lives on a mounted volume. Declared so a container started
-# without one still has somewhere to write rather than failing at open.
-ENV WAYFARE_DATA_DIR=/data
-VOLUME ["/data"]
+# No default data directory, deliberately.
+#
+# Pointing WAYFARE_DATA_DIR at /data here would make the image crash on any
+# host without a disk attached: the store opens by creating the directory, and
+# a read-only filesystem fails that at startup. Left empty, the binary serves
+# the history embedded at build time, which is the correct behaviour for an
+# ephemeral host and the common case for this image.
+#
+# A deployment with a persistent disk sets WAYFARE_DATA_DIR itself and gets a
+# writable store, with no change here.
 
 EXPOSE 8080
 USER nonroot:nonroot
 
 ENTRYPOINT ["/wayfared"]
+
+# Defaults chosen so the image is correct with no arguments, because the
+# platforms that run it are the ones most likely to get arguments wrong.
+#
+#   -addr 0.0.0.0:8080  bind all interfaces; localhost is unreachable from
+#                       outside a container
+#   -schedule=0         do not measure here. A host that sleeps produces a
+#                       history full of holes, so the measure workflow is the
+#                       clock. Drop this on an always-on instance.
+#   -history-first      serve the embedded chain; ?live=1 measures on demand
+#
+# Overridable as usual: `docker run image -verify-store -data /data` replaces
+# these entirely, which is what CI does.
+CMD ["-addr", "0.0.0.0:8080", "-schedule=0", "-history-first"]

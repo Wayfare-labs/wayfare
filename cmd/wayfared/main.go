@@ -56,6 +56,16 @@ func main() {
 	logger := newLogger(*logLevel)
 	slog.SetDefault(logger)
 
+	// Most managed hosts assign a port at runtime and expect the process to
+	// bind whatever they put in $PORT. Honouring it only when -addr was left
+	// at its default keeps an explicit flag authoritative, which matters
+	// because a platform that quietly overrode an operator's choice would be
+	// the harder failure to diagnose.
+	if p := os.Getenv("PORT"); p != "" && *addr == ":8080" {
+		*addr = "0.0.0.0:" + p
+		logger.Info("binding the port assigned by the platform", "port", p)
+	}
+
 	store, err := openStore(*dataDir, logger)
 	if err != nil {
 		// Open verifies every chain, so a broken one surfaces here. Under
