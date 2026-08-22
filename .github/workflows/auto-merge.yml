@@ -225,6 +225,10 @@ jobs:
           # Absent is "wait", not "hold": the review may simply not have
           # arrived yet, and the pull_request_review and issue_comment triggers
           # bring us back when it does.
+          #
+          # CodeRabbit posts a formal review on some PRs and a comment on
+          # others (especially non-Go changes). We try the review first, then
+          # fall back to the comment. Both carry the same verdict text.
           # ---------------------------------------------------------------
           # Filter by commit_id so we read the review for *this* commit, not
           # an older one left over from a previous push.
@@ -234,18 +238,35 @@ jobs:
                           and ((.user.login // "") | test("coderabbit"; "i"))
                           and (.commit_id == $sha))] | last | .body // ""')
 
+          # If no formal review, fall back to the most recent CodeRabbit
+          # comment. CodeRabbit posts a summary comment on every PR; the
+          # verdict text is the same as in a review.
+          if [ -z "$rabbit_body" ]; then
+            rabbit_body=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+              | jq -r '[.[] | select(((.user | type) == "object")
+                            and ((.user.login // "") | test("coderabbit"; "i")))]
+              | last | .body // ""')
+          fi
+
           if [ -z "$rabbit_body" ]; then
             echo "::notice::no CodeRabbit review yet; will re-evaluate when one arrives"
             exit 0
           fi
 
-          # CodeRabbit opens its review with "Actionable comments posted: N".
-          # That number is the review verdict: zero means it found nothing it
+          # CodeRabbit opens its review with "Actionable comments posted: N"
+          # and its summary comment with "No actionable comments were
+          # generated". Both carry the verdict: zero means it found nothing it
           # wants changed. Configured with request_changes_workflow: false it
           # never blocks a merge itself, so this is the signal that carries
           # whether the review was actually clean.
           actionable=$(grep -oiE 'actionable comments posted:[[:space:]]*[0-9]+' <<<"$rabbit_body" \
             | grep -oE '[0-9]+' | head -1 || true)
+
+          # The summary comment uses "No actionable comments" instead of
+          # "Actionable comments posted: 0". Normalise to 0.
+          if [ -z "$actionable" ] && grep -qi 'no actionable comments' <<<"$rabbit_body"; then
+            actionable=0
+          fi
 
           if [ -z "$actionable" ]; then
             # Format changed, or the review is of a shape we do not recognise.
