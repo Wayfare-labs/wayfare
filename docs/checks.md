@@ -1,6 +1,6 @@
 # The check contract
 
-**Status: proposed.** This is the shape contributors will build a few dozen
+**Status: v1, implemented.** This is the shape contributors will build a few dozen
 checks against, so it is written as a contract before any check exists — the
 way [snapshot-format.md](snapshot-format.md) and [run-store.md](run-store.md)
 are contracts. Once checks encode against it, changing it is expensive.
@@ -198,6 +198,25 @@ class as the verdict thresholds, and it needs its components to exist first.
 
 ---
 
+## Whose failure is it? — learned from implementing
+
+A transport error means different things depending on **who published the
+address**, and the three reference checks split on exactly this:
+
+| Situation | Result | Why |
+|:---|:---|:---|
+| Horizon is unreachable while reading issuer flags | **undetermined** | Our own data source failed. That says nothing about the issuer, and failing the check would blame a subject for our network |
+| A declared `WEB_AUTH_ENDPOINT` does not respond | **determined failure** | The anchor published this address. That it does not answer is a fact about the anchor |
+
+The rule: **a transport failure reaching an endpoint the subject declared is a
+finding about the subject. A transport failure reaching a source we chose is
+not.**
+
+Getting this backwards is easy and quiet. Treating every network error as
+undetermined would make a dead declared endpoint invisible — the exact case the
+SEP-10 check exists to catch. Treating every network error as a failure would
+blame issuers for Horizon outages.
+
 ## Constraints
 
 - **A failing check never crashes a measurement.** Errors are results:
@@ -220,7 +239,7 @@ rather than one shape of it:
 
 | Check | Kind | Why this one |
 |:---|:---|:---|
-| `toml.home-domain-round-trip` | pure parse, `CostFree` | Derivable from a `stellar.toml` already fetched. Tests that a check needing no I/O is not awkward to write |
+| `toml.anchor-asset-iso4217` | pure parse, `CostFree` | Derivable from a `stellar.toml` already fetched. Has a real failing case in published data: KESC declares `anchor_asset="KESC"`, naming its own token rather than the shilling |
 | `sep10.endpoint-responds` | network probe, `CostOneRequest` | Tests the RoundTripper seam and the declared-versus-actual distinction |
 | `issuer.auth-flags` | on-chain, `CostOneRequest` | `AUTH_REQUIRED`, `AUTH_REVOCABLE`, clawback — these determine whether a payment can be blocked or reversed, which is the most consequential thing a check can report |
 
