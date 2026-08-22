@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Wayfare-labs/wayfare"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/monitor"
 	"github.com/Wayfare-labs/wayfare/refrate"
@@ -38,14 +39,16 @@ import (
 
 func main() {
 	var (
-		addr     = flag.String("addr", ":8080", "listen address")
-		horizon  = flag.String("horizon", "", "Horizon base URL (default: mainnet)")
-		timeout  = flag.Duration("timeout", 90*time.Second, "per-corridor measurement timeout")
-		dataDir  = flag.String("data", envOr("WAYFARE_DATA_DIR", ""), "directory for the run store; empty disables history")
-		schedule = flag.Duration("schedule", monitor.DefaultInterval, "measurement interval; 0 disables the scheduler")
-		serve    = flag.Bool("serve", true, "serve HTTP")
-		verify   = flag.Bool("verify-store", false, "verify every corridor chain and exit")
-		once     = flag.Bool("once", false, "measure every corridor once, record, and exit")
+		addr      = flag.String("addr", ":8080", "listen address")
+		horizon   = flag.String("horizon", "", "Horizon base URL (default: mainnet)")
+		timeout   = flag.Duration("timeout", 90*time.Second, "per-corridor measurement timeout")
+		dataDir   = flag.String("data", envOr("WAYFARE_DATA_DIR", ""), "directory for the run store; empty disables history")
+		schedule  = flag.Duration("schedule", monitor.DefaultInterval, "measurement interval; 0 disables the scheduler")
+		serve     = flag.Bool("serve", true, "serve HTTP")
+		verify    = flag.Bool("verify-store", false, "verify every corridor chain and exit")
+		once      = flag.Bool("once", false, "measure every corridor once, record, and exit")
+		histFirst = flag.Bool("history-first", false,
+			"serve the stored run instead of measuring, unless a request asks for ?live=1")
 		logLevel = flag.String("log-level", envOr("WAYFARE_LOG_LEVEL", "info"), "debug, info, warn or error")
 	)
 	flag.Parse()
@@ -125,7 +128,12 @@ func main() {
 	}
 
 	if *serve {
-		srv := &server.Server{Engine: engine, Store: store, Timeout: *timeout}
+		srv := &server.Server{
+			Engine:       engine,
+			Store:        store,
+			Timeout:      *timeout,
+			HistoryFirst: *histFirst,
+		}
 		httpSrv := &http.Server{
 			Addr:              *addr,
 			Handler:           srv.Handler(),
@@ -168,8 +176,27 @@ func main() {
 // mount, and running anyway would record nothing while appearing healthy.
 func openStore(dir string, logger *slog.Logger) (runstore.Store, error) {
 	if dir == "" {
-		logger.Warn("no data directory configured; measurements will not be recorded")
-		return runstore.Nop{}, nil
+		// No writable directory, but the binary carries the published
+		// history and verified it at build time. Serving it is better than
+		// serving nothing: the image is built to be self-contained, and a
+		// deployment on an ephemeral filesystem is the normal case for it.
+		//
+		// This store is read-only, so a measurement taken here is reported
+		// and then discarded rather than silently appearing to be recorded.
+		embedded, err := runstore.OpenFS(wayfare.History, "data")
+		if err != nil {
+			logger.Warn("embedded history unavailable; measurements will not be recorded",
+				"error", err)
+			return runstore.Nop{}, nil
+		}
+		corridors, _ := embedded.Corridors(context.Background())
+		if len(corridors) == 0 {
+			logger.Warn("embedded history is empty; measurements will not be recorded")
+			return runstore.Nop{}, nil
+		}
+		logger.Info("serving embedded history (read-only)",
+			"corridors", len(corridors))
+		return embedded, nil
 	}
 	store, err := runstore.Open(dir)
 	if err != nil {

@@ -1,0 +1,39 @@
+# Render deployment for the Wayfare corridor monitor.
+#
+# Render runs the Dockerfile that CI already builds and verifies, so the
+# deployed artifact is the same binary as everywhere else. That is the reason
+# this is a better target than a serverless host: "it builds locally" and "it
+# builds in CI" both mean something about what is actually running.
+#
+# # What this instance does and does not do
+#
+# It SERVES. It does not measure on a schedule, and it does not write history.
+#
+# A free instance sleeps after fifteen minutes without traffic, and free plans
+# have no persistent disk and no cron. A scheduler running here would produce a
+# history full of holes that correlate exactly with nobody watching — which is
+# the failure monitor/ was separated from server/ to prevent, arriving through
+# infrastructure instead of code. So -schedule=0, and the measure workflow
+# stays the clock.
+#
+# The history it serves is embedded in the binary at build time and verified at
+# startup, which is what makes an ephemeral filesystem a non-issue.
+#
+# On a paid instance both limits disappear: add a disk, drop -schedule=0, and
+# the scheduler runs here with no code change.
+
+services:
+  - type: web
+    name: wayfare
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+
+    healthCheckPath: /healthz
+
+    dockerCommand: /wayfared -addr 0.0.0.0:8080 -schedule=0 -history-first
+
+    envVars:
+      - key: WAYFARE_LOG_LEVEL
+        value: info
