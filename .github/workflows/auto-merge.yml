@@ -71,6 +71,7 @@ jobs:
           ISSUE_PR: ${{ github.event.issue.number }}
           IS_PR: ${{ github.event.issue.pull_request.url }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          SELF_CHECK: check the merge gates
         run: |
           set -euo pipefail
 
@@ -173,8 +174,14 @@ jobs:
           # Neutral and skipped count as success; queued or in-progress means
           # we are simply not ready to decide yet.
           # ---------------------------------------------------------------
+          # This job's own check run is excluded. It is necessarily
+          # in_progress while it evaluates, so counting it would make the gate
+          # wait for itself forever — every run would report "1 check still
+          # running" and exit, and nothing would ever merge.
           runs=$(gh api --paginate "repos/$REPO/commits/$head_sha/check-runs" \
-                   --jq '.check_runs[] | "\(.name)\t\(.status)\t\(.conclusion // "-")"')
+                   --jq --arg self "$SELF_CHECK" \
+                   '.check_runs[] | select(.name != $self)
+                    | "\(.name)\t\(.status)\t\(.conclusion // "-")"')
 
           # No check runs reported yet is "too early to decide", not "nothing
           # to wait for". Treating an empty list as all-clear would merge a PR
@@ -218,8 +225,12 @@ jobs:
           # arrived yet, and the pull_request_review and issue_comment triggers
           # bring us back when it does.
           # ---------------------------------------------------------------
+          # Filter by commit_id so we read the review for *this* commit, not
+          # an older one left over from a previous push.
           rabbit_body=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
-            --jq '[.[] | select(.user.login | test("coderabbit"; "i"))] | last | .body // ""')
+            --jq --arg sha "$head_sha" \
+            '[.[] | select(.user.login | test("coderabbit"; "i")
+                          and .commit_id == $sha)] | last | .body // ""')
 
           if [ -z "$rabbit_body" ]; then
             echo "::notice::no CodeRabbit review yet; will re-evaluate when one arrives"
