@@ -60,3 +60,46 @@ jobs:
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.1.6
+
+  # Every test is meant to run from recorded bytes. snapshot.Replayer returns
+  # ErrNotRecorded rather than falling through to the network, so a test that
+  # reaches out fails instead of passing intermittently — but that only holds
+  # while nothing bypasses the replayer. This proves it structurally rather
+  # than by convention.
+  offline-tests:
+    name: tests run with no network
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      # Warm the module cache while the network still works, so a failure
+      # below is unambiguously a test reaching the network rather than the
+      # toolchain failing to fetch dependencies.
+      - name: warm the module cache
+        run: go build ./...
+
+      - name: run tests with egress blocked
+        run: |
+          set -euo pipefail
+          sudo iptables -A OUTPUT -p tcp --dport 443 -j REJECT
+          sudo iptables -A OUTPUT -p tcp --dport 80 -j REJECT
+          go test ./...
+
+  # The image is how the monitor actually runs. Building it only at deploy
+  # time means it breaks at the least convenient moment.
+  docker:
+    name: container image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build image
+        run: docker build -t wayfare:ci .
+
+      - name: binary runs in the image
+        run: docker run --rm wayfare:ci -verify-store -data /tmp/empty

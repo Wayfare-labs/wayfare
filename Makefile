@@ -2,7 +2,7 @@ GO      ?= go
 BIN     := bin
 PKGS    := ./...
 
-.PHONY: all build test race lint fmt vet cover run clean help
+.PHONY: all build test race lint fmt vet cover run clean help offline-test docker-build
 
 all: fmt vet test build ## Format, vet, test and build
 
@@ -28,6 +28,19 @@ lint: ## Run golangci-lint (install: https://golangci-lint.run/welcome/install/)
 		exit 1; \
 	}
 	golangci-lint run
+
+offline-test: ## Run the test suite with no external network (mirrors the CI job)
+	@# A user namespace with no route out, but loopback up. Loopback matters:
+	@# the tests stand up httptest servers on 127.0.0.1, and tearing it down
+	@# would fail them for a reason that has nothing to do with egress.
+	@#
+	@# CI blocks ports 80 and 443 with iptables instead, which leaves the
+	@# ephemeral ports httptest uses untouched and reaches the same end.
+	$(GO) build $(PKGS)
+	unshare -rn bash -c 'ip link set lo up 2>/dev/null; $(GO) test -count=1 $(PKGS)'
+
+docker-build: ## Build the container image (mirrors the CI job)
+	docker build -t wayfare:local .
 
 cover: ## Run tests with coverage and write coverage.html
 	$(GO) test -coverprofile=coverage.out $(PKGS)
