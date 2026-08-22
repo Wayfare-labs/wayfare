@@ -1,0 +1,45 @@
+# CodeRabbit review configuration.
+#
+# Chill rather than assertive, and it never requests changes. That is not a
+# preference about tone — it is about who holds the merge decision. The
+# auto-merge gate in .github/workflows/auto-merge.yml decides mechanically
+# whether a PR is safe to land; a bot that could request changes would add a
+# second, softer gate whose failures are advisory but whose blocking is real.
+#
+# CodeRabbit's job here is to give a contributor a useful read before a human
+# looks. It is not a merge gate.
+language: en-US
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+
+  high_level_summary: true
+  review_status: true
+  poem: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+
+  path_instructions:
+    - path: "**/*.go"
+      instructions: >
+        This project's value is arithmetic correctness about money. Flag any
+        float64 in a pricing, rate or amount path — decimal.Decimal is required
+        everywhere money is handled. Flag any value that defaults to zero when
+        data is unavailable: unknown must be reported as unknown, never
+        defaulted, guessed or averaged away. Flag any figure presented to a
+        user that did not come from a live source or a recorded snapshot.
+    - path: "**/*_test.go"
+      instructions: >
+        Tests must run from testdata/snapshots via snapshot.Replayer, never the
+        live network. Flag any test that constructs a fixture from the package's
+        own wire structs rather than recorded bytes — such a fixture can only
+        prove the parser agrees with itself. Flag happy-path-only tests: a test
+        that cannot fail proves nothing.
+    - path: "docs/**"
+      instructions: >
+        Docs here are contracts. Flag any claim about a capability, figure or
+        deployment that is not currently true, and any measurement quoted
+        without its date and source.

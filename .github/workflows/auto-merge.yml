@@ -1,0 +1,194 @@
+# Merge a pull request only when every gate is mechanically satisfied.
+#
+# The premise is that this repository's value is arithmetic correctness about
+# money, and a plausible-looking PR that passes CI can still quietly change a
+# published number. So auto-merge is deliberately narrow: it lands the boring,
+# provably-safe changes, and routes everything else to a human.
+#
+# The gates are all objective. Nothing here forms a judgement about whether the
+# change is *good* — that is the maintainer's job, and anything this workflow
+# cannot verify mechanically is handed over rather than guessed at.
+#
+# SECURITY NOTE: this runs on pull_request_target, which carries a write token
+# and runs the BASE branch's workflow definition. It therefore never checks out
+# or executes pull request code — it only inspects metadata through the API.
+# Adding a checkout of the PR head to this file would turn it into a
+# code-execution vector for anyone who can open a PR.
+
+name: auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled, edited]
+  check_suite:
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number || github.event.check_suite.id }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: check the merge gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: evaluate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          # ---------------------------------------------------------------
+          # Resolve which PR we are looking at. check_suite events carry the
+          # PR indirectly, so fall back to querying by head SHA.
+          # ---------------------------------------------------------------
+          PR="${EVENT_PR:-}"
+          if [ -z "$PR" ] || [ "$PR" = "null" ]; then
+            PR=$(gh api "repos/$REPO/commits/${{ github.event.check_suite.head_sha }}/pulls" \
+                   --jq '.[0].number // empty' 2>/dev/null || true)
+          fi
+          if [ -z "$PR" ]; then
+            echo "no pull request associated with this event; nothing to do"
+            exit 0
+          fi
+          echo "evaluating PR #$PR"
+
+          meta=$(gh api "repos/$REPO/pulls/$PR")
+          draft=$(jq -r '.draft' <<<"$meta")
+          state=$(jq -r '.state' <<<"$meta")
+          author=$(jq -r '.user.login' <<<"$meta")
+          body=$(jq -r '.body // ""' <<<"$meta")
+          head_sha=$(jq -r '.head.sha' <<<"$meta")
+
+          if [ "$state" != "open" ] || [ "$draft" = "true" ]; then
+            echo "PR is $state, draft=$draft; nothing to do"
+            exit 0
+          fi
+
+          # Collected reasons the PR is not auto-mergeable. Empty means merge.
+          reasons=()
+
+          # ---------------------------------------------------------------
+          # GATE 1 — maintainer-owned paths.
+          #
+          # An error in any of these invalidates published measurements rather
+          # than breaking a feature, so they are never merged unreviewed. This
+          # is about blast radius, not gatekeeping: individual checks and
+          # metrics are exactly the contribution the project wants.
+          # ---------------------------------------------------------------
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')
+          echo "changed files:"; echo "$files" | sed 's/^/  /'
+
+          protected='^(route/route\.go|route/ladder\.go|dex/|sep38/|runstore/runstore\.go|checks/engine\.go|\.github/workflows/|data/)'
+          hits=$(echo "$files" | grep -E "$protected" || true)
+          if [ -n "$hits" ]; then
+            joined=$(echo "$hits" | paste -sd ', ' -)
+            reasons+=("touches maintainer-owned paths: $joined")
+          fi
+
+          # ---------------------------------------------------------------
+          # GATE 2 — no new dependencies.
+          #
+          # The project has two, both pinned. A third is a decision, not a
+          # detail, and the acceptance criteria forbid adding one.
+          # ---------------------------------------------------------------
+          if echo "$files" | grep -qE '^go\.(mod|sum)$'; then
+            reasons+=("modifies go.mod or go.sum — new dependencies need review")
+          fi
+
+          # ---------------------------------------------------------------
+          # GATE 3 — the contributor checklist is actually ticked.
+          #
+          # The PR template asks the contributor to confirm the acceptance
+          # criteria before review. An unticked box is not a failure, it is a
+          # request for a human to look.
+          # ---------------------------------------------------------------
+          if [ -z "$body" ]; then
+            reasons+=("has an empty description — the PR template checklist is unanswered")
+          else
+            unticked=$(grep -c '^\s*-\s*\[ \]' <<<"$body" || true)
+            ticked=$(grep -c '^\s*-\s*\[[xX]\]' <<<"$body" || true)
+            if [ "$ticked" -eq 0 ]; then
+              reasons+=("no checklist items are ticked — the acceptance criteria are unconfirmed")
+            elif [ "$unticked" -gt 0 ]; then
+              reasons+=("$unticked checklist item(s) left unticked")
+            fi
+          fi
+
+          # ---------------------------------------------------------------
+          # GATE 4 — every check has finished and succeeded.
+          #
+          # Neutral and skipped count as success; queued or in-progress means
+          # we are simply not ready to decide yet.
+          # ---------------------------------------------------------------
+          runs=$(gh api --paginate "repos/$REPO/commits/$head_sha/check-runs" \
+                   --jq '.check_runs[] | "\(.name)\t\(.status)\t\(.conclusion // "-")"')
+
+          # No check runs reported yet is "too early to decide", not "nothing
+          # to wait for". Treating an empty list as all-clear would merge a PR
+          # before CI had started on it.
+          if [ -z "$runs" ]; then
+            echo "::notice::no check runs reported yet; will re-evaluate when they appear"
+            exit 0
+          fi
+          echo "check runs:"; echo "$runs" | sed 's/^/  /'
+
+          pending=$(awk -F'\t' '$2!="completed"' <<<"$runs" | wc -l)
+          failed=$(awk -F'\t' '$2=="completed" && $3!="success" && $3!="neutral" && $3!="skipped"' <<<"$runs" || true)
+
+          if [ "$pending" -gt 0 ]; then
+            echo "::notice::$pending check(s) still running; will re-evaluate when they finish"
+            exit 0
+          fi
+          if [ -n "$failed" ]; then
+            names=$(awk -F'\t' '{print $1" ("$3")"}' <<<"$failed" | paste -sd ', ' -)
+            reasons+=("checks are not green: $names")
+          fi
+
+          # ---------------------------------------------------------------
+          # GATE 5 — a maintainer has not already asked for changes.
+          # ---------------------------------------------------------------
+          changes_requested=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
+            --jq '[.[] | select(.state=="CHANGES_REQUESTED")] | length')
+          if [ "$changes_requested" -gt 0 ]; then
+            reasons+=("a reviewer has requested changes")
+          fi
+
+          # ---------------------------------------------------------------
+          # Decide.
+          # ---------------------------------------------------------------
+          if [ ${#reasons[@]} -eq 0 ]; then
+            echo "all gates satisfied; merging"
+            gh pr merge "$PR" --repo "$REPO" --squash --delete-branch
+            gh pr comment "$PR" --repo "$REPO" --body "Merged automatically: no maintainer-owned path touched, no dependency change, checklist confirmed, all checks green. Auto-merge only lands what it can verify mechanically — it forms no judgement about whether a change is right, which is safe here because nothing it touched can alter a published figure."
+            exit 0
+          fi
+
+          # Not mergeable. Label for review and say exactly why, once.
+          printf 'not auto-merging:\n'
+          printf '  - %s\n' "${reasons[@]}"
+
+          gh pr edit "$PR" --repo "$REPO" --add-label "needs-maintainer-review" || true
+
+          marker="<!-- auto-merge-gate -->"
+          existing=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq '[.[] | select(.body | contains("<!-- auto-merge-gate -->"))] | length')
+
+          if [ "$existing" -eq 0 ]; then
+            {
+              echo "$marker"
+              echo "**Held for maintainer review.** This is not a rejection — auto-merge only lands changes it can verify mechanically, and this one needs a human to look at:"
+              echo
+              printf -- '- %s\n' "${reasons[@]}"
+              echo
+              echo "Nothing further is needed from you unless a point above is something you can fix (an unticked checklist item, or a failing check). @${author}, thanks for the PR."
+            } | gh pr comment "$PR" --repo "$REPO" --body-file -
+          fi
