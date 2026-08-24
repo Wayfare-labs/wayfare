@@ -107,6 +107,29 @@ func TestDisagreementScoresConservatively(t *testing.T) {
 	}
 }
 
+// TestCrossNeverAveragesProviderMids pins provider attribution in both bands.
+func TestCrossNeverAveragesProviderMids(t *testing.T) {
+	t.Run("agreement uses primary", func(t *testing.T) {
+		r := rateOf(t, crossOf("1000", "1010"))
+		if r.Agreement != AgreementAgree {
+			t.Fatalf("Agreement = %s, want AGREE", r.Agreement)
+		}
+		if !r.Mid.Equal(decimal.RequireFromString("1000")) || r.Source != "primary" {
+			t.Errorf("result = %s from %s, want primary mid 1000 rather than an average", r.Mid, r.Source)
+		}
+	})
+
+	t.Run("disagreement uses conservative provider", func(t *testing.T) {
+		r := rateOf(t, crossOf("1000", "1050"))
+		if r.Agreement != AgreementDisagree {
+			t.Fatalf("Agreement = %s, want DISAGREE", r.Agreement)
+		}
+		if !r.Mid.Equal(decimal.RequireFromString("1050")) || r.Source != "secondary" {
+			t.Errorf("result = %s from %s, want secondary mid 1050 rather than an average", r.Mid, r.Source)
+		}
+	})
+}
+
 // TestMalfunctionBandRefusesToScore is the band added because conservative
 // scoring has a failure mode: a broken feed always wins it.
 //
