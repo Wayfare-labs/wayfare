@@ -12,6 +12,43 @@ issued, no KYC, no keys.
 
 ---
 
+## Try Wayfare
+
+| | |
+|:---|:---|
+| **Live** | **https://wayfare-cdb9.onrender.com/** |
+| **Source** | https://github.com/Wayfare-labs/wayfare |
+| **Health** | https://wayfare-cdb9.onrender.com/healthz |
+
+That is a real deployed instance of the code in this repository — the same
+container image CI builds and verifies. Three things about it are worth knowing
+before you read a figure off it:
+
+**It serves recorded measurements, not live ones.** The instance runs with
+`-schedule=0 -history-first`, so a request answers from the hash-chained history
+embedded in the binary at build time. Every response carries `live: false` and a
+`stale` block with the reading's age. Ask for a live measurement explicitly with
+`?live=1` — that prices a full ladder against Horizon and takes tens of seconds.
+
+**Freshness depends on the measure workflow, not on the deployment.** New
+records are written by `.github/workflows/measure.yml` and committed to `data/`.
+That workflow is currently unable to push ([#63](https://github.com/Wayfare-labs/wayfare/issues/63)),
+so the served history is older than its six-hour cadence implies. Read
+`stale.age_human` rather than assuming.
+
+**It sleeps.** The free instance sleeps after fifteen minutes without traffic,
+so the first request after a quiet period may take several seconds or fail
+outright before the instance wakes. Retry once.
+
+It runs the current system, and only the current system. Nothing in the v2–v6
+roadmap below is deployed there.
+
+To reproduce it locally, `go run ./cmd/wayfared` and open
+`http://127.0.0.1:8080/` — that measures live against mainnet rather than
+serving history. Deployment details: **[docs/deployment.md](docs/deployment.md)**.
+
+---
+
 ## Why a monitor and not a router
 
 The project began as a router — find the cheapest path, rank the results. Live
@@ -92,9 +129,12 @@ LAYER 1 — OBSERVABLE FACTS                                        [live]
         ▼
 
 LAYER 2 — DETERMINISTIC CALCULATION                               [live]
-  effective rate, loss vs mid, integrity state, spread, depth,
+  effective rate, loss vs mid, integrity state,
   divergence between reference providers
   packages: route, refrate, checks
+
+  spread, depth, price impact, concentration, cost decomposition
+                                             [implemented, not yet reachable]
 
         │
         ▼
@@ -345,27 +385,51 @@ nothing is ever synthesised to fill the gap.
 
 Capability-based, no dates. The version names track the layer model above.
 
-**v1 — Quote engine.** *Done.* Ladder sweep, verdicts, integrity taxonomy,
-cross-checked reference rates, recorded snapshots, pinned arithmetic.
+Where the project is now, and what moves it:
 
-**v2 — Corridor intelligence.** *In progress.* Counterparty checks and market
-quality metrics — spread, observed versus executable depth, price impact,
-liquidity concentration — each reported separately rather than blended into a
-score. Layers 1 and 2.
+```
+  CURRENT STATE          v1 done, hardening
+        ↓                contract fidelity, boundary correctness, coverage
+  V1 HARDENING
+        ↓                metrics reachable, recorded, and rendered
+  V2 COMPLETION
+        ↓                statistics over a history that records measurements
+  V3 PREPARATION
+```
 
-**v3 — Quantitative execution risk.** Effective transfer cost decomposed into
+A capability is marked **DONE** only where the repository supports it end to
+end — implemented, reachable from the API, and tested. Merged-but-unreachable
+code is marked as what it is.
+
+**v1 — Quote engine.** **DONE**, in hardening. Ladder sweep, verdicts, integrity
+taxonomy, cross-checked reference rates, recorded snapshots, pinned arithmetic.
+
+**v2 — Corridor intelligence.** **IN PROGRESS**, and further from done than the
+merge log suggests. Counterparty checks are **DONE**: three run per corridor and
+appear in every live response. Market-quality metrics — spread, observed versus
+executable depth, price impact, liquidity concentration — are **implemented but
+not reachable**: `checks.Runner` has no way to run a `Metric`, so none of them
+has ever appeared in a response, been recorded, or been rendered. Effective
+transfer cost (`route.Decompose`) is in the same state — merged, with no caller.
+Wiring that path is [#91](https://github.com/Wayfare-labs/wayfare/issues/91) and
+it blocks the rest of v2. Layers 1 and 2.
+
+**v3 — Quantitative execution risk.** **BACKLOG.** Effective transfer cost decomposed into
 FX loss, fees, slippage and expected failure cost, each computed and reported
 separately. A route with a worse headline rate can be cheaper all-in, and
 showing that is the point. Expected failure cost stays **explicitly unknown**
 until failure history exists.
 
-**v4 — ML-assisted prediction.** Layer 3. Failure probability, expected
-slippage, anomaly detection, route deterioration. Blocked on months of history:
-failure prediction needs observed failures, anomaly detection needs a baseline
-of normal, and `runstore` has been collecting for days. Training on that and
-publishing the output would break the project's central rule.
+**v4 — ML-assisted prediction.** **NOT YET.** Layer 3. Failure probability,
+expected slippage, anomaly detection, route deterioration. Blocked twice over.
+First on months of history: failure prediction needs observed failures, anomaly
+detection needs a baseline of normal, and `runstore` has been collecting for
+days. Second, and less obviously, on *what* is being collected — a run record
+stores headline figures and no metrics, so today's history could not support
+this analysis however long it ran. Training on that and publishing the output
+would break the project's central rule.
 
-**v5 — Verifiable attestations.** Layer 4. Signed or on-chain corridor
+**v5 — Verifiable attestations.** **NOT YET.** Layer 4. Signed or on-chain corridor
 integrity a contract could read. Deferred because it introduces a
 publisher-trust assumption the project does not currently have: today every
 figure is independently reproducible from recorded bytes, and an oracle asks
@@ -380,8 +444,23 @@ with its own evidence, not an extension of this one.
 
 ## Where to start
 
-Issues are labelled by area and by difficulty. Start with
+Issues are labelled by area and by difficulty, and assigned to a roadmap
+milestone so you can see which part of the project your work moves. Start with
 [`good first issue`](https://github.com/Wayfare-labs/wayfare/labels/good%20first%20issue).
+
+The full contributor backlog — every gap found in the current tree, with the
+file or response that evidences it — is **[docs/backlog.md](docs/backlog.md)**.
+
+**Milestones:**
+
+- [V1 — Hardening](https://github.com/Wayfare-labs/wayfare/milestone/1) —
+  contract fidelity, boundary correctness, coverage, deployment reliability
+- [V2 — Execution economics](https://github.com/Wayfare-labs/wayfare/milestone/2) —
+  making the market-quality measurements reachable, recorded and rendered
+- [V3 — Market structure & history](https://github.com/Wayfare-labs/wayfare/milestone/3) —
+  statistics over recorded history, once records carry measurements
+- [V4+ — Future (not active)](https://github.com/Wayfare-labs/wayfare/milestone/4) —
+  research spikes only; nothing here is an implementation task
 
 **Labelling convention:**
 
@@ -438,7 +517,8 @@ These keep the project shippable and legal for a small team:
 | SEP-38 fee identity | Verified against SEP-0038 spec text, pinned in golden files |
 | USDC issuer is Circle's | **Not yet verified** against circle.com stellar.toml |
 | Live SEP-38 round-trip | **Not done** — no anchor on this corridor publishes a quote server |
-| Continuous public deployment | **Not yet running** |
+| Public deployment | Running at [wayfare-cdb9.onrender.com](https://wayfare-cdb9.onrender.com/); `/healthz` verified 200 on 2026-08-24 |
+| Continuous measurement | **Not currently running** — the measure workflow cannot push ([#63](https://github.com/Wayfare-labs/wayfare/issues/63)), so the served history is frozen at its last successful sweep |
 
 Unverified claims are marked in the code at the point they are used.
 
