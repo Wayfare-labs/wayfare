@@ -45,6 +45,7 @@ func (r *Runner) Default() []Check {
 		AnchorAssetISO4217{},
 		SEP10EndpointResponds{HTTPClient: r.client()},
 		IssuerAuthFlags{HorizonURL: r.HorizonURL, HTTPClient: r.client()},
+		HomeDomainRoundTrip{HorizonURL: r.HorizonURL, HTTPClient: r.client(), Resolver: r.resolver()},
 	}
 }
 
