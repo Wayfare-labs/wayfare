@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -29,6 +30,10 @@ const DefaultExchangeRateAPI = "https://open.er-api.com/v6/latest/"
 type ExchangeRateAPI struct {
 	BaseURL string       // defaults to DefaultExchangeRateAPI
 	Client  *http.Client // defaults to a client with a 10s timeout
+
+	// Logger is the structured logger for upstream call logging.
+	// Nil means slog.Default().
+	Logger *slog.Logger
 }
 
 // Name identifies the provider.
@@ -64,8 +69,17 @@ type erAPIResponse struct {
 	ErrorType          string                     `json:"error-type"`
 }
 
+func (e *ExchangeRateAPI) log() *slog.Logger {
+	if e.Logger != nil {
+		return e.Logger
+	}
+	return slog.Default()
+}
+
 // Rate implements Provider.
 func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, error) {
+	started := time.Now()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.baseURL()+base, nil)
 	if err != nil {
 		return Rate{}, fmt.Errorf("refrate: building request: %w", err)
@@ -74,14 +88,28 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 
 	resp, err := e.client().Do(req)
 	if err != nil {
+		e.log().Error("exchangerate-api request failed",
+			"service", e.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String(),
+			"error", err)
 		return Rate{}, fmt.Errorf("refrate: fetching %s rates: %w", base, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
+		e.log().Warn("exchangerate-api rate limited",
+			"service", e.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, &ErrRateLimited{Source: e.Name(), RetryAfter: retryAfter(resp)}
 	}
 	if resp.StatusCode != http.StatusOK {
+		e.log().Error("exchangerate-api returned error",
+			"service", e.Name(),
+			"pair", base+"/"+quote,
+			"status", resp.StatusCode,
+			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, fmt.Errorf("refrate: %s returned HTTP %d", e.Name(), resp.StatusCode)
 	}
 
@@ -112,6 +140,11 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 	if body.TimeLastUpdateUnix > 0 {
 		asOf = time.Unix(body.TimeLastUpdateUnix, 0)
 	}
+
+	e.log().Debug("exchangerate-api rate fetched",
+		"service", e.Name(),
+		"pair", base+"/"+quote,
+		"duration", time.Since(started).Round(time.Millisecond).String())
 
 	return Rate{
 		Base:   base,

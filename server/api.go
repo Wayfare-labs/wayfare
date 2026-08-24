@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -50,6 +51,17 @@ type Server struct {
 	// Timeout bounds a single corridor measurement. A full ladder is a
 	// dozen round trips to Horizon, so this is generous by HTTP standards.
 	Timeout time.Duration
+
+	// Logger is the structured logger for request and upstream logging.
+	// Nil means slog.Default().
+	Logger *slog.Logger
+}
+
+func (s *Server) log() *slog.Logger {
+	if s.Logger != nil {
+		return s.Logger
+	}
+	return slog.Default()
 }
 
 func (s *Server) timeout() time.Duration {
@@ -72,6 +84,8 @@ func (s *Server) Handler() http.Handler {
 // handlers -------------------------------------------------------------------
 
 func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "only GET is supported")
 		return
@@ -172,6 +186,20 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, out)
+
+	// Request log: corridor, sizes, duration, and status. Upstream attribution
+	// happens inside the engine; this boundary log attributes the overall
+	// measurement to the HTTP request that asked for it.
+	requestLive := r.URL.Query().Get("live") != ""
+	s.log().Info("corridor measured",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"from", from,
+		"to", to,
+		"sizes", r.URL.Query().Get("sizes"),
+		"live", requestLive,
+		"integrity", out.Integrity,
+		"duration", time.Since(started).Round(time.Millisecond).String())
 }
 
 func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -40,6 +41,10 @@ const DefaultCurrencyAPI = "https://latest.currency-api.pages.dev/v1/currencies/
 type CurrencyAPI struct {
 	BaseURL string       // defaults to DefaultCurrencyAPI
 	Client  *http.Client // defaults to a client with a 10s timeout
+
+	// Logger is the structured logger for upstream call logging.
+	// Nil means slog.Default().
+	Logger *slog.Logger
 }
 
 // Name identifies the provider.
@@ -59,6 +64,13 @@ func (c *CurrencyAPI) baseURL() string {
 	return DefaultCurrencyAPI
 }
 
+func (c *CurrencyAPI) log() *slog.Logger {
+	if c.Logger != nil {
+		return c.Logger
+	}
+	return slog.Default()
+}
+
 // Rate implements Provider.
 //
 // The payload is shaped {"date": "...", "<base>": {"<quote>": <number>, ...}}
@@ -68,6 +80,8 @@ func (c *CurrencyAPI) baseURL() string {
 // rounding bug this project refuses everywhere else, and it is worst here,
 // where the number is the denominator of every loss percentage.
 func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error) {
+	started := time.Now()
+
 	base, quote = strings.ToUpper(base), strings.ToUpper(quote)
 	lowBase, lowQuote := strings.ToLower(base), strings.ToLower(quote)
 
@@ -80,14 +94,28 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 
 	resp, err := c.client().Do(req)
 	if err != nil {
+		c.log().Error("currency-api request failed",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String(),
+			"error", err)
 		return Rate{}, fmt.Errorf("refrate: fetching %s rates: %w", base, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
+		c.log().Warn("currency-api rate limited",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, &ErrRateLimited{Source: c.Name(), RetryAfter: retryAfter(resp)}
 	}
 	if resp.StatusCode != http.StatusOK {
+		c.log().Error("currency-api returned error",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"status", resp.StatusCode,
+			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, fmt.Errorf("refrate: %s returned HTTP %d", c.Name(), resp.StatusCode)
 	}
 
@@ -129,6 +157,11 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 			}
 		}
 	}
+
+	c.log().Debug("currency-api rate fetched",
+		"service", c.Name(),
+		"pair", base+"/"+quote,
+		"duration", time.Since(started).Round(time.Millisecond).String())
 
 	return Rate{
 		Base:   base,
