@@ -7,15 +7,23 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Wayfare-labs/wayfare/checks"
 )
 
 func ctx() context.Context { return context.Background() }
 
 // fixedRecord is a record with every field pinned to a constant, used by the
 // hash-pinning test. Nothing here may change without a Version bump.
+//
+// It is a Version 2 record and deliberately carries a checks block and a
+// metrics block: those fields are part of the pinned preimage, so a change to
+// either their shape or their order is caught exactly like a change to any
+// other field. (How a Version 1 record still verifies under Version 2 is
+// exercised separately — see TestVersion1RecordStillVerifies.)
 func fixedRecord() *Record {
 	return &Record{
-		Version:    1,
+		Version:    2,
 		Seq:        1,
 		RecordedAt: time.Date(2026, 8, 21, 22, 30, 40, 0, time.UTC),
 		Corridor:   "USDC-NGNC",
@@ -39,6 +47,44 @@ func fixedRecord() *Record {
 			ReceiveAmount: "102.78", EffectiveRate: "1027.84",
 			LossPct: "24.65", Verdict: "UNUSABLE", Path: "USDC -> NGNC",
 		}},
+		Checks: []checks.CheckJSON{
+			{
+				ID: "anchor-asset-iso4217", Scope: "anchor", Subject: "ngnc.online",
+				Severity: "notice", Determined: true, Passed: true,
+				Summary: "anchor_asset names the NGNC shilling",
+				Evidence: []checks.EvidenceJSON{{
+					Source:     "ngnc.online/.well-known/stellar.toml",
+					Observed:   "ANCHOR_ASSET=" + "//SHILLING-NGNC:GBUUDI3TKOD3FONOFLGT4WTW6GVJ5YOBH4KUSYY3YOKCH3Z7VHQPB6XG",
+					ObservedAt: "2026-08-21T22:28:00Z",
+				}},
+				ObservedAt: "2026-08-21T22:28:00Z",
+			},
+			{
+				ID: "sep10.endpoint-responds", Scope: "anchor", Subject: "ngnc.online",
+				Severity: "warning", Determined: false, Passed: false,
+				Reason:  "no sep10 web-auth endpoint declared",
+				Summary: "could not determine: no sep10 web-auth endpoint declared",
+				Evidence: []checks.EvidenceJSON{{
+					Source:     "ngnc.online/.well-known/stellar.toml",
+					Observed:   "NO WEB_AUTH_ENDPOINT",
+					ObservedAt: "2026-08-21T22:28:00Z",
+				}},
+				ObservedAt: "2026-08-21T22:28:00Z",
+			},
+		},
+		Metrics: []checks.MetricJSON{
+			{
+				ID: "spread.bid-ask", Scope: "asset", Subject: "USDC",
+				Determined: true, Value: "0.0004", Unit: "ratio",
+				Summary: "bid-ask spread on the USDC/NGNC book",
+				Evidence: []checks.EvidenceJSON{{
+					Source:     "https://horizon.stellar.org/order_book",
+					Observed:   "bid=1350.1000 ask=1350.6400",
+					ObservedAt: "2026-08-21T22:28:00Z",
+				}},
+				ObservedAt: "2026-08-21T22:28:00Z",
+			},
+		},
 		PrevHash: GenesisPrevHash,
 	}
 }
@@ -54,9 +100,12 @@ func fixedRecord() *Record {
 // is a Version bump and a migration, and updating the constant below is the
 // last step of that work rather than the fix for a red build.
 func TestRecordHashIsPinned(t *testing.T) {
-	// Established 2026-08-21 when the format was defined, by computing it
-	// from fixedRecord above. Every value in that fixture is part of it.
-	const want = "sha256:1872c8f154123508633ecb2ffdc0c6918539b744f2d1be0c7edc61173d4edca2"
+	// Re-established 2026-08-25 when Version 2 added the checks and metrics
+	// blocks, by computing it from fixedRecord above. Every value in that
+	// fixture is part of it, including the checks block and the metrics
+	// block: they are fields like any other, and a change to their shape or
+	// order must fail here rather than pass review.
+	const want = "sha256:ebc429fff786de9cb43abbc16b6859efa62a6be06ca25692dc91c233d05e5fb0"
 
 	got, err := fixedRecord().ComputeHash()
 	if err != nil {
@@ -69,6 +118,107 @@ func TestRecordHashIsPinned(t *testing.T) {
 			"previously stored chain now fails verification against this build.\n"+
 			"That is a Version bump plus a migration, not a constant to update.",
 			got, want)
+	}
+}
+
+// TestVersion1RecordStillVerifies is the migration's proof.
+//
+// A Version 1 record — no checks block, no metrics block — must load and
+// verify under this (Version 2) build, because history is evidence and a
+// schema change must not invalidate it. This works because the Version 2
+// fields are omitempty and declared after every Version 1 field, so a record
+// without findings encodes to byte-for-byte the same JSON — and therefore the
+// same hash — it did under the old struct. The hash pinned here is exactly the
+// one the original TestRecordHashIsPinned froze when the format was Version 1,
+// and it must never change.
+func TestVersion1RecordStillVerifies(t *testing.T) {
+	const legacyV1Hash = "sha256:1872c8f154123508633ecb2ffdc0c6918539b744f2d1be0c7edc61173d4edca2"
+
+	r := fixedRecord()
+	// Shape it back into the Version 1 record the legacy constant was
+	// computed from: version 1 and no findings.
+	r.Version = 1
+	r.Checks = nil
+	r.Metrics = nil
+
+	if h, err := r.ComputeHash(); err != nil {
+		t.Fatal(err)
+	} else if h != legacyV1Hash {
+		t.Errorf("Version 1 record hash = %s, want %s; a stored Version 1 "+
+			"chain would no longer verify against this build", h, legacyV1Hash)
+	}
+
+	// And the full write/open/verify path: a chain whose records were
+	// written as Version 1 must load and verify, and new appends continue
+	// it as Version 2.
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1 := fixedRecord()
+	v1.Version = 1
+	v1.Checks = nil
+	v1.Metrics = nil
+	if err := s.Append(ctx(), v1); err != nil {
+		t.Fatalf("append v1-shaped record: %v", err)
+	}
+	if v1.Version != 2 {
+		t.Errorf("Append rewrote a v1-shaped record to version %d; a rewriter must "+
+			"not relabel legacy records", v1.Version)
+	}
+	if err := s.Verify(ctx(), "USDC-NGNC"); err != nil {
+		t.Errorf("chain with a freshly-written v1-shaped record: %v", err)
+	}
+}
+
+// TestVersion1ChainOnDiskStillLoads proves the on-disk path, not just the
+// in-memory one: a real Version 1 line as produced by the old build must load
+// and verify unchanged.
+func TestVersion1ChainOnDiskStillLoads(t *testing.T) {
+	dir := t.TempDir()
+	// First record exactly as Version 1 wrote it (the legacy pinned hash).
+	line := `{"version":1,"seq":1,"recorded_at":"2026-08-21T22:30:40Z","corridor":"USDC-NGNC",` +
+		`"integrity":"DIRECT","depends_on":[],"reference":{"mid":"1350.2568",` +
+		`"source":"currency-api","as_of":"2026-08-21T00:00:00Z",` +
+		`"scored_against":"currency-api"},"floor_loss_pct":"25.02",` +
+		`"floor_size":"0.1","worst_loss_pct":"97.68","worst_size":"5000",` +
+		`"recommended":null,"finding":"No usable size.","rungs":[{"send_amount":"0.1",` +
+		`"priced":true,"integrity":"DIRECT","receive_amount":"102.78",` +
+		`"effective_rate":"1027.84","loss_pct":"24.65","verdict":"UNUSABLE",` +
+		`"path":"USDC -> NGNC"}],"prev_hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000",` +
+		`"hash":"sha256:1872c8f154123508633ecb2ffdc0c6918539b744f2d1be0c7edc61173d4edca2"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "USDC-NGNC"+FileExt), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open with a mixed/legacy chain: %v", err)
+	}
+	if err := s.Verify(ctx(), "USDC-NGNC"); err != nil {
+		t.Errorf("Verify on a Version 1 chain: %v", err)
+	}
+	latest, err := s.Latest(ctx(), "USDC-NGNC")
+	if err != nil || latest == nil {
+		t.Fatalf("Latest on a Version 1 chain = %v, %v", latest, err)
+	}
+	if latest.Version != 1 {
+		t.Errorf("loaded record version = %d, want 1 (kept as written)", latest.Version)
+	}
+
+	// Appending a Version 2 record to that Version 1 chain must produce a
+	// single verifying chain covering both versions.
+	v2 := fixedRecord()
+	if err := s.Append(ctx(), v2); err != nil {
+		t.Fatalf("append v2 to v1 chain: %v", err)
+	}
+	if v2.Seq != 2 || v2.PrevHash != latest.Hash {
+		t.Errorf("appended v2 seq %d prev %s, want seq 2 chained to the v1 tip %s",
+			v2.Seq, short(v2.PrevHash), short(latest.Hash))
+	}
+	if err := s.Verify(ctx(), "USDC-NGNC"); err != nil {
+		t.Errorf("mixed v1+v2 chain failed to verify: %v", err)
 	}
 }
 

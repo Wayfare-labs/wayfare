@@ -36,13 +36,22 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/Wayfare-labs/wayfare/checks"
 )
 
 // Version is the record schema version.
 //
 // It is part of the hashed preimage, so a bump invalidates existing chains by
 // construction. See the preimage rules on Record.
-const Version = 1
+// Version is the record schema version.
+//
+// It is part of the hashed preimage, so a bump invalidates existing chains by
+// construction — unless the new fields are added with omitempty, in which case
+// a Version 1 record (whose new blocks are empty) still encodes to exactly the
+// bytes that were hashed when it was written, and still verifies. See the
+// preimage rules on Record and the migration note in docs/run-store.md.
+const Version = 2
 
 // GenesisPrevHash is the prev_hash of the first record in a chain.
 const GenesisPrevHash = "sha256:" + "0000000000000000000000000000000000000000000000000000000000000000"
@@ -123,6 +132,22 @@ type Record struct {
 
 	Finding string `json:"finding"`
 	Rungs   []Rung `json:"rungs"`
+
+	// Checks and Metrics are the findings taken with this measurement:
+	// facts about the counterparties a corridor depends on, and measured
+	// quantities. They ride on the wire as checks.FindingsJSON and are
+	// stored word-for-word so a history-served reading shows the same
+	// findings the live one did — the stale path has nowhere else to get
+	// them. Absent when no checks ran: a Version 1 record has neither.
+	//
+	// These two fields are declared with omitempty and sit AFTER every
+	// Version 1 field. A record with no findings therefore encodes to
+	// byte-for-byte the same JSON — same field order, same contents — as it
+	// did before they existed, so a Version 1 chain's hashes are
+	// unchanged and still verify under this (Version 2) build. See
+	// docs/run-store.md for the migration.
+	Checks  []checks.CheckJSON  `json:"checks,omitempty"`
+	Metrics []checks.MetricJSON `json:"metrics,omitempty"`
 
 	PrevHash string `json:"prev_hash"`
 	Hash     string `json:"hash"`

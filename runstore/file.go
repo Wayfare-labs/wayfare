@@ -104,7 +104,7 @@ func (s *FileStore) readAll(corridor string) ([]*Record, error) {
 		if err := json.Unmarshal([]byte(raw), &r); err != nil {
 			return nil, fmt.Errorf("runstore: %s line %d: %w", corridor, line, err)
 		}
-		if r.Version != Version {
+		if r.Version != 1 && r.Version != Version {
 			return nil, fmt.Errorf(
 				"runstore: %s line %d has record version %d, this build understands %d; "+
 					"refusing to guess at a schema it does not know",

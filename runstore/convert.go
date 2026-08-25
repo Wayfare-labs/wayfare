@@ -50,6 +50,15 @@ func FromCorridorJSON(c route.CorridorJSON) *Record {
 		Rungs:           make([]Rung, 0, len(c.Rungs)),
 	}
 
+	// Findings are carried into storage word-for-word, so a history-served
+	// reading shows exactly the checks and metrics the live one did. Absent
+	// (nil) when no checks ran — the wire shape's `findings` block is
+	// itself omitempty, mirroring that absence here.
+	if c.Findings != nil {
+		r.Checks = c.Findings.Checks
+		r.Metrics = c.Findings.Metrics
+	}
+
 	for _, d := range c.DependsOn {
 		r.DependsOn = append(r.DependsOn, d.Code)
 	}

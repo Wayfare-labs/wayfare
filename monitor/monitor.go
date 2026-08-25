@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
 )
@@ -69,6 +70,12 @@ type Scheduler struct {
 	Engine    *route.Engine
 	Store     runstore.Store
 	Corridors []Corridor
+
+	// Checks runs counterparty checks alongside each measurement, exactly
+	// as the HTTP server does, so a scheduled history records the same
+	// findings a live response serves. Nil disables checks, and stored
+	// records then carry none.
+	Checks *checks.Runner
 
 	// Interval is the gap between sweeps. Zero means DefaultInterval.
 	Interval time.Duration
@@ -199,7 +206,17 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 	}
 
 	pair := c.ReferenceBase + "/" + c.ReferenceQuote
-	record := runstore.FromCorridorJSON(route.ToCorridorJSON(result, pair))
+
+	// The scheduled depth of the measurement mirrors the server: checks may
+	// run after the ladder and can never change it, and the findings they
+	// produce ride into storage with the record so a history read matches a
+	// live read. With no checks configured, this is a no-op and the record
+	// carries none — the same "not checked" the server serves.
+	live := route.ToCorridorJSON(result, pair)
+	if s.Checks != nil {
+		live = route.WithFindings(live, s.Checks.ForAsset(ctx, c.Receive))
+	}
+	record := runstore.FromCorridorJSON(live)
 	record.RecordedAt = started
 
 	// Carry the second provider's mid and the divergence, so a later reader

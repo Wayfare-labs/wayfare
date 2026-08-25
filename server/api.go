@@ -390,7 +390,86 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 			Warnings:      []string{},
 		}
 	}
+
+	// Findings are served back from storage, so a history-served corridor
+	// shows the same counterparty facts the live one did. Absent when the
+	// record carried none — a Version 1 record, or a live measurement taken
+	// without a checks runner — which is the honest "not checked".
+	if f := storedFindingsJSON(rec); f != nil {
+		out.Findings = f
+	}
 	return out
+}
+
+// storedFindingsJSON rebuilds the wire findings block from a stored record,
+// or returns nil when the record carried no checks or metrics.
+//
+// The record stores the per-item CheckJSON/MetricJSON arrays; the summary
+// counts and worst severity that appear on a live findings block are derived
+// from those and must be recomputed here so a stale response matches the live
+// shape field-for-field. Absence (no stored findings at all) stays absent —
+// "not checked" must not read back as "checked, nothing found".
+func storedFindingsJSON(rec *runstore.Record) *checks.FindingsJSON {
+	if len(rec.Checks) == 0 && len(rec.Metrics) == 0 {
+		return nil
+	}
+	f := &checks.FindingsJSON{
+		Checks:  rec.Checks,
+		Metrics: rec.Metrics,
+	}
+	worstRank, haveWorst := -1, false
+	for _, c := range rec.Checks {
+		switch {
+		case !c.Determined:
+			f.Undetermined++
+		case c.Passed:
+			f.Passed++
+		default:
+			f.Failed++
+		}
+		if c.Determined && !c.Passed {
+			if rank := severityRank(c.Severity); !haveWorst || rank > worstRank {
+				worstRank, haveWorst = rank, true
+			}
+		}
+	}
+	if haveWorst {
+		f.WorstSeverity = severityName(worstRank)
+	}
+	return f
+}
+
+// severityRank maps a severity string to its ordering, lowest first.
+// Unknown severities sort below everything and never become WorstSeverity
+// unless nothing higher is present.
+func severityRank(s string) int {
+	switch s {
+	case "critical":
+		return 4
+	case "warning":
+		return 3
+	case "notice":
+		return 2
+	case "info":
+		return 1
+	default:
+		return -1
+	}
+}
+
+func severityName(rank int) string {
+	switch rank {
+	case 4:
+		return "critical"
+	case 3:
+		return "warning"
+	case 2:
+		return "notice"
+	case 1:
+		return "info"
+	default:
+		return ""
+	}
 }
 
 // assetFromCode splits a stored corridor key like "USDC-NGNC".

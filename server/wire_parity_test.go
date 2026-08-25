@@ -32,6 +32,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
@@ -260,6 +261,125 @@ func TestLiveAndStaleAgreeOnFieldSet(t *testing.T) {
 				"emitted it too", k)
 		}
 	}
+}
+
+// TestStaleServesStoredFindings covers the reason issue #93 exists: findings
+// taken with a measurement must survive into storage and come back on the
+// stale path, so a history-served corridor shows the same counterparty facts
+// the live one did.
+func TestStaleServesStoredFindings(t *testing.T) {
+	lr := wellPopulatedLadderResult()
+	pair := "USD/NGN"
+
+	live := route.ToCorridorJSON(lr, pair)
+	// Attach findings the way a live measurement with a checks runner does.
+	live = route.WithFindings(live, findingsFixture())
+	if live.Findings == nil {
+		t.Fatal("test setup: WithFindings dropped the findings block")
+	}
+
+	rec := runstore.FromCorridorJSON(live)
+	if len(rec.Checks) == 0 && len(rec.Metrics) == 0 {
+		t.Fatal("FromCorridorJSON did not carry the findings into the record")
+	}
+
+	stale := staleJSON(rec, pair, time.Now().UTC())
+
+	if stale.Findings == nil {
+		t.Fatal("staleJSON did not serve the stored findings")
+	}
+	if len(stale.Findings.Checks) != len(live.Findings.Checks) {
+		t.Errorf("stale findings checks = %d, want %d",
+			len(stale.Findings.Checks), len(live.Findings.Checks))
+	}
+	if len(stale.Findings.Metrics) != len(live.Findings.Metrics) {
+		t.Errorf("stale findings metrics = %d, want %d",
+			len(stale.Findings.Metrics), len(live.Findings.Metrics))
+	}
+
+	// Tri-state and reasons must survive word-for-word, including the
+	// undetermined case — an unknown result read as absent or as failed
+	// would recreate the collapse this contract exists to prevent.
+	for i := range live.Findings.Checks {
+		w, g := live.Findings.Checks[i], stale.Findings.Checks[i]
+		if w.Determined != g.Determined || w.Reason != g.Reason || w.Summary != g.Summary {
+			t.Errorf("stale check %d differs: live (determined=%v reason=%q summary=%q), "+
+				"stale (determined=%v reason=%q summary=%q)",
+				i, w.Determined, w.Reason, w.Summary, g.Determined, g.Reason, g.Summary)
+		}
+	}
+	for i := range live.Findings.Metrics {
+		w, g := live.Findings.Metrics[i], stale.Findings.Metrics[i]
+		if w.Determined != g.Determined || w.Value != g.Value || w.Unit != g.Unit {
+			t.Errorf("stale metric %d differs: live (determined=%v value=%q unit=%q), "+
+				"stale (determined=%v value=%q unit=%q)",
+				i, w.Determined, w.Value, w.Unit, g.Determined, g.Value, g.Unit)
+		}
+	}
+
+	// The summary counts and worst severity derived on the stale path must
+	// match the live block's, so a client renders the same summary.
+	if stale.Findings.Passed != live.Findings.Passed ||
+		stale.Findings.Failed != live.Findings.Failed ||
+		stale.Findings.Undetermined != live.Findings.Undetermined {
+		t.Errorf("stale counts (p/f/u)=%d/%d/%d, live = %d/%d/%d",
+			stale.Findings.Passed, stale.Findings.Failed, stale.Findings.Undetermined,
+			live.Findings.Passed, live.Findings.Failed, live.Findings.Undetermined)
+	}
+	if stale.Findings.WorstSeverity != live.Findings.WorstSeverity {
+		t.Errorf("stale worst severity = %q, live = %q",
+			stale.Findings.WorstSeverity, live.Findings.WorstSeverity)
+	}
+}
+
+// findingsFixture returns a findings set spanning all three check states and
+// a determined + undetermined metric, so the round trip exercises every shape
+// the wire can carry.
+func findingsFixture() *checks.Findings {
+	f := &checks.Findings{}
+	f.Add(checkResult("anchor-asset-iso4217", checks.SeverityNotice, true, true,
+		"anchor_asset names the shilling", "ngnc.online/.well-known/stellar.toml"))
+	f.Add(checkResult("sep10.endpoint-responds", checks.SeverityWarning, false, true,
+		"declared web_auth endpoint answered 200", "https://ngnc.online/.well-known/stellar.toml/web"))
+	f.Add(checks.Undetermined(
+		checks.Descriptor{ID: "home_domain.round-trip", Scope: checks.ScopeAnchor,
+			Severity: checks.SeverityInfo, Title: "home_domain round-trips",
+			CanDetermine: "to the same toml", CannotDetermine: "when the domain differs"},
+		checks.Subject{Domain: "ngnc.online"},
+		"no issuer-issued home_domain recorded"))
+
+	f.AddMetric(checks.MetricResult{
+		Observation: checks.Observation{
+			ID: "spread.bid-ask", Scope: checks.ScopeAsset,
+			At: time.Now().UTC(), Determined: true,
+			Evidence: []checks.Evidence{{Source: "https://horizon.stellar.org/order_book", Observed: "0.0004"}},
+		},
+		Value: decimal.RequireFromString("0.0004"), Unit: checks.UnitRatio,
+		Summary: "bid-ask spread on the USDC/NGNC book",
+	})
+	f.AddMetric(checks.MetricResult{
+		Observation: checks.Observation{
+			ID: "depth.observed-executable", Scope: checks.ScopeAsset,
+			At: time.Now().UTC(), Determined: false, Reason: "no executable side at 5000 USDC",
+		},
+		Unit: checks.UnitAmount, Summary: "could not determine: no executable side at 5000 USDC",
+	})
+	return f
+}
+
+func checkResult(id string, sev checks.Severity, passed, determined bool, summary, source string) checks.CheckResult {
+	r := checks.CheckResult{
+		Observation: checks.Observation{
+			ID: id, Scope: checks.ScopeAnchor, Subject: "ngnc.online",
+			At: time.Now().UTC(), Determined: determined,
+			Evidence: []checks.Evidence{{Source: source, Observed: "observed"}},
+		},
+		Passed: passed, Severity: sev, Summary: summary,
+	}
+	if !determined {
+		r.Reason = "could not determine from available data"
+	}
+	return r
 }
 
 // TestLiveAndStaleAgreeOnReferenceCrossCheckValues goes one step further than
