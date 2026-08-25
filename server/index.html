@@ -199,26 +199,39 @@ function render(d) {
   parts.push(`<div class="panel">
     <span class="badge ${badgeClass(d.integrity)}">${esc(d.integrity)}</span>
     <p class="finding">${esc(d.finding)}</p>
-    ${recommendationBlock(d)}
+    ${d.scored ? recommendationBlock(d) : unscoredBlock(d)}
     <p class="meta">Reference ${esc(d.reference_pair)} mid
       <strong>${esc(d.reference_mid)}</strong> via ${esc(d.reference_source)} ·
       measured ${esc(d.measured_at)}</p>
   </div>`);
 
   const priced = d.rungs.filter(r => r.priced);
-  if (priced.length) {
+  if (d.scored && priced.length) {
     parts.push(`<div class="panel"><h2>Loss against mid, by size</h2>${curve(priced)}</div>`);
-    parts.push(`<div class="panel"><h2>Measurements</h2><div class="scroll">${table(d.rungs)}</div></div>`);
-  } else {
-    parts.push(`<div class="panel"><h2>Measurements</h2><div class="scroll">${table(d.rungs)}</div></div>`);
   }
 
-  parts.push(legend());
+  parts.push(`<div class="panel"><h2>Measurements</h2><div class="scroll">${table(d.rungs, d.scored)}</div></div>`);
+
+  if (d.scored) parts.push(legend());
 
   if (d.findings) parts.push(findings(d.findings));
 
   parts.push(caseStudy(d));
   $('out').innerHTML = parts.join('');
+}
+
+function unscoredBlock(d) {
+  const primary = `${esc(d.reference_mid)} (${esc(d.reference_source)})`;
+  let secondary = '';
+  if (d.reference_secondary_mid) {
+    secondary = ` and ${esc(d.reference_secondary_mid)} (${esc(d.reference_secondary_source)})`;
+  }
+  const divergence = d.reference_divergence_pct
+    ? ` — ${esc(d.reference_divergence_pct)}% apart` : '';
+  return `<div class="rec-none">No verdict can be issued. The two reference providers
+    disagreed: ${primary}${secondary}${divergence}. Per the scoring contract,
+    no loss figure or recommendation is derived from a benchmark the engine
+    could not trust.</div>`;
 }
 
 // The recommendation block is the one place the tool could mislead, so it
@@ -278,30 +291,54 @@ function curve(rungs) {
   </svg>`;
 }
 
-function table(rungs) {
+function table(rungs, scored) {
   const rows = rungs.map(r => {
     if (!r.priced) {
       const why = r.error ? esc(r.error)
         : r.integrity === 'NO-MARKET' ? 'no path exists at this size'
         : 'not priced';
+      if (scored) {
+        return `<tr><td class="num">${esc(r.send_amount)}</td>
+          <td colspan="4" class="err">${why}</td>
+          <td>${esc(r.integrity)}</td></tr>`;
+      }
       return `<tr><td class="num">${esc(r.send_amount)}</td>
-        <td colspan="4" class="err">${why}</td>
+        <td colspan="2" class="err">${why}</td>
         <td>${esc(r.integrity)}</td></tr>`;
     }
     const q = r.quote;
+    if (scored) {
+      return `<tr>
+        <td class="num">${esc(r.send_amount)}</td>
+        <td class="num">${esc(q.receive_amount)}</td>
+        <td class="num">${esc(q.effective_rate)}</td>
+        <td class="num ${verdictClass(q.verdict)}">${esc(q.loss_pct)}%</td>
+        <td class="${verdictClass(q.verdict)}">${esc(q.verdict)}</td>
+        <td>${esc(q.description)}</td>
+      </tr>`;
+    }
+    // When not scored, show structural facts only: send, receive, rate, path.
+    // Loss and verdict are omitted — they are derived from a benchmark the
+    // engine refused to stand behind.
     return `<tr>
       <td class="num">${esc(r.send_amount)}</td>
       <td class="num">${esc(q.receive_amount)}</td>
       <td class="num">${esc(q.effective_rate)}</td>
-      <td class="num ${verdictClass(q.verdict)}">${esc(q.loss_pct)}%</td>
-      <td class="${verdictClass(q.verdict)}">${esc(q.verdict)}</td>
       <td>${esc(q.description)}</td>
     </tr>`;
   }).join('');
 
+  if (scored) {
+    return `<table>
+      <thead><tr>
+        <th>Send</th><th>Receive</th><th>Rate</th><th>Loss</th><th>Verdict</th><th>Path</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
   return `<table>
     <thead><tr>
-      <th>Send</th><th>Receive</th><th>Rate</th><th>Loss</th><th>Verdict</th><th>Path</th>
+      <th>Send</th><th>Receive</th><th>Rate</th><th>Path</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;

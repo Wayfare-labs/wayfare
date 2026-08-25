@@ -286,6 +286,78 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+// TestUIScoredTrueRendersVerdicts checks that when scored is true (the normal
+// path through NewStatic), the UI source contains the code to render verdicts,
+// loss curve, and recommendation block.
+func TestUIScoredTrueRendersVerdicts(t *testing.T) {
+	raw, err := uiFS.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+
+	for _, want := range []string{
+		"recommendationBlock(d)",
+		"curve(priced)",
+		"verdictClass(q.verdict)",
+		"loss_pct",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("UI missing %q; scored=true rendering would be incomplete", want)
+		}
+	}
+}
+
+// TestUIScoredFalseSuppressesVerdicts checks that the UI has all the code
+// paths needed to suppress verdicts, loss curve, and recommendation when
+// scored is false. It also checks that the unscoredBlock function exists and
+// shows both provider mids and the divergence percentage.
+func TestUIScoredFalseSuppressesVerdicts(t *testing.T) {
+	raw, err := uiFS.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+
+	// The unscored block function must exist and show both mids.
+	for _, want := range []string{
+		"unscoredBlock(d)",
+		"reference_secondary_mid",
+		"reference_divergence_pct",
+		"No verdict can be issued",
+		"The two reference providers",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("UI missing %q; scored=false path would be incomplete", want)
+		}
+	}
+
+	// The render function must branch on d.scored for the recommendation.
+	if !strings.Contains(page, "d.scored ? recommendationBlock(d) : unscoredBlock(d)") {
+		t.Error("render() does not branch on d.scored; verdicts would render when unscored")
+	}
+
+	// The curve must be gated on d.scored.
+	if !strings.Contains(page, "d.scored && priced.length") {
+		t.Error("loss curve is not gated on d.scored; it would render when unscored")
+	}
+
+	// The table function must accept a scored parameter.
+	if !strings.Contains(page, "function table(rungs, scored)") {
+		t.Error("table() does not accept a scored parameter")
+	}
+
+	// The table must suppress loss and verdict columns when unscored.
+	if !strings.Contains(page, "Loss and verdict are omitted") {
+		t.Error("table() does not document the unscored column suppression")
+	}
+
+	// The verdict threshold legend must be gated on d.scored.
+	if !strings.Contains(page, "if (d.scored) parts.push(legend())") {
+		t.Error("legend is not gated on d.scored; it would render when unscored")
+	}
+}
+
 // dexClientAt builds a dex client pointed at a test Horizon.
 func dexClientAt(url string) *dex.Client {
 	return &dex.Client{HorizonURL: url}
