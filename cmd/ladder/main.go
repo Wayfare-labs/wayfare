@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -326,14 +327,26 @@ func requireCleanTree(allowDirty bool) (dirty bool, err error) {
 // printJSON writes the shared wire shape and nothing else to stdout, so
 // `go run ./cmd/ladder -to GHSC -json | jq` works.
 func printJSON(result *route.LadderResult, pair string) {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(route.ToCorridorJSON(result, pair)); err != nil {
+	if err := encodeCorridorJSON(os.Stdout, result, pair); err != nil {
 		// Encoding a well-formed struct to stdout should not fail; if it
 		// does, say so on stderr rather than emitting partial JSON.
 		fmt.Fprintf(os.Stderr, "encoding result: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// encodeCorridorJSON is the entire body of -json mode: it delegates to
+// route.ToCorridorJSON and encodes exactly what that returns, nothing more.
+//
+// Split out from printJSON so a test can capture the bytes without a pipe on
+// os.Stdout. That is also the point of the split: this function has no room
+// left in it to grow a second, independently-maintained JSON shape, which is
+// the drift TestLadderJSONMatchesToCorridorJSON exists to catch — see
+// docs/backlog.md #5 / GitHub issue #113.
+func encodeCorridorJSON(w io.Writer, result *route.LadderResult, pair string) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(route.ToCorridorJSON(result, pair))
 }
 
 // printTable renders the human-readable text table. This is the default

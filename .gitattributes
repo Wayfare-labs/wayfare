@@ -1,0 +1,10 @@
+# Snapshot fixture bodies are raw upstream bytes, verified on load by
+# body_sha256 in each snapshot's manifest.json — see docs/snapshot-format.md,
+# rule 3. A checkout that rewrites line endings changes those bytes, which
+# fails the hash check and makes every check/route test depending on a
+# snapshot fail — not because the fixture is wrong, but because the checkout
+# edited it. This is exactly the class of drift core.autocrlf introduces on
+# a default Windows git config, so these paths are pinned to the bytes as
+# committed regardless of any user or global autocrlf setting.
+checks/testdata/snapshots/**   -text
+testdata/snapshots/**          -text

@@ -43,6 +43,15 @@ func (m PriceImpactMetric) Run(ctx context.Context, s Subject) MetricResult {
 	if s.Send.Code == "" || s.Receive.Code == "" {
 		return MetricUndetermined(d, s, "no send or receive asset specified")
 	}
+	// Price impact is measured via pathfinding, the same as depth.executable:
+	// a DERIVATIVE corridor prices end to end through its intermediate asset
+	// without substitution, so only NO-MARKET is a structural dead end here.
+	if s.Integrity == integrityNoMarket {
+		return MetricUndetermined(d, s, fmt.Sprintf(
+			"%s has no path to %s by construction (NO-MARKET): there is no rate at "+
+				"any size for a probe-to-full comparison to measure degradation between",
+			s.Send.Code, s.Receive.Code))
+	}
 	if m.DEX == nil {
 		return MetricUndetermined(d, s, "no DEX client available to price paths")
 	}

@@ -152,6 +152,28 @@ type Subject struct {
 	// Profile is an already-resolved stellar.toml, when one is available.
 	// A CostFree check reads this rather than fetching anything.
 	Profile *anchor.Profile
+
+	// Integrity is the corridor's routing integrity classification —
+	// "DIRECT", "DERIVATIVE" or "NO-MARKET" — when the caller has one to
+	// give. It is a string rather than route.Integrity because route
+	// imports this package for Findings; importing route back would be a
+	// cycle. Empty means unknown, and a book metric then falls back to
+	// treating an empty order book purely as a market fact, as it always
+	// has.
+	//
+	// This exists because an order book response cannot distinguish "no
+	// market exists by construction" from "a market exists and is
+	// currently idle" — both are an empty book. Only pathfinding across
+	// the whole ladder can tell the two apart, and a metric that only ever
+	// fetches /order_book has no way to learn it without being told.
+	Integrity string
+
+	// Underlying is the direct pair a DERIVATIVE corridor's paths actually
+	// traverse, when the caller has one to offer — e.g. GHSC has no direct
+	// market and every path runs through NGNC, so a caller may set this to
+	// NGNC. A book metric that measures Underlying instead of Receive must
+	// say so explicitly in its evidence; the substitution is never silent.
+	Underlying asset.Asset
 }
 
 // Label renders the subject for a reader.

@@ -18,9 +18,28 @@ func FromCorridorJSON(c route.CorridorJSON) *Record {
 		Corridor:  CorridorKey(c.SendAsset.Code, c.ReceiveAsset.Code),
 		Integrity: c.Integrity,
 		DependsOn: []string{},
+		// SecondaryMid, SecondarySource and DivergencePct are carried
+		// through unconditionally: the wire shape already reports them
+		// whenever a cross-check ran, and dropping them here would mean a
+		// stale replay of a corridor that was cross-checked reads back as
+		// one that was not — see TestFromCorridorJSONCarriesReferenceCrossCheck.
+		//
+		// ScoredAgainst mirrors c.ReferenceSource only when the corridor was
+		// scorable at all: an unscorable rate never produced a verdict, so
+		// naming a source here would claim one did.
+		//
+		// SecondaryAsOf and the parallel/street-market block have no home in
+		// this record shape yet — see the note on Record's field-addition
+		// rule. Adding them is a Record layout change with its own migration
+		// and review bar, so it is flagged here rather than done as part of
+		// this fix.
 		Reference: Reference{
-			Mid:    c.ReferenceMid,
-			Source: c.ReferenceSource,
+			Mid:             c.ReferenceMid,
+			Source:          c.ReferenceSource,
+			SecondaryMid:    c.ReferenceSecondaryMid,
+			SecondarySource: c.ReferenceSecondarySource,
+			DivergencePct:   c.ReferenceDivergencePct,
+			ScoredAgainst:   scoredAgainst(c),
 		},
 		FloorLossPct:    c.Floor,
 		FloorSize:       c.FloorSize,
@@ -68,6 +87,16 @@ func FromCorridorJSON(c route.CorridorJSON) *Record {
 		}
 	}
 	return r
+}
+
+// scoredAgainst names the source a corridor's verdicts were graded against,
+// or empty when the corridor was never scorable — an unscorable rate never
+// produced a verdict, so this must not claim one did.
+func scoredAgainst(c route.CorridorJSON) string {
+	if !c.Scored {
+		return ""
+	}
+	return c.ReferenceSource
 }
 
 // Nop is a Store that discards everything.

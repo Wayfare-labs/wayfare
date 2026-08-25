@@ -67,18 +67,22 @@ func (m DepthMetric) RunObserved(ctx context.Context, s Subject) MetricResult {
 	if s.Send.Code == "" || s.Receive.Code == "" {
 		return MetricUndetermined(d, s, "no send or receive asset specified")
 	}
+	if res, structural := structuralUndetermined(d, s); structural {
+		return res
+	}
 	if m.DEX == nil {
 		return MetricUndetermined(d, s, "no DEX client available")
 	}
 
-	h, err := m.DEX.OrderBook(ctx, s.Send, s.Receive)
+	sell, buy, substituted := bookPair(s)
+	h, err := m.DEX.OrderBook(ctx, sell, buy)
 	if err != nil {
 		return MetricUndetermined(d, s,
 			fmt.Sprintf("order book fetch failed: %v", err))
 	}
 
 	evidence := Evidence{
-		Source:     fmt.Sprintf("/order_book %s/%s", s.Send.Code, s.Receive.Code),
+		Source:     bookSource("/order_book", s, sell, buy, substituted),
 		ObservedAt: at,
 	}
 
@@ -114,6 +118,19 @@ func (m DepthMetric) RunExecutable(ctx context.Context, s Subject) MetricResult 
 
 	if s.Send.Code == "" || s.Receive.Code == "" {
 		return MetricUndetermined(d, s, "no send or receive asset specified")
+	}
+	// Unlike the order-book metrics above, a DERIVATIVE corridor is exactly
+	// what pathfinding is for: paths to it exist, they just route through
+	// an intermediate asset, and BestPath measures that end to end without
+	// any substitution. Only NO-MARKET is short-circuited here — probing it
+	// at every size would just rediscover, one request at a time, the
+	// structural fact the ladder already established.
+	if s.Integrity == integrityNoMarket {
+		return MetricUndetermined(d, s, fmt.Sprintf(
+			"%s has no path to %s by construction (NO-MARKET): the ladder found no "+
+				"route at any size, so probing again here would only re-confirm a "+
+				"structural fact rather than measure anything new",
+			s.Send.Code, s.Receive.Code))
 	}
 	if m.DEX == nil {
 		return MetricUndetermined(d, s, "no DEX client available")

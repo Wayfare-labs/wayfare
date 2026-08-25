@@ -18,6 +18,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/anchor"
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/dex"
+	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/snapshot"
 )
 
@@ -953,6 +954,18 @@ func TestDepthObservedMetric(t *testing.T) {
 	}
 }
 
+func TestDepthObservedEmptyBook(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "xlm-ngnc-orderbook-empty")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	depth := DepthMetric{DEX: c}
+	r := depth.RunObserved(ctx(), Subject{Send: asset.Native(), Receive: asset.NGNC()})
+
+	if r.Determined {
+		t.Error("empty book must produce an undetermined result, not a level count of zero")
+	}
+}
+
 func TestDepthExecutableMetric(t *testing.T) {
 	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend")
 	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
@@ -1017,6 +1030,481 @@ func TestDepthMetricDescriptorIsValid(t *testing.T) {
 	d := DepthMetric{}.Describe()
 	if err := d.Validate(); err != nil {
 		t.Errorf("depth metric descriptor: %v", err)
+	}
+}
+
+// structural undetermined reasons ----------------------------------------------
+//
+// GHSC is DERIVATIVE — every path runs through NGNC — and KESC is NO-MARKET.
+// Before this coverage existed, every book metric fetched the direct order
+// book for either, got the same empty response an idle-but-real market would
+// return, and reported the same generic "order book is empty" reason either
+// way. These tests pin that the three causes — structural absence,
+// empty-market-but-real, and fetch failure — are told apart. See GitHub issue
+// #105 / docs/backlog.md.
+
+// TestBookMetricsDistinguishNoMarketFromEmptyBook covers the case a naive
+// order-book fetch cannot distinguish on its own: NO-MARKET must be reported
+// as a structural fact, not the market fact an idle-but-real book gets, and
+// it must be reported without ever calling the DEX client — mutate the code
+// to fetch anyway and TestNoMarketNeverFetchesTheBook below catches it.
+func TestBookMetricsDistinguishNoMarketFromEmptyBook(t *testing.T) {
+	poisoned := &dex.Client{HorizonURL: "http://127.0.0.1:1"} // must never be dialed
+
+	subject := Subject{Send: asset.USDC(), Receive: asset.KESC(), Integrity: "NO-MARKET"}
+
+	cases := []struct {
+		name string
+		run  func() MetricResult
+	}{
+		{"spread", func() MetricResult { return RunMetric(ctx(), SpreadMetric{DEX: poisoned}, subject) }},
+		{"concentration", func() MetricResult { return RunMetric(ctx(), ConcentrationMetric{DEX: poisoned}, subject) }},
+		{"depth.observed", func() MetricResult { return RunMetric(ctx(), DepthMetric{DEX: poisoned}, subject) }},
+		{"depth.executable", func() MetricResult {
+			return RunMetric(ctx(), depthExecutable{DepthMetric{DEX: poisoned}}, subject)
+		}},
+		{"price-impact", func() MetricResult { return RunMetric(ctx(), PriceImpactMetric{DEX: poisoned}, subject) }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := tc.run()
+			if r.Determined {
+				t.Fatal("a NO-MARKET corridor must never produce a determined result")
+			}
+			if !strings.Contains(r.Reason, "NO-MARKET") {
+				t.Errorf("reason = %q, want it to name NO-MARKET as a structural fact", r.Reason)
+			}
+			if strings.Contains(r.Reason, "empty") {
+				t.Errorf("reason = %q, reads as a market fact (an empty book) rather than "+
+					"the structural fact this corridor actually has", r.Reason)
+			}
+		})
+	}
+}
+
+// depthExecutable adapts DepthMetric.RunExecutable to the Metric interface
+// so it can go through RunMetric like every other case in the table above.
+type depthExecutable struct{ DepthMetric }
+
+func (m depthExecutable) Describe() Descriptor {
+	return Descriptor{
+		ID: "depth.executable", Title: "executable depth",
+		CanDetermine: "see DepthMetric", CannotDetermine: "see DepthMetric",
+	}
+}
+func (m depthExecutable) Run(ctx context.Context, s Subject) MetricResult {
+	return m.RunExecutable(ctx, s)
+}
+
+// TestBookMetricsDistinguishDerivativeFromEmptyBook covers the other
+// structural case: a DERIVATIVE corridor with no Underlying pair supplied
+// must report the dependency, not a bare empty book. The order-book metrics
+// (spread, concentration, depth.observed) fetch nothing here, because there
+// is nothing to fetch — the whole point of DERIVATIVE. depth.executable and
+// price-impact are pathfinding metrics, not order-book metrics: a DERIVATIVE
+// corridor prices normally through its intermediate asset, so they are
+// exercised separately below rather than asserted structural here.
+func TestBookMetricsDistinguishDerivativeFromEmptyBook(t *testing.T) {
+	poisoned := &dex.Client{HorizonURL: "http://127.0.0.1:1"}
+	subject := Subject{Send: asset.USDC(), Receive: asset.GHSC(), Integrity: "DERIVATIVE"}
+
+	cases := []struct {
+		name string
+		run  func() MetricResult
+	}{
+		{"spread", func() MetricResult { return RunMetric(ctx(), SpreadMetric{DEX: poisoned}, subject) }},
+		{"concentration", func() MetricResult { return RunMetric(ctx(), ConcentrationMetric{DEX: poisoned}, subject) }},
+		{"depth.observed", func() MetricResult { return RunMetric(ctx(), DepthMetric{DEX: poisoned}, subject) }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := tc.run()
+			if r.Determined {
+				t.Fatal("a DERIVATIVE corridor with no underlying pair must never produce a determined result")
+			}
+			if !strings.Contains(r.Reason, "DERIVATIVE") {
+				t.Errorf("reason = %q, want it to name DERIVATIVE as a structural fact", r.Reason)
+			}
+		})
+	}
+}
+
+// TestBookMetricSubstitutesUnderlyingPairExplicitly covers the DERIVATIVE
+// case where the caller does have a legitimate pair to measure instead — the
+// substitution must be a determined result against the underlying book, and
+// it must say so in its evidence, never silently.
+func TestBookMetricSubstitutesUnderlyingPairExplicitly(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "xlm-ngnc-orderbook")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	subject := Subject{
+		Send: asset.Native(), Receive: asset.GHSC(),
+		Integrity: "DERIVATIVE", Underlying: asset.NGNC(),
+	}
+
+	r := RunMetric(ctx(), SpreadMetric{DEX: c}, subject)
+	if !r.Determined {
+		t.Fatalf("substituting a real underlying book should determine a value, got: %s", r.Reason)
+	}
+	if len(r.Evidence) == 0 {
+		t.Fatal("no evidence recorded")
+	}
+	src := r.Evidence[0].Source
+	if !strings.Contains(src, "XLM/NGNC") {
+		t.Errorf("evidence source %q does not name the pair actually measured", src)
+	}
+	if !strings.Contains(src, "substituted") || !strings.Contains(src, "GHSC") {
+		t.Errorf("evidence source %q does not say the substitution happened, or for which "+
+			"corridor — a measurement on a different pair than requested must say so explicitly, "+
+			"never silently", src)
+	}
+}
+
+// TestNoMarketNeverFetchesTheBook is the mutation guard for the "without
+// ever calling the DEX client" claim above: a NO-MARKET subject pointed at
+// an address nothing listens on must still return promptly and
+// undetermined, which is only possible if the structural check runs before
+// any network call.
+func TestNoMarketNeverFetchesTheBook(t *testing.T) {
+	poisoned := &dex.Client{HorizonURL: "http://127.0.0.1:1"}
+	subject := Subject{Send: asset.USDC(), Receive: asset.KESC(), Integrity: "NO-MARKET"}
+
+	start := time.Now()
+	r := RunMetric(ctx(), SpreadMetric{DEX: poisoned}, subject)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("took %s; a structural short-circuit should return immediately, "+
+			"without attempting to dial %s", elapsed, poisoned.HorizonURL)
+	}
+	if r.Determined {
+		t.Fatal("expected an undetermined result")
+	}
+}
+
+// TestDerivativeCorridorPricesNormallyThroughPathfinding pins the other half
+// of the DERIVATIVE distinction: depth.executable and price-impact measure
+// via pathfinding, not an order book, and a DERIVATIVE corridor is exactly
+// the case pathfinding across an intermediate asset succeeds at. Neither
+// metric should ever report GHSC's dependency on NGNC as an obstacle.
+func TestDerivativeCorridorPricesNormallyThroughPathfinding(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	// This subject's Send/Receive do not match the snapshot's real GHSC
+	// corridor — the fixture only records a USDC/NGNC strict-send path —
+	// but the point here is purely that Integrity: DERIVATIVE does not by
+	// itself short-circuit a pathfinding metric the way it does the
+	// order-book metrics above.
+	subject := Subject{Send: asset.USDC(), Receive: asset.NGNC(), Integrity: "DERIVATIVE"}
+
+	depth := DepthMetric{DEX: c, Sizes: []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(100)}}
+	if r := depth.RunExecutable(ctx(), subject); !r.Determined {
+		t.Errorf("depth.executable on a DERIVATIVE corridor should still price via "+
+			"pathfinding, got undetermined: %s", r.Reason)
+	}
+
+	impact := PriceImpactMetric{DEX: c, ProbeSize: decimal.NewFromInt(1), FullSize: decimal.NewFromInt(100)}
+	if r := RunMetric(ctx(), impact, subject); !r.Determined {
+		t.Errorf("price-impact on a DERIVATIVE corridor should still price via "+
+			"pathfinding, got undetermined: %s", r.Reason)
+	}
+}
+
+// concentration metric ------------------------------------------------------------
+//
+// GitHub issue #106: concentration.liquidity had no dedicated coverage at
+// all before this section.
+
+func TestConcentrationMetricFromRecordedBook(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "xlm-ngnc-orderbook")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	r := RunMetric(ctx(), ConcentrationMetric{DEX: c}, Subject{Send: asset.Native(), Receive: asset.NGNC()})
+
+	if !r.Determined {
+		t.Fatalf("concentration metric undetermined: %s", r.Reason)
+	}
+	if r.Unit != UnitRatio {
+		t.Errorf("unit = %s, want ratio", r.Unit)
+	}
+	if !r.Value.IsPositive() || r.Value.GreaterThan(decimal.NewFromInt(1)) {
+		t.Errorf("HHI = %s, want a value in (0, 1]", r.Value)
+	}
+	if len(r.Evidence) == 0 {
+		t.Error("no evidence recorded")
+	}
+}
+
+func TestConcentrationMetricEmptyBook(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "xlm-ngnc-orderbook-empty")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	r := RunMetric(ctx(), ConcentrationMetric{DEX: c}, Subject{Send: asset.Native(), Receive: asset.NGNC()})
+
+	if r.Determined {
+		t.Error("empty book must produce an undetermined result, not an HHI of zero")
+	}
+	if !strings.Contains(r.Reason, "empty") {
+		t.Errorf("reason = %q, want it to name the empty book", r.Reason)
+	}
+}
+
+func TestConcentrationMetricNilDEX(t *testing.T) {
+	r := RunMetric(ctx(), ConcentrationMetric{}, Subject{Send: asset.Native(), Receive: asset.NGNC()})
+	if r.Determined {
+		t.Error("nil DEX client must produce an undetermined result")
+	}
+}
+
+func TestConcentrationMetricDescriptorIsValid(t *testing.T) {
+	d := ConcentrationMetric{}.Describe()
+	if err := d.Validate(); err != nil {
+		t.Errorf("concentration metric descriptor: %v", err)
+	}
+}
+
+// price impact metric ------------------------------------------------------------
+//
+// GitHub issue #106: price-impact.size had no fixture-backed coverage at
+// all before this section — the existing usdc-ngnc-strictsend snapshot
+// already records both a probe (1 USDC) and a full (100 USDC) strict-send
+// response, which is exactly the shape this metric needs and nothing new
+// had to be captured to exercise it.
+
+func TestPriceImpactMetricFromRecordedPaths(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	impact := PriceImpactMetric{
+		DEX:       c,
+		ProbeSize: decimal.NewFromInt(1),
+		FullSize:  decimal.NewFromInt(100),
+	}
+	r := RunMetric(ctx(), impact, Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+
+	if !r.Determined {
+		t.Fatalf("price impact metric undetermined: %s", r.Reason)
+	}
+	if r.Unit != UnitPercent {
+		t.Errorf("unit = %s, want percent", r.Unit)
+	}
+	if r.Value.IsNegative() {
+		t.Errorf("impact = %s, must never be reported negative (see the clamp in Run)", r.Value)
+	}
+	if len(r.Evidence) == 0 {
+		t.Error("no evidence recorded")
+	}
+	if r.Summary == "" {
+		t.Error("summary is empty")
+	}
+}
+
+func TestPriceImpactMetricNoPathAtProbeSize(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend-empty")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	impact := PriceImpactMetric{DEX: c, ProbeSize: decimal.NewFromInt(1), FullSize: decimal.NewFromInt(100)}
+	r := RunMetric(ctx(), impact, Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+
+	if r.Determined {
+		t.Error("no path at either size must produce an undetermined result")
+	}
+}
+
+func TestPriceImpactMetricNilDEX(t *testing.T) {
+	impact := PriceImpactMetric{}
+	r := RunMetric(ctx(), impact, Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+	if r.Determined {
+		t.Error("nil DEX client must produce an undetermined result")
+	}
+}
+
+func TestPriceImpactMetricDescriptorIsValid(t *testing.T) {
+	d := PriceImpactMetric{}.Describe()
+	if err := d.Validate(); err != nil {
+		t.Errorf("price impact metric descriptor: %v", err)
+	}
+}
+
+// deviation metric --------------------------------------------------------------
+//
+// See GitHub issue #103: the gap between the direct book's implied mid and
+// the independent reference mid, as a metric separate from route loss.
+
+func TestDeviationMetricFromRecordedBook(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "xlm-ngnc-orderbook")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	dev := DeviationMetric{
+		DEX: c,
+		Reference: refrate.Rate{
+			Base: "USD", Quote: "NGN",
+			Mid:    decimal.RequireFromString("1350.2568"),
+			Source: "exchangerate-api",
+			AsOf:   time.Now().UTC(),
+		},
+	}
+	r := RunMetric(ctx(), dev, Subject{Send: asset.Native(), Receive: asset.NGNC()})
+
+	if !r.Determined {
+		t.Fatalf("deviation metric undetermined: %s", r.Reason)
+	}
+	if r.Unit != UnitPercent {
+		t.Errorf("unit = %s, want percent", r.Unit)
+	}
+	if len(r.Evidence) != 2 {
+		t.Fatalf("evidence entries = %d, want 2 (book and reference)", len(r.Evidence))
+	}
+	for _, e := range r.Evidence {
+		if e.Source == "" || e.Observed == "" {
+			t.Errorf("evidence %+v is missing a source or an observation", e)
+		}
+	}
+	if r.Summary == "" {
+		t.Error("summary is empty")
+	}
+}
+
+func TestDeviationMetricSignReflectsDirection(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "xlm-ngnc-orderbook")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+	subject := Subject{Send: asset.Native(), Receive: asset.NGNC()}
+
+	// The book mid does not move between these two runs; only the reference
+	// does. A reference far below the book mid must deviate positive, and
+	// one far above must deviate negative — otherwise the sign is backwards
+	// or the arithmetic has been mangled.
+	low := RunMetric(ctx(), DeviationMetric{DEX: c, Reference: refrate.Rate{
+		Base: "USD", Quote: "NGN", Mid: decimal.RequireFromString("1"), Source: "static", AsOf: time.Now().UTC(),
+	}}, subject)
+	high := RunMetric(ctx(), DeviationMetric{DEX: c, Reference: refrate.Rate{
+		Base: "USD", Quote: "NGN", Mid: decimal.RequireFromString("100000000"), Source: "static", AsOf: time.Now().UTC(),
+	}}, subject)
+
+	if !low.Determined || !high.Determined {
+		t.Fatalf("expected both determined, got low.Determined=%v (%s) high.Determined=%v (%s)",
+			low.Determined, low.Reason, high.Determined, high.Reason)
+	}
+	if !low.Value.IsPositive() {
+		t.Errorf("a reference far below the book mid should deviate positive, got %s", low.Value)
+	}
+	if !high.Value.IsNegative() {
+		t.Errorf("a reference far above the book mid should deviate negative, got %s", high.Value)
+	}
+}
+
+func TestDeviationMetricEmptyBook(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "xlm-ngnc-orderbook-empty")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	dev := DeviationMetric{
+		DEX: c,
+		Reference: refrate.Rate{
+			Base: "USD", Quote: "NGN", Mid: decimal.RequireFromString("1350.2568"), Source: "exchangerate-api",
+		},
+	}
+	r := RunMetric(ctx(), dev, Subject{Send: asset.Native(), Receive: asset.NGNC()})
+
+	if r.Determined {
+		t.Error("empty book must produce an undetermined result, not a zero deviation")
+	}
+	if !strings.Contains(r.Reason, "empty") {
+		t.Errorf("reason = %q, want it to name the empty book", r.Reason)
+	}
+}
+
+func TestDeviationMetricOneSidedBook(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "xlm-ngnc-orderbook-onesided")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	dev := DeviationMetric{
+		DEX: c,
+		Reference: refrate.Rate{
+			Base: "USD", Quote: "NGN", Mid: decimal.RequireFromString("1350.2568"), Source: "exchangerate-api",
+		},
+	}
+	r := RunMetric(ctx(), dev, Subject{Send: asset.Native(), Receive: asset.NGNC()})
+
+	if r.Determined {
+		t.Error("one-sided book must produce an undetermined result")
+	}
+	if !strings.Contains(r.Reason, "nobody is buying") {
+		t.Errorf("reason = %q, want it to name the missing side", r.Reason)
+	}
+}
+
+func TestDeviationMetricNoDirectPair(t *testing.T) {
+	// GHSC: DERIVATIVE, no Underlying supplied — never even attempts a fetch.
+	dev := DeviationMetric{
+		DEX: &dex.Client{HorizonURL: "http://127.0.0.1:1"},
+		Reference: refrate.Rate{
+			Base: "USD", Quote: "GHS", Mid: decimal.RequireFromString("11.09"), Source: "exchangerate-api",
+		},
+	}
+	r := RunMetric(ctx(), dev, Subject{Send: asset.USDC(), Receive: asset.GHSC(), Integrity: "DERIVATIVE"})
+
+	if r.Determined {
+		t.Error("a DERIVATIVE corridor with no underlying pair must not produce a determined result")
+	}
+	if !strings.Contains(r.Reason, "DERIVATIVE") {
+		t.Errorf("reason = %q, want it to name DERIVATIVE as a structural fact", r.Reason)
+	}
+}
+
+func TestDeviationMetricUnscorableReference(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "xlm-ngnc-orderbook")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	dev := DeviationMetric{
+		DEX: c,
+		Reference: refrate.Rate{
+			Base: "USD", Quote: "NGN",
+			Mid:       decimal.RequireFromString("1350.2568"),
+			Source:    "exchangerate-api",
+			Agreement: refrate.AgreementMalfunction,
+			Note:      "providers differ by 400%, further apart than either can be trusted",
+		},
+	}
+	r := RunMetric(ctx(), dev, Subject{Send: asset.Native(), Receive: asset.NGNC()})
+
+	if r.Determined {
+		t.Error("an unscorable reference must not produce a determined result")
+	}
+	if !strings.Contains(r.Reason, "cross-check") {
+		t.Errorf("reason = %q, want it to name the cross-check as the cause", r.Reason)
+	}
+}
+
+func TestDeviationMetricNoReference(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "xlm-ngnc-orderbook")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	dev := DeviationMetric{DEX: c, ReferenceUnavailable: "exchangerate-api: rate limited"}
+	r := RunMetric(ctx(), dev, Subject{Send: asset.Native(), Receive: asset.NGNC()})
+
+	if r.Determined {
+		t.Error("no reference rate must not produce a determined result")
+	}
+	if !strings.Contains(r.Reason, "rate limited") {
+		t.Errorf("reason = %q, want it to carry the caller's unavailability reason", r.Reason)
+	}
+}
+
+func TestDeviationMetricNilDEX(t *testing.T) {
+	dev := DeviationMetric{Reference: refrate.Rate{
+		Base: "USD", Quote: "NGN", Mid: decimal.RequireFromString("1350"), Source: "static",
+	}}
+	r := RunMetric(ctx(), dev, Subject{Send: asset.Native(), Receive: asset.NGNC()})
+	if r.Determined {
+		t.Error("nil DEX client must produce an undetermined result")
+	}
+}
+
+func TestDeviationMetricDescriptorIsValid(t *testing.T) {
+	d := DeviationMetric{}.Describe()
+	if err := d.Validate(); err != nil {
+		t.Errorf("deviation metric descriptor: %v", err)
 	}
 }
 
