@@ -27,13 +27,37 @@ type QuoteJSON struct {
 	Warnings      []string `json:"warnings"`
 }
 
+// CostPartJSON is one component of a rung's effective transfer cost.
+//
+// It follows the project's unknown discipline, the same rule MetricJSON
+// enforces for an unmeasured metric: an undetermined component carries no
+// number at all. Amount and Pct are omitted entirely rather than emitted as
+// zero, because an unmeasured component has no amount and zero would be the
+// default-to-zero failure in a new place. Determined is always present, and
+// Reason is required whenever Determined is false.
+type CostPartJSON struct {
+	Component  string `json:"component"`
+	Amount     string `json:"amount,omitempty"`
+	Pct        string `json:"pct,omitempty"`
+	Determined bool   `json:"determined"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+// CostBlockJSON is a priced rung's full cost decomposition on the wire:
+// the individual components plus the total loss percentage they sum toward.
+type CostBlockJSON struct {
+	Parts        []CostPartJSON `json:"parts"`
+	TotalLossPct string         `json:"total_loss_pct"`
+}
+
 type RungJSON struct {
-	SendAmount string     `json:"send_amount"`
-	Priced     bool       `json:"priced"`
-	Integrity  string     `json:"integrity"`
-	Quote      *QuoteJSON `json:"quote"`
-	Notes      []string   `json:"notes"`
-	Error      string     `json:"error,omitempty"`
+	SendAmount string         `json:"send_amount"`
+	Priced     bool           `json:"priced"`
+	Integrity  string         `json:"integrity"`
+	Quote      *QuoteJSON     `json:"quote"`
+	Cost       *CostBlockJSON `json:"cost,omitempty"`
+	Notes      []string       `json:"notes"`
+	Error      string         `json:"error,omitempty"`
 }
 
 type CorridorJSON struct {
@@ -159,6 +183,34 @@ func ToQuoteJSON(q *Quote) *QuoteJSON {
 	}
 }
 
+// ToCostBlockJSON renders a decomposition for the wire.
+//
+// Component money values are decimal strings, like every other number that
+// crosses the wire, so a client is never invited to round them through a
+// float64. Undetermined components carry their reason and nothing else.
+func ToCostBlockJSON(d CostDecomposition) *CostBlockJSON {
+	if len(d.Parts) == 0 {
+		return nil
+	}
+	out := &CostBlockJSON{
+		Parts:        make([]CostPartJSON, 0, len(d.Parts)),
+		TotalLossPct: d.TotalLossPct.String(),
+	}
+	for _, p := range d.Parts {
+		cp := CostPartJSON{
+			Component:  string(p.Component),
+			Determined: p.Determined,
+			Reason:     p.Reason,
+		}
+		if p.Determined {
+			cp.Amount = p.Amount.String()
+			cp.Pct = p.Pct.String()
+		}
+		out.Parts = append(out.Parts, cp)
+	}
+	return out
+}
+
 func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 	out := CorridorJSON{
 		SendAsset:          ToAssetJSON(l.Request.SendAsset),
@@ -226,6 +278,9 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 			if len(r.Result.Quotes) > 0 {
 				rj.Quote = ToQuoteJSON(&r.Result.Quotes[0])
 			}
+		}
+		if len(r.Decomposition.Parts) > 0 {
+			rj.Cost = ToCostBlockJSON(r.Decomposition)
 		}
 		out.Rungs = append(out.Rungs, rj)
 	}

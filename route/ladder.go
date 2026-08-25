@@ -58,6 +58,11 @@ type Rung struct {
 	SendAmount decimal.Decimal
 	Result     *Result
 
+	// Decomposition breaks the rung's effective transfer cost into its
+	// components. It is populated when the rung priced; an unpriced rung
+	// carries an empty decomposition, which rendering omits entirely.
+	Decomposition CostDecomposition
+
 	// Err is set when this size alone failed to price, so one transient
 	// failure does not discard the whole ladder.
 	Err error
@@ -313,6 +318,11 @@ func (l *LadderResult) summarise() {
 		}
 		anyPriced = true
 		q := r.Result.Quotes[0]
+
+		// The decomposition answers "where did the money go" for this
+		// size — the per-quote component breakdown behind the single loss
+		// percentage, computed against the corridor's reference mid.
+		l.Rungs[i].Decomposition = Decompose(q, l.ReferenceMid)
 
 		if l.FloorSize.IsZero() {
 			l.Floor, l.FloorSize = q.LossPct, r.SendAmount
