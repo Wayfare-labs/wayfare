@@ -102,6 +102,10 @@
   .case strong { color: var(--ink); font-weight: 600; }
   svg { width: 100%; height: auto; display: block; }
   .axis { fill: var(--muted); font: 10px var(--mono); }
+  .trend-legend { display: flex; gap: 1.1rem; margin-top: .4rem;
+                  font: 550 .72rem/1 var(--mono); letter-spacing: .05em; color: var(--muted); }
+  .trend-legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+                      margin-right: .35rem; vertical-align: -1px; }
   footer { color: var(--muted); font-size: .82rem; border-top: 1px solid var(--border); padding-top: 1.1rem; margin-top: 2rem; }
   code { font-family: var(--mono); font-size: .85em; }
 </style>
@@ -123,6 +127,7 @@
       <option value="KESC">USDC &rarr; KESC (shilling)</option>
     </select>
     <button id="run">Measure live</button>
+    <button id="trend">Show trend</button>
     <span id="status" class="sub"></span>
   </div>
 
@@ -145,6 +150,9 @@ const badgeClass = (i) =>
   i === 'NO-MARKET' ? 'b-nomarket' : i === 'DERIVATIVE' ? 'b-derivative' : 'b-direct';
 
 const verdictClass = (v) => 'v-' + String(v).toLowerCase();
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 async function measure() {
   const to = $('to').value;
@@ -364,7 +372,304 @@ function caseStudy(d) {
   </div>`;
 }
 
+// --- Trend -----------------------------------------------------------------
+//
+// The trend answers "is this getting worse?" from the stored history: loss at
+// one chosen size across recorded runs, the integrity state of each run, and
+// the reference each run was scored against. Runs are irregular snapshots,
+// not a continuous series, and the chart says so rather than hiding it.
+
+let trendState = null; // { data, size }
+
+async function loadTrend() {
+  const to = $('to').value;
+  $('trend').disabled = true;
+  $('status').textContent = 'loading stored history…';
+  $('out').innerHTML = '';
+  try {
+    const r = await fetch(`/api/corridor/trend?to=${encodeURIComponent(to)}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    trendState = { data, size: defaultTrendSize(data) };
+    renderTrend();
+    $('status').textContent = '';
+  } catch (e) {
+    trendState = null;
+    $('out').innerHTML = `<div class="panel err">Could not load history: ${esc(e.message)}</div>`;
+    $('status').textContent = '';
+  } finally {
+    $('trend').disabled = false;
+  }
+}
+
+// The sizes a trend can be plotted at: every size priced in any stored run,
+// falling back to every size tested when nothing was priced at all.
+function trendSizes(data) {
+  const priced = new Set(), all = new Set();
+  for (const run of data.runs)
+    for (const rung of run.rungs || []) {
+      all.add(rung.send_amount);
+      if (rung.priced) priced.add(rung.send_amount);
+    }
+  const set = priced.size ? priced : all;
+  return [...set].sort((a, b) => parseFloat(a) - parseFloat(b));
+}
+
+function defaultTrendSize(data) {
+  const sizes = trendSizes(data);
+  return sizes.length ? sizes[0] : '';
+}
+
+function renderTrend() {
+  const d = trendState.data;
+  const runs = d.runs || [];
+  const parts = [];
+
+  if (runs.length === 0) {
+    parts.push(`<div class="panel">
+      <h2>Trend &mdash; ${esc(d.corridor)}</h2>
+      <p>No stored runs for this corridor yet. The scheduler records a run
+      every 6 hours, and the trend appears as history exists. Nothing is
+      interpolated, estimated, or borrowed from another corridor in the
+      meantime.</p></div>`);
+    $('out').innerHTML = parts.join('');
+    return;
+  }
+
+  const latest = runs[runs.length - 1];
+  parts.push(`<div class="panel">
+    <h2>Trend &mdash; ${esc(d.corridor)}</h2>
+    <span class="badge ${badgeClass(latest.integrity)}">${esc(latest.integrity)}</span>
+    <span class="case">&nbsp; latest of ${runs.length} stored run(s) &middot;
+    ${esc(fmtRunTime(runs[0].recorded_at))} &rarr; ${esc(fmtRunTime(latest.recorded_at))} UTC</span>
+    <p class="meta">${referenceSummary(runs)}${integritySummary(runs)}</p>
+  </div>`);
+
+  parts.push(`<div class="panel">
+    <h2>Loss against mid over time</h2>
+    <div class="controls" style="margin-bottom:.75rem">
+      <label for="trend-size">Size</label>
+      <select id="trend-size">
+        ${trendSizes(d).map(s =>
+          `<option value="${esc(s)}"${s === trendState.size ? ' selected' : ''}>${esc(s)}</option>`).join('')}
+      </select>
+      <span class="case">of ${esc(d.send_asset.code)}</span>
+    </div>
+    <div id="trend-chart">${trendChart(d, trendState.size)}</div>
+    <p class="meta">Each point is one stored run at a named time &mdash;
+    irregular snapshots, not a continuous series, so nothing between points
+    was measured. Segments across a gap of more than 12 hours (twice the
+    normal cadence) are dashed to say so. Dot colour and the strip under the
+    axis mark the integrity state at each run; the dashed line is the 20%
+    unusable threshold, as on the live curve.</p>
+  </div>`);
+
+  parts.push(`<div class="panel">
+    <h2>Stored runs</h2>
+    <div class="scroll">${runsTable(runs)}</div>
+    <p class="meta">Newest first. The reference column names the provider each
+    run was scored against, so a benchmark change sits next to the numbers it
+    affects.</p></div>`);
+
+  $('out').innerHTML = parts.join('');
+  $('trend-size').addEventListener('change', (e) => {
+    trendState.size = e.target.value;
+    $('trend-chart').innerHTML = trendChart(d, trendState.size);
+  });
+}
+
+// The reference each run was scored against, and whether it changed. A trend
+// that spans a provider change is confounded by that change unless the reader
+// is told, so a change is named with the time it happened.
+function referenceSummary(runs) {
+  const src = (r) =>
+    (r.reference && (r.reference.scored_against || r.reference.source)) || 'unknown';
+  const changes = [];
+  for (let i = 1; i < runs.length; i++)
+    if (src(runs[i]) !== src(runs[i - 1]))
+      changes.push(`${esc(src(runs[i - 1]))} &rarr; ${esc(src(runs[i]))} at ${esc(fmtRunTime(runs[i].recorded_at))}`);
+  if (changes.length === 0)
+    return `Loss is measured against the <strong>${esc(src(runs[0]))}</strong> mid in every run.`;
+  return `Reference source changed &mdash; ${changes.join('; ')}. Loss on either side of a change is scored against a different benchmark and is not strictly comparable.`;
+}
+
+function integritySummary(runs) {
+  const changes = [];
+  for (let i = 1; i < runs.length; i++)
+    if (runs[i].integrity !== runs[i - 1].integrity)
+      changes.push(`${esc(runs[i - 1].integrity)} &rarr; ${esc(runs[i].integrity)} at ${esc(fmtRunTime(runs[i].recorded_at))}`);
+  if (changes.length === 0)
+    return ` Integrity state was ${esc(runs[0].integrity)} throughout.`;
+  return ` Integrity state changed &mdash; ${changes.join('; ')}.`;
+}
+
+function fmtRunTime(v) {
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return String(v);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${MONTHS[d.getUTCMonth()]} ${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+}
+
+function fmtRunDay(ms) {
+  const d = new Date(ms);
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+// The trend chart. Each point is one stored run: a measurement at a named
+// time, not a sample of a continuous series. Straight segments join adjacent
+// runs that both priced the size, and a segment spanning a gap longer than
+// 12 hours — twice the normal 6h cadence — is dashed, so the chart never
+// reads as though the unmeasured interval between two runs was observed.
+function trendChart(d, size) {
+  const W = 640, H = 272, P = 34, STRIP = 24;
+  const plotBottom = H - P - STRIP;
+  const stripTop = plotBottom + 5;
+  const stripH = STRIP - 8;
+  const GAP_HOURS = 12;
+
+  const sendCode = (d.send_asset && d.send_asset.code) || '';
+  const pts = d.runs.map(r => {
+    const rung = (r.rungs || []).find(x => x.priced && x.send_amount === size);
+    const raw = rung ? parseFloat(rung.loss_pct) : NaN;
+    return {
+      run: r, rung,
+      t: Date.parse(r.recorded_at),
+      loss: isNaN(raw) ? null : Math.min(100, Math.max(0, raw)),
+    };
+  }).filter(p => !isNaN(p.t));
+
+  if (!pts.length)
+    return `<div class="panel" style="border:0; padding:1rem 0">
+      No usable runs for this corridor.</div>`;
+
+  const t0 = Math.min(...pts.map(p => p.t));
+  const t1 = Math.max(...pts.map(p => p.t));
+  const span = t1 - t0;
+  const pad = span === 0 ? 3600e3 : Math.max(span * 0.05, 3600e3);
+  const x0 = t0 - pad, x1 = t1 + pad;
+  const sx = (v) => P + ((v - x0) / (x1 - x0)) * (W - 2 * P);
+  const sy = (v) => plotBottom - (v / 100) * (plotBottom - P);
+
+  // Grid and y axis, the same convention as curve(): loss clamped to 0-100
+  // so the shape of the history, not an outlier, sets the scale.
+  const grid = [0, 20, 50, 100].map(v =>
+    `<line x1="${P}" y1="${sy(v)}" x2="${W - P}" y2="${sy(v)}"
+       stroke="var(--grid)" stroke-width="1"/>
+     <text class="axis" x="4" y="${sy(v) + 3}">${v}%</text>`).join('');
+
+  // The 20% line is the Unusable threshold; everything above it is refused.
+  const thresh = `<line x1="${P}" y1="${sy(20)}" x2="${W - P}" y2="${sy(20)}"
+      stroke="var(--bad)" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+    <text class="axis" x="${W - P - 96}" y="${sy(20) - 5}" fill="var(--bad)">unusable above</text>`;
+
+  const dotFill = (i) =>
+    i === 'DERIVATIVE' ? 'var(--warn)' : i === 'NO-MARKET' ? 'var(--bad)' : 'var(--muted)';
+
+  const segments = [];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    if (a.loss == null || b.loss == null) continue;
+    const gap = (b.t - a.t) / 3600e3;
+    segments.push(`<line x1="${sx(a.t).toFixed(1)}" y1="${sy(a.loss).toFixed(1)}"
+       x2="${sx(b.t).toFixed(1)}" y2="${sy(b.loss).toFixed(1)}"
+       stroke="var(--bad)" stroke-width="2"${gap > GAP_HOURS ? ' stroke-dasharray="5 4"' : ''}/>`);
+  }
+
+  const priced = pts.filter(p => p.loss != null);
+
+  const dots = priced.map(p => {
+    const r = p.run, ref = r.reference || {};
+    const title = [
+      `run #${r.seq} · ${r.recorded_at}`,
+      `${esc(p.rung.loss_pct)}% loss (${esc(p.rung.verdict)}) at ${esc(size)} ${esc(sendCode)}`,
+      `reference mid ${esc(ref.mid || 'n/a')} via ${esc(ref.scored_against || ref.source || 'unknown')}`,
+      `integrity ${esc(r.integrity)}${(r.depends_on || []).length ? ' via ' + esc(r.depends_on.join(', ')) : ''}`,
+    ].join('<br/>');
+    return `<circle cx="${sx(p.t).toFixed(1)}" cy="${sy(p.loss).toFixed(1)}" r="3.5"
+       fill="${dotFill(r.integrity)}" stroke="var(--panel)" stroke-width="1.25">
+       <title>${title}</title></circle>`;
+  }).join('');
+
+  const empty = priced.length
+    ? ''
+    : `<text class="axis" x="${W / 2}" y="${(P + plotBottom) / 2}" text-anchor="middle">no stored run priced this size</text>`;
+
+  // Integrity strip: the state of run i holds from its recording until the
+  // next run's, the last one to the edge of the chart. A state is what the
+  // most recent measurement established, and that is what this shows.
+  const strip = pts.map((p, i) => {
+    const end = i + 1 < pts.length ? pts[i + 1].t : x1;
+    const xa = sx(p.t), xb = sx(end);
+    const w = Math.max(xb - xa, 0);
+    const changed = i === 0 || p.run.integrity !== pts[i - 1].run.integrity;
+    const state = esc(p.run.integrity);
+    const est = state.length * 6.2 + 6; // 10px mono, generous
+    let label = '';
+    if (w >= 76) {
+      label = `<text class="axis" x="${((xa + xb) / 2).toFixed(1)}" y="${stripTop + stripH / 2 + 3}"
+        text-anchor="middle">${state}</text>`;
+    } else if (changed && xa + 3 + est <= W - P) {
+      label = `<text class="axis" x="${(xa + 3).toFixed(1)}" y="${stripTop + stripH / 2 + 3}">${state}</text>`;
+    } else if (changed && xb - 3 - est >= P) {
+      // Near the right edge the outward label would clip, so anchor it at
+      // the segment's end and let it run left over the previous segment
+      // rather than past the chart.
+      label = `<text class="axis" x="${(xb - 3).toFixed(1)}" y="${stripTop + stripH / 2 + 3}"
+        text-anchor="end">${state}</text>`;
+    }
+    return `<rect x="${xa.toFixed(1)}" y="${stripTop}" width="${w.toFixed(1)}" height="${stripH}"
+       fill="${dotFill(p.run.integrity)}" opacity="0.75">
+       <title>run #${p.run.seq} · ${esc(p.run.recorded_at)}<br/>integrity ${esc(p.run.integrity)}</title></rect>${label}`;
+  }).join('');
+
+  // X ticks: first, middle, last. A time on the tick only while the window
+  // is short enough that the date alone would not separate the points.
+  const withTime = span < 48 * 3600e3;
+  const tick = (t) => `<text class="axis" x="${sx(t).toFixed(1)}" y="${H - P + 16}"
+      text-anchor="middle">${esc(withTime ? fmtRunTime(t) : fmtRunDay(t))}</text>`;
+  const ticks = span === 0 ? tick(t0) : [t0, (t0 + t1) / 2, t1].map(tick).join('');
+
+  const legend = `<div class="trend-legend">
+      <span><span class="sw" style="background:var(--muted)"></span>DIRECT</span>
+      <span><span class="sw" style="background:var(--warn)"></span>DERIVATIVE</span>
+      <span><span class="sw" style="background:var(--bad)"></span>NO-MARKET</span>
+    </div>`;
+
+  return `<svg viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="Loss against mid over stored runs, with the integrity state of each run">
+      ${grid}${thresh}${segments}${dots}${empty}${strip}${ticks}
+      <text class="axis" x="${W / 2}" y="${H - 4}" text-anchor="middle">time (UTC) &mdash; each point one stored run</text>
+    </svg>${legend}`;
+}
+
+function runsTable(runs) {
+  const rows = runs.slice().reverse().map(r => {
+    const ref = r.reference || {};
+    const src = ref.scored_against || ref.source || 'unknown';
+    const via = (r.depends_on || []).length
+      ? ` <span class="case">via ${esc(r.depends_on.join(', '))}</span>` : '';
+    const div = ref.divergence_pct
+      ? ` <span class="case">div ${esc(ref.divergence_pct)}%</span>` : '';
+    return `<tr>
+      <td class="num">${esc(r.recorded_at)}</td>
+      <td class="num">${r.seq}</td>
+      <td><span class="badge ${badgeClass(r.integrity)}">${esc(r.integrity)}</span>${via}</td>
+      <td class="num">${esc(r.floor_loss_pct)}%</td>
+      <td class="num">${esc(r.worst_loss_pct)}%</td>
+      <td>${esc(src)}${div}</td>
+    </tr>`;
+  }).join('');
+
+  return `<table>
+    <thead><tr>
+      <th>Recorded (UTC)</th><th>#</th><th>Integrity</th><th>Floor loss</th><th>Worst loss</th><th>Reference</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
 $('run').addEventListener('click', measure);
+$('trend').addEventListener('click', loadTrend);
 </script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a30a05c3d811663d',t:'MTc4NzY1NDg4Nw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>

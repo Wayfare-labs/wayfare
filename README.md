@@ -369,6 +369,7 @@ Deployment, cost and backup: **[docs/deployment.md](docs/deployment.md)**
 
 ```
 GET /api/corridor?to=NGNC[&from=USDC][&sizes=1,10,100]
+GET /api/corridor/trend?to=NGNC[&from=USDC][&limit=100]
 GET /api/assets
 GET /healthz
 GET /                            single-file UI, no build step
@@ -378,6 +379,16 @@ Beyond the contracts above, one field to know: **`live`** is on every response.
 `false` means the reading came from history because a live measurement failed,
 and `stale` then carries its age. With no stored run, the request errors —
 nothing is ever synthesised to fill the gap.
+
+**The trend endpoint** answers "is this getting worse?" from the stored runs:
+every run comes back oldest first, each carrying its integrity state, its
+headline figures, the full reference it was scored against (both mids, the
+divergence, and `scored_against`), and each rung's loss and verdict. Runs are
+irregular snapshots, not a continuous series — the UI plots them as points at
+named times and says so. An empty history is a `200` with zero runs, not an
+error: a missing history is the answer, and the first day of a deployment is
+exactly when a monitor is most read. `limit` (default 100, max 500) keeps the
+most recent runs; the store is read, never measured.
 
 ---
 

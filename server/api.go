@@ -63,6 +63,7 @@ func (s *Server) timeout() time.Duration {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/corridor", s.handleCorridor)
+	mux.HandleFunc("/api/corridor/trend", s.handleTrend)
 	mux.HandleFunc("/api/assets", s.handleAssets)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.Handle("/", uiHandler())
