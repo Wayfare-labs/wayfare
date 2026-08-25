@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+
+	"github.com/Wayfare-labs/wayfare/transport"
 )
 
 // DefaultCurrencyAPI is the keyless endpoint of the CC0-licensed
@@ -98,7 +100,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
-			"error", err)
+			"error", transport.SanitizeTransportError(err))
 		return Rate{}, fmt.Errorf("refrate: fetching %s rates: %w", base, err)
 	}
 	defer resp.Body.Close()
@@ -121,30 +123,57 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 
 	var envelope map[string]json.RawMessage
 	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		c.log().Error("currency-api decode failed",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String(),
+			"error", err)
 		return Rate{}, fmt.Errorf("refrate: decoding response: %w", err)
 	}
 
 	rates, ok := envelope[lowBase]
 	if !ok {
+		c.log().Error("currency-api missing base rates",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, &ErrNoRate{Base: base, Quote: quote, Source: c.Name()}
 	}
 	var byCode map[string]json.RawMessage
 	if err := json.Unmarshal(rates, &byCode); err != nil {
+		c.log().Error("currency-api rates decode failed",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String(),
+			"error", err)
 		return Rate{}, fmt.Errorf("refrate: decoding %s rates: %w", base, err)
 	}
 
 	raw, ok := byCode[lowQuote]
 	if !ok {
+		c.log().Error("currency-api missing quote rate",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, &ErrNoRate{Base: base, Quote: quote, Source: c.Name()}
 	}
 	mid, err := decimal.NewFromString(string(raw))
 	if err != nil {
+		c.log().Error("currency-api rate parse failed",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String(),
+			"error", err)
 		return Rate{}, fmt.Errorf("refrate: parsing %s/%s rate %q: %w", base, quote, raw, err)
 	}
 	// A rate of exactly zero is absence, not a quote. Taken at face value it
 	// would divide by zero in the spread calculation, or report a route as
 	// infinitely good.
 	if mid.IsZero() {
+		c.log().Error("currency-api zero rate",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, &ErrNoRate{Base: base, Quote: quote, Source: c.Name()}
 	}
 

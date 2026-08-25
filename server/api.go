@@ -190,14 +190,14 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	// Request log: corridor, sizes, duration, and status. Upstream attribution
 	// happens inside the engine; this boundary log attributes the overall
 	// measurement to the HTTP request that asked for it.
-	requestLive := r.URL.Query().Get("live") != ""
+	requestedLive := r.URL.Query().Get("live") != ""
 	s.log().Info("corridor measured",
 		"method", r.Method,
 		"path", r.URL.Path,
 		"from", from,
 		"to", to,
 		"sizes", r.URL.Query().Get("sizes"),
-		"live", requestLive,
+		"requested_live", requestedLive,
 		"integrity", out.Integrity,
 		"duration", time.Since(started).Round(time.Millisecond).String())
 }

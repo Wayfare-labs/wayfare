@@ -35,6 +35,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/transport"
 )
 
 // DefaultHorizonURL is SDF's public mainnet Horizon instance.
@@ -268,7 +269,7 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 			"service", "horizon",
 			"endpoint", path,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
-			"error", err)
+			"error", transport.SanitizeTransportError(err))
 		return fmt.Errorf("dex: querying horizon: %w", err)
 	}
 	defer resp.Body.Close()

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+
+	"github.com/Wayfare-labs/wayfare/transport"
 )
 
 // DefaultExchangeRateAPI is the open endpoint of exchangerate-api's free
@@ -92,7 +94,7 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 			"service", e.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
-			"error", err)
+			"error", transport.SanitizeTransportError(err))
 		return Rate{}, fmt.Errorf("refrate: fetching %s rates: %w", base, err)
 	}
 	defer resp.Body.Close()
@@ -115,24 +117,47 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 
 	var body erAPIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		e.log().Error("exchangerate-api decode failed",
+			"service", e.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String(),
+			"error", err)
 		return Rate{}, fmt.Errorf("refrate: decoding response: %w", err)
 	}
 	if body.Result != "" && body.Result != "success" {
+		e.log().Error("exchangerate-api error result",
+			"service", e.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String(),
+			"error_type", body.ErrorType)
 		return Rate{}, fmt.Errorf("refrate: %s error: %s", e.Name(), body.ErrorType)
 	}
 
 	raw, ok := body.Rates[quote]
 	if !ok {
+		e.log().Error("exchangerate-api missing quote rate",
+			"service", e.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, &ErrNoRate{Base: base, Quote: quote, Source: e.Name()}
 	}
 	mid, err := decimal.NewFromString(string(raw))
 	if err != nil {
+		e.log().Error("exchangerate-api rate parse failed",
+			"service", e.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String(),
+			"error", err)
 		return Rate{}, fmt.Errorf("refrate: parsing %s/%s rate %q: %w", base, quote, raw, err)
 	}
 	// A rate of exactly zero is treated as absent rather than as a real
 	// quote. Taking it at face value would make the spread calculation
 	// divide by zero, or worse, report a route as infinitely good.
 	if mid.IsZero() {
+		e.log().Error("exchangerate-api zero rate",
+			"service", e.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, &ErrNoRate{Base: base, Quote: quote, Source: e.Name()}
 	}
 
