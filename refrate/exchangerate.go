@@ -71,13 +71,6 @@ type erAPIResponse struct {
 	ErrorType          string                     `json:"error-type"`
 }
 
-func (e *ExchangeRateAPI) log() *slog.Logger {
-	if e.Logger != nil {
-		return e.Logger
-	}
-	return slog.Default()
-}
-
 // Rate implements Provider.
 func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, error) {
 	started := time.Now()
@@ -90,7 +83,7 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 
 	resp, err := e.client().Do(req)
 	if err != nil {
-		e.log().Error("exchangerate-api request failed",
+		log().Error("exchangerate-api request failed",
 			"service", e.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
@@ -100,14 +93,14 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
-		e.log().Warn("exchangerate-api rate limited",
+		log().Warn("exchangerate-api rate limited",
 			"service", e.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, &ErrRateLimited{Source: e.Name(), RetryAfter: retryAfter(resp)}
 	}
 	if resp.StatusCode != http.StatusOK {
-		e.log().Error("exchangerate-api returned error",
+		log().Error("exchangerate-api returned error",
 			"service", e.Name(),
 			"pair", base+"/"+quote,
 			"status", resp.StatusCode,
@@ -117,7 +110,7 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 
 	var body erAPIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		e.log().Error("exchangerate-api decode failed",
+		log().Error("exchangerate-api decode failed",
 			"service", e.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
@@ -125,7 +118,7 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 		return Rate{}, fmt.Errorf("refrate: decoding response: %w", err)
 	}
 	if body.Result != "" && body.Result != "success" {
-		e.log().Error("exchangerate-api error result",
+		log().Error("exchangerate-api error result",
 			"service", e.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
@@ -135,7 +128,7 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 
 	raw, ok := body.Rates[quote]
 	if !ok {
-		e.log().Error("exchangerate-api missing quote rate",
+		log().Error("exchangerate-api missing quote rate",
 			"service", e.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String())
@@ -143,7 +136,7 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 	}
 	mid, err := decimal.NewFromString(string(raw))
 	if err != nil {
-		e.log().Error("exchangerate-api rate parse failed",
+		log().Error("exchangerate-api rate parse failed",
 			"service", e.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
@@ -154,7 +147,7 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 	// quote. Taking it at face value would make the spread calculation
 	// divide by zero, or worse, report a route as infinitely good.
 	if mid.IsZero() {
-		e.log().Error("exchangerate-api zero rate",
+		log().Error("exchangerate-api zero rate",
 			"service", e.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String())
@@ -166,7 +159,7 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 		asOf = time.Unix(body.TimeLastUpdateUnix, 0)
 	}
 
-	e.log().Debug("exchangerate-api rate fetched",
+	log().Debug("exchangerate-api rate fetched",
 		"service", e.Name(),
 		"pair", base+"/"+quote,
 		"duration", time.Since(started).Round(time.Millisecond).String())

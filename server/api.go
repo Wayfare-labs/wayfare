@@ -51,15 +51,18 @@ type Server struct {
 	// Timeout bounds a single corridor measurement. A full ladder is a
 	// dozen round trips to Horizon, so this is generous by HTTP standards.
 	Timeout time.Duration
-
-	// Logger is the structured logger for request and upstream logging.
-	// Nil means slog.Default().
-	Logger *slog.Logger
 }
 
-func (s *Server) log() *slog.Logger {
-	if s.Logger != nil {
-		return s.Logger
+// pkgLogger is the package-level logger for request and upstream logging.
+// Set via SetLogger; nil means slog.Default().
+var pkgLogger *slog.Logger
+
+// SetLogger configures the package-level logger for the server package.
+func SetLogger(l *slog.Logger) { pkgLogger = l }
+
+func log() *slog.Logger {
+	if pkgLogger != nil {
+		return pkgLogger
 	}
 	return slog.Default()
 }
@@ -135,6 +138,15 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		if stale, ok := s.staleFor(r.Context(), sendAsset.Code, recvAsset.Code,
 			pegBase+"/"+pegQuote); ok {
 			writeJSON(w, http.StatusOK, stale)
+			log().Info("corridor measured",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"from", from,
+				"to", to,
+				"sizes", r.URL.Query().Get("sizes"),
+				"live", false,
+				"integrity", stale.Integrity,
+				"duration", time.Since(started).Round(time.Millisecond).String())
 			return
 		}
 		// No history yet. Fall through and measure rather than erroring:
@@ -167,6 +179,15 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		// it does not currently know.
 		if stale, ok := s.staleFor(ctx, sendAsset.Code, recvAsset.Code, pegBase+"/"+pegQuote); ok {
 			writeJSON(w, http.StatusOK, stale)
+			log().Info("corridor measured",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"from", from,
+				"to", to,
+				"sizes", r.URL.Query().Get("sizes"),
+				"live", false,
+				"integrity", stale.Integrity,
+				"duration", time.Since(started).Round(time.Millisecond).String())
 			return
 		}
 		status := http.StatusBadGateway
@@ -191,14 +212,17 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	// Request log: corridor, sizes, duration, and status. Upstream attribution
 	// happens inside the engine; this boundary log attributes the overall
 	// measurement to the HTTP request that asked for it.
-	requestedLive := r.URL.Query().Get("live") != ""
-	s.log().Info("corridor measured",
+	// actualLive tracks whether this response came from a live measurement
+	// rather than a stale/history response. It is set after the measurement
+	// succeeds, not derived from the query parameter.
+	actualLive := true
+	log().Info("corridor measured",
 		"method", r.Method,
 		"path", r.URL.Path,
 		"from", from,
 		"to", to,
 		"sizes", r.URL.Query().Get("sizes"),
-		"requested_live", requestedLive,
+		"live", actualLive,
 		"integrity", out.Integrity,
 		"duration", time.Since(started).Round(time.Millisecond).String())
 }
