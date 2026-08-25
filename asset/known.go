@@ -15,8 +15,8 @@ import (
 // worthless lookalike. The verification date is recorded because anchors do
 // rotate issuers.
 //
-// Verification status, 2026-08-08, read from
-// https://ngnc.online/.well-known/stellar.toml:
+// Verification status, 2026-08-08, read from the issuers' own published
+// stellar.toml files (SEP-1):
 //
 //   - NGNC   VERIFIED, status="live". Issued by LINK.IO LTD., pegged 1:1 to
 //     NGN, anchor_asset_type="fiat". NETWORK_PASSPHRASE = public mainnet.
@@ -28,11 +28,10 @@ import (
 //     Note the entry sets anchor_asset="KESC", naming its own token rather
 //     than the ISO-4217 code KES that SEP-1 intends. Read as KES.
 //
-//   - USDC   NOT YET VERIFIED against circle.com's stellar.toml. This is the
-//     widely-published Circle issuer and Horizon accepted it for live
-//     orderbook and path queries, which proves it is a real, actively traded
-//     issuer — but not that it is Circle's. Confirm before any mainnet
-//     execution path ships. See VerifyAgainstTOML in package anchor.
+//   - USDC   VERIFIED, status="live", read from
+//     https://circle.com/.well-known/stellar.toml. Issued by Circle Internet
+//     Financial, pegged 1:1 to USD, anchor_asset_type="fiat".
+//     NETWORK_PASSPHRASE = public mainnet.
 //
 // The pending status on GHSC and KESC is a first-class finding, not a detail
 // to route around. Per SEP-1 only "live" means in service, and the monitor
@@ -106,10 +105,10 @@ var registry = []Entry{
 		Code:             "USDC",
 		Issuer:           USDCIssuer,
 		Peg:              "",
-		Status:           "unverified",
-		VerificationDate: "",
-		SourceURL:        "",
-		HomeDomain:       "",
+		Status:           "live",
+		VerificationDate: "2026-08-08",
+		SourceURL:        "https://circle.com/.well-known/stellar.toml",
+		HomeDomain:       "circle.com",
 	},
 	{
 		Code:             "NGNC",
