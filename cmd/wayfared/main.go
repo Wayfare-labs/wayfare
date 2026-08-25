@@ -139,14 +139,14 @@ func main() {
 	}
 
 	if *serve {
-	srv := &server.Server{
-		Engine:       engine,
-		Store:        store,
-		Timeout:      *timeout,
-		HistoryFirst: *histFirst,
-		Checks:       &checks.Runner{HorizonURL: *horizon},
-		Logger:       logger,
-	}
+		srv := &server.Server{
+			Engine:       engine,
+			Store:        store,
+			Timeout:      *timeout,
+			HistoryFirst: *histFirst,
+			Checks:       &checks.Runner{HorizonURL: *horizon},
+			Logger:       logger,
+		}
 		httpSrv := &http.Server{
 			Addr:              *addr,
 			Handler:           srv.Handler(),
