@@ -91,6 +91,10 @@ func main() {
 		os.Exit(2)
 	}
 
+	dex.SetLogger(logger)
+	refrate.SetLogger(logger)
+	server.SetLogger(logger)
+
 	engine := &route.Engine{
 		DEX: &dex.Client{HorizonURL: *horizon, Logger: logger},
 		// Two independent providers, each cached, cross-checked for
@@ -145,7 +149,6 @@ func main() {
 			Timeout:      *timeout,
 			HistoryFirst: *histFirst,
 			Checks:       &checks.Runner{HorizonURL: *horizon},
-			Logger:       logger,
 		}
 		httpSrv := &http.Server{
 			Addr:              *addr,

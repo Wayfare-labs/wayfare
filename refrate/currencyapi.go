@@ -66,13 +66,6 @@ func (c *CurrencyAPI) baseURL() string {
 	return DefaultCurrencyAPI
 }
 
-func (c *CurrencyAPI) log() *slog.Logger {
-	if c.Logger != nil {
-		return c.Logger
-	}
-	return slog.Default()
-}
-
 // Rate implements Provider.
 //
 // The payload is shaped {"date": "...", "<base>": {"<quote>": <number>, ...}}
@@ -96,7 +89,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 
 	resp, err := c.client().Do(req)
 	if err != nil {
-		c.log().Error("currency-api request failed",
+		log().Error("currency-api request failed",
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
@@ -106,14 +99,14 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
-		c.log().Warn("currency-api rate limited",
+		log().Warn("currency-api rate limited",
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, &ErrRateLimited{Source: c.Name(), RetryAfter: retryAfter(resp)}
 	}
 	if resp.StatusCode != http.StatusOK {
-		c.log().Error("currency-api returned error",
+		log().Error("currency-api returned error",
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"status", resp.StatusCode,
@@ -123,7 +116,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 
 	var envelope map[string]json.RawMessage
 	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		c.log().Error("currency-api decode failed",
+		log().Error("currency-api decode failed",
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
@@ -133,7 +126,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 
 	rates, ok := envelope[lowBase]
 	if !ok {
-		c.log().Error("currency-api missing base rates",
+		log().Error("currency-api missing base rates",
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String())
@@ -141,7 +134,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 	}
 	var byCode map[string]json.RawMessage
 	if err := json.Unmarshal(rates, &byCode); err != nil {
-		c.log().Error("currency-api rates decode failed",
+		log().Error("currency-api rates decode failed",
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
@@ -151,7 +144,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 
 	raw, ok := byCode[lowQuote]
 	if !ok {
-		c.log().Error("currency-api missing quote rate",
+		log().Error("currency-api missing quote rate",
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String())
@@ -159,7 +152,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 	}
 	mid, err := decimal.NewFromString(string(raw))
 	if err != nil {
-		c.log().Error("currency-api rate parse failed",
+		log().Error("currency-api rate parse failed",
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
@@ -170,7 +163,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 	// would divide by zero in the spread calculation, or report a route as
 	// infinitely good.
 	if mid.IsZero() {
-		c.log().Error("currency-api zero rate",
+		log().Error("currency-api zero rate",
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String())
@@ -187,7 +180,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 		}
 	}
 
-	c.log().Debug("currency-api rate fetched",
+	log().Debug("currency-api rate fetched",
 		"service", c.Name(),
 		"pair", base+"/"+quote,
 		"duration", time.Since(started).Round(time.Millisecond).String())

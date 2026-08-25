@@ -211,6 +211,11 @@ type Store interface {
 	// Recent returns up to n most recent records, newest first.
 	Recent(ctx context.Context, corridor string, n int) ([]*Record, error)
 
+	// All returns the complete corridor history in chronological order
+	// (oldest first). Use this when the full history is needed, e.g.
+	// for transition detection across the entire chain.
+	All(ctx context.Context, corridor string) ([]*Record, error)
+
 	// Verify walks a corridor's whole chain, recomputing every hash and
 	// checking every link. An empty corridor verifies clean.
 	Verify(ctx context.Context, corridor string) error
