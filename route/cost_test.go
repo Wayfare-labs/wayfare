@@ -55,6 +55,17 @@ func TestCostDecomposeSplitsCorrectly(t *testing.T) {
 		t.Error("FX loss should be determined")
 	}
 
+	fees := d.Parts[1]
+	if fees.Component != CostFees {
+		t.Errorf("second component = %s, want fees", fees.Component)
+	}
+	if fees.Determined {
+		t.Error("fees must be undetermined when the network fee and operation count are not known")
+	}
+	if fees.Reason == "" {
+		t.Error("undetermined fees must carry a reason")
+	}
+
 	slippage := d.Parts[2]
 	if slippage.Determined {
 		t.Error("slippage should be undetermined without a size comparison")
@@ -135,6 +146,50 @@ func TestCostDecomposeReasonsAreNonEmpty(t *testing.T) {
 	for _, p := range d.Parts {
 		if !p.Determined && strings.TrimSpace(p.Reason) == "" {
 			t.Errorf("component %s is undetermined but has no reason", p.Component)
+		}
+	}
+}
+
+// TestCostNoDeterminedComponentDefaultsToZero pins the project's rule that an
+// unavailable quantity is unknown, not a default: every component that is
+// genuinely unmeasured must report Determined: false, so that no consumer is
+// told a number was established when nothing was observed.
+func TestCostNoDeterminedComponentDefaultsToZero(t *testing.T) {
+	q := Quote{
+		Kind:          KindDEX,
+		Description:   "USDC -> XLM -> NGNC",
+		Source:        "stellar-dex",
+		SendAsset:     testUSDC(),
+		SendAmount:    decimal.NewFromInt(100),
+		ReceiveAsset:  testNGNC(),
+		ReceiveAmount: decimal.RequireFromString("112800.51"),
+		EffectiveRate: decimal.RequireFromString("1128.0051"),
+		ReferenceMid:  decimal.RequireFromString("1500"),
+		LossPct:       decimal.RequireFromString("24.80"),
+		LossAmount:    decimal.RequireFromString("37199.49"),
+		Verdict:       VerdictUnusable,
+	}
+
+	// The only component with data to determine it is FX loss, which is
+	// computed from the observed effective rate against mid. Every other
+	// component has no observation or computation behind it, so each must
+	// report Determined: false — a value that was not observed or computed
+	// may never be presented as established.
+	for _, p := range Decompose(q, decimal.RequireFromString("1500")).Parts {
+		switch p.Component {
+		case CostFXLoss:
+			if !p.Determined {
+				t.Error("fx_loss is computed from observed rates and must be determined")
+			}
+		case CostFees, CostSlippage, CostExpectedFailure:
+			if p.Determined {
+				t.Errorf(
+					"%s must be undetermined: nothing was observed or computed "+
+						"that establishes its value", p.Component)
+			}
+			if strings.TrimSpace(p.Reason) == "" {
+				t.Errorf("undetermined %s must name what would determine it", p.Component)
+			}
 		}
 	}
 }

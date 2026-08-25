@@ -52,12 +52,18 @@ func Decompose(q Quote, mid decimal.Decimal) CostDecomposition {
 		Determined: true,
 	})
 
-	// Fees: negligible for DEX routes (Stellar network fee ~0.00001 XLM).
+	// Fees: undetermined. A Stellar path payment charges a base fee per
+	// operation, and a multi-hop path is more operations than a direct one,
+	// but Decompose sees only a Quote and has neither the path's operation
+	// count nor a currently-effective base fee. Naming the gap keeps the
+	// units honest: unavailable is unknown, not a default, and small is not
+	// zero.
 	parts = append(parts, CostPart{
 		Component:  CostFees,
 		Amount:     decimal.Zero,
 		Pct:        decimal.Zero,
-		Determined: true,
+		Determined: false,
+		Reason:     "network fee not measured; determining it requires the path's operation count and the current Stellar base fee",
 	})
 
 	// Slippage: undetermined without a comparison across sizes.
