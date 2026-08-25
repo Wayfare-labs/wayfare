@@ -66,13 +66,6 @@ func (c *CurrencyAPI) baseURL() string {
 	return DefaultCurrencyAPI
 }
 
-func (c *CurrencyAPI) log() *slog.Logger {
-	if c.Logger != nil {
-		return c.Logger
-	}
-	return slog.Default()
-}
-
 // Rate implements Provider.
 //
 // The payload is shaped {"date": "...", "<base>": {"<quote>": <number>, ...}}

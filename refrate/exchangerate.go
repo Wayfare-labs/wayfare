@@ -71,13 +71,6 @@ type erAPIResponse struct {
 	ErrorType          string                     `json:"error-type"`
 }
 
-func (e *ExchangeRateAPI) log() *slog.Logger {
-	if e.Logger != nil {
-		return e.Logger
-	}
-	return slog.Default()
-}
-
 // Rate implements Provider.
 func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, error) {
 	started := time.Now()
