@@ -87,3 +87,180 @@ func TestIsFiatToken(t *testing.T) {
 		t.Error("IsFiatToken must return false for XLM, a bridge asset")
 	}
 }
+
+// TestRegistryCompleteness ensures that every registered entry is valid,
+// and that every corridor destination token has a non-empty fiat peg, SEP-1
+// status, verification date, source URL, and home domain.
+func TestRegistryCompleteness(t *testing.T) {
+	entries := Registry()
+	if len(entries) == 0 {
+		t.Fatal("Registry() returned no entries")
+	}
+
+	for _, e := range entries {
+		if err := ValidateEntry(e); err != nil {
+			t.Errorf("ValidateEntry(%+v) failed: %v", e, err)
+		}
+
+		a, ok := Lookup(e.Code)
+		if !ok {
+			t.Errorf("Lookup(%q) returned not found", e.Code)
+		}
+		if a.Issuer != e.Issuer {
+			t.Errorf("Lookup(%q).Issuer = %q, want %q", e.Code, a.Issuer, e.Issuer)
+		}
+
+		if e.Code != "USDC" {
+			if e.Peg == "" {
+				t.Errorf("corridor entry %q must have a non-empty fiat peg", e.Code)
+			}
+			if e.Status == "" {
+				t.Errorf("corridor entry %q must have a non-empty SEP-1 status", e.Code)
+			}
+			if e.VerificationDate == "" {
+				t.Errorf("corridor entry %q must have a non-empty verification date", e.Code)
+			}
+			if e.SourceURL == "" {
+				t.Errorf("corridor entry %q must have a non-empty source URL", e.Code)
+			}
+			if e.HomeDomain == "" {
+				t.Errorf("corridor entry %q must have a non-empty home domain", e.Code)
+			}
+
+			peg, ok := FiatPeg(a)
+			if !ok || peg != e.Peg {
+				t.Errorf("FiatPeg(%s) = (%q, %v), want (%q, true)", a, peg, ok, e.Peg)
+			}
+
+			domain, ok := HomeDomain(a)
+			if !ok || domain != e.HomeDomain {
+				t.Errorf("HomeDomain(%s) = (%q, %v), want (%q, true)", a, domain, ok, e.HomeDomain)
+			}
+		}
+	}
+}
+
+// TestHalfRegisteredEntryFails tests that ValidateEntry fails loudly when
+// any required field is missing from a registration entry, preventing
+// silent misclassification of corridor assets.
+func TestHalfRegisteredEntryFails(t *testing.T) {
+	validCorridor := Entry{
+		Code:             "TESTC",
+		Issuer:           LinkIOIssuer,
+		Peg:              "TST",
+		Status:           "live",
+		VerificationDate: "2026-08-08",
+		SourceURL:        "https://example.com/.well-known/stellar.toml",
+		HomeDomain:       "example.com",
+	}
+
+	cases := []struct {
+		name      string
+		mutate    func(e Entry) Entry
+		wantError string
+	}{
+		{
+			name: "missing code",
+			mutate: func(e Entry) Entry {
+				e.Code = ""
+				return e
+			},
+			wantError: "asset code is required",
+		},
+		{
+			name: "missing issuer",
+			mutate: func(e Entry) Entry {
+				e.Issuer = ""
+				return e
+			},
+			wantError: "issuer is required",
+		},
+		{
+			name: "missing peg on corridor token",
+			mutate: func(e Entry) Entry {
+				e.Peg = ""
+				return e
+			},
+			wantError: "fiat peg is required",
+		},
+		{
+			name: "missing status on corridor token",
+			mutate: func(e Entry) Entry {
+				e.Status = ""
+				return e
+			},
+			wantError: "SEP-1 status is required",
+		},
+		{
+			name: "missing verification date on corridor token",
+			mutate: func(e Entry) Entry {
+				e.VerificationDate = ""
+				return e
+			},
+			wantError: "verification date is required",
+		},
+		{
+			name: "missing source URL on corridor token",
+			mutate: func(e Entry) Entry {
+				e.SourceURL = ""
+				return e
+			},
+			wantError: "source URL is required",
+		},
+		{
+			name: "missing home domain on corridor token",
+			mutate: func(e Entry) Entry {
+				e.HomeDomain = ""
+				return e
+			},
+			wantError: "home domain is required",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			entry := c.mutate(validCorridor)
+			err := ValidateEntry(entry)
+			if err == nil {
+				t.Fatalf("ValidateEntry(%+v) succeeded, want error containing %q", entry, c.wantError)
+			}
+		})
+	}
+}
+
+// TestLookupEntry verifies looking up full registration metadata by Asset and by Code.
+func TestLookupEntry(t *testing.T) {
+	entry, ok := LookupEntry(NGNC())
+	if !ok {
+		t.Fatal("LookupEntry(NGNC()) returned false")
+	}
+	if entry.Code != "NGNC" || entry.Peg != "NGN" || entry.Status != "live" || entry.HomeDomain != "ngnc.online" {
+		t.Errorf("LookupEntry(NGNC()) = %+v, unexpected fields", entry)
+	}
+
+	entryByCode, ok := LookupEntryByCode("ghsc")
+	if !ok {
+		t.Fatal("LookupEntryByCode(\"ghsc\") returned false")
+	}
+	if entryByCode.Code != "GHSC" || entryByCode.Peg != "GHS" || entryByCode.Status != "pending" {
+		t.Errorf("LookupEntryByCode(\"ghsc\") = %+v, unexpected fields", entryByCode)
+	}
+
+	usdcEntry, ok := LookupEntry(USDC())
+	if !ok {
+		t.Fatal("LookupEntry(USDC()) returned false")
+	}
+	if usdcEntry.Code != "USDC" || usdcEntry.Peg != "" || usdcEntry.Status != "unverified" {
+		t.Errorf("LookupEntry(USDC()) = %+v, unexpected fields", usdcEntry)
+	}
+
+	if _, ok := LookupEntryByCode("UNKNOWN"); ok {
+		t.Error("LookupEntryByCode(\"UNKNOWN\") must return false")
+	}
+	if _, ok := LookupEntry(Native()); ok {
+		t.Error("LookupEntry(Native()) must return false")
+	}
+	if _, ok := LookupEntry(Fiat("NGN")); ok {
+		t.Error("LookupEntry(Fiat(\"NGN\")) must return false")
+	}
+}

@@ -1,6 +1,7 @@
 package asset
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -49,6 +50,120 @@ const (
 	NGNCIssuer = LinkIOIssuer
 )
 
+// Entry represents a verified asset or corridor registration record.
+//
+// Structured metadata fields (Status, VerificationDate, SourceURL, HomeDomain)
+// are stored directly as data so that tools and APIs can inspect them.
+type Entry struct {
+	Code             string // Asset code, e.g. "NGNC", "USDC"
+	Issuer           string // Stellar issuing account ID
+	Peg              string // ISO-4217 fiat currency tracked (e.g. "NGN"); empty for non-fiat settlement assets
+	Status           string // SEP-1 status declared by issuer: "live", "pending", "unverified", etc.
+	VerificationDate string // Date verified against issuer's stellar.toml (YYYY-MM-DD)
+	SourceURL        string // URL where stellar.toml was read
+	HomeDomain       string // Domain publishing stellar.toml
+}
+
+// CorridorEntry is an alias for Entry for backward and semantic compatibility.
+type CorridorEntry = Entry
+
+// ValidateEntry checks that a registration entry has all required fields.
+// Corridor destination tokens (non-USDC assets) require Code, Issuer, Peg, Status,
+// VerificationDate, SourceURL, and HomeDomain.
+func ValidateEntry(e Entry) error {
+	if strings.TrimSpace(e.Code) == "" {
+		return fmt.Errorf("asset code is required")
+	}
+	if strings.TrimSpace(e.Issuer) == "" {
+		return fmt.Errorf("asset %s: issuer is required", e.Code)
+	}
+	// USDC is the settlement asset senders start from; all other registered assets
+	// are corridor destination tokens whose peg is mandatory.
+	if e.Code != "USDC" {
+		if strings.TrimSpace(e.Peg) == "" {
+			return fmt.Errorf("asset %s: fiat peg is required for corridor tokens", e.Code)
+		}
+		if strings.TrimSpace(e.Status) == "" {
+			return fmt.Errorf("asset %s: SEP-1 status is required", e.Code)
+		}
+		if strings.TrimSpace(e.VerificationDate) == "" {
+			return fmt.Errorf("asset %s: verification date is required", e.Code)
+		}
+		if strings.TrimSpace(e.SourceURL) == "" {
+			return fmt.Errorf("asset %s: source URL is required", e.Code)
+		}
+		if strings.TrimSpace(e.HomeDomain) == "" {
+			return fmt.Errorf("asset %s: home domain is required", e.Code)
+		}
+	}
+	return nil
+}
+
+// registry is the single source of truth for all verified assets and corridors.
+// Maps like known, fiatPegs, and homeDomains are automatically derived from this slice.
+var registry = []Entry{
+	{
+		Code:             "USDC",
+		Issuer:           USDCIssuer,
+		Peg:              "",
+		Status:           "unverified",
+		VerificationDate: "",
+		SourceURL:        "",
+		HomeDomain:       "",
+	},
+	{
+		Code:             "NGNC",
+		Issuer:           LinkIOIssuer,
+		Peg:              "NGN",
+		Status:           "live",
+		VerificationDate: "2026-08-08",
+		SourceURL:        "https://ngnc.online/.well-known/stellar.toml",
+		HomeDomain:       "ngnc.online",
+	},
+	{
+		Code:             "GHSC",
+		Issuer:           LinkIOIssuer,
+		Peg:              "GHS",
+		Status:           "pending",
+		VerificationDate: "2026-08-08",
+		SourceURL:        "https://ngnc.online/.well-known/stellar.toml",
+		HomeDomain:       "ngnc.online",
+	},
+	{
+		Code:             "KESC",
+		Issuer:           LinkIOIssuer,
+		Peg:              "KES",
+		Status:           "pending",
+		VerificationDate: "2026-08-08",
+		SourceURL:        "https://ngnc.online/.well-known/stellar.toml",
+		HomeDomain:       "ngnc.online",
+	},
+}
+
+var (
+	known       = make(map[string]Asset)
+	fiatPegs    = make(map[string]string)
+	homeDomains = make(map[string]string)
+	entries     = make(map[string]Entry)
+)
+
+func init() {
+	for _, e := range registry {
+		if err := ValidateEntry(e); err != nil {
+			panic(fmt.Sprintf("asset: invalid registry entry %q: %v", e.Code, err))
+		}
+		a := Stellar(e.Code, e.Issuer)
+		known[e.Code] = a
+		if e.Peg != "" {
+			fiatPegs[e.Code+":"+e.Issuer] = e.Peg
+		}
+		if e.HomeDomain != "" {
+			homeDomains[e.Issuer] = e.HomeDomain
+		}
+		entries[e.Code+":"+e.Issuer] = e
+	}
+}
+
 // USDC is the settlement asset senders start from.
 func USDC() Asset { return Stellar("USDC", USDCIssuer) }
 
@@ -64,33 +179,6 @@ func GHSC() Asset { return Stellar("GHSC", LinkIOIssuer) }
 // declares it status="pending" — not in service.
 func KESC() Asset { return Stellar("KESC", LinkIOIssuer) }
 
-// fiatPegs records which Stellar tokens claim to track an off-chain currency,
-// and which one.
-//
-// This is what makes a derivative corridor detectable. A path hopping through
-// XLM is using a bridge asset; a path hopping through NGNC is inheriting
-// another fiat token's peg, its liquidity and its failure modes. The two look
-// identical in a Horizon path record and mean entirely different things.
-//
-// Entries are added only after the peg is read from the issuer's own
-// stellar.toml, the same standard applied to issuer accounts.
-var fiatPegs = map[string]string{
-	"NGNC:" + LinkIOIssuer: "NGN",
-	"GHSC:" + LinkIOIssuer: "GHS",
-	"KESC:" + LinkIOIssuer: "KES",
-}
-
-// known indexes the verified tokens by code, for resolving a corridor named
-// in a request. Codes are unique here because every entry was verified
-// individually; this is a convenience over the verified set, not a namespace
-// in which asset codes are assumed unique in general.
-var known = map[string]Asset{
-	"USDC": USDC(),
-	"NGNC": NGNC(),
-	"GHSC": GHSC(),
-	"KESC": KESC(),
-}
-
 // Lookup resolves a verified token by its code.
 //
 // It returns false for anything not explicitly verified, so an unrecognised
@@ -98,6 +186,31 @@ var known = map[string]Asset{
 func Lookup(code string) (Asset, bool) {
 	a, ok := known[strings.ToUpper(strings.TrimSpace(code))]
 	return a, ok
+}
+
+// LookupEntry returns the registration record for a given asset.
+func LookupEntry(a Asset) (Entry, bool) {
+	if a.Kind != KindStellar || a.Issuer == "" {
+		return Entry{}, false
+	}
+	e, ok := entries[a.Code+":"+a.Issuer]
+	return e, ok
+}
+
+// LookupEntryByCode returns the registration record for a given asset code.
+func LookupEntryByCode(code string) (Entry, bool) {
+	a, ok := Lookup(code)
+	if !ok {
+		return Entry{}, false
+	}
+	return LookupEntry(a)
+}
+
+// Registry returns a copy of all registered entries in the registry.
+func Registry() []Entry {
+	out := make([]Entry, len(registry))
+	copy(out, registry)
+	return out
 }
 
 // KnownCodes lists the verified token codes, sorted.
@@ -108,19 +221,6 @@ func KnownCodes() []string {
 	}
 	sort.Strings(codes)
 	return codes
-}
-
-// homeDomains maps a verified issuer to the domain publishing its stellar.toml.
-//
-// Only issuers whose document was read directly appear here. The mapping is
-// what lets a check resolve an asset to the anchor that declares it, and an
-// unverified entry would send a checker to somebody else's document — which is
-// the identity confusion this package refuses everywhere else.
-//
-// USDC is deliberately absent: its issuer is still unverified against Circle's
-// own stellar.toml, so no domain can be claimed for it yet.
-var homeDomains = map[string]string{
-	LinkIOIssuer: "ngnc.online",
 }
 
 // HomeDomain reports the domain publishing an asset's stellar.toml, when the
