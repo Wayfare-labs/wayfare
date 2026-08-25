@@ -106,9 +106,10 @@ func (it *IntegrityTransition) Describe() string {
 // The detection is idempotent: re-running it over the same history produces
 // the same transitions, not duplicates.
 func DetectTransitions(ctx context.Context, store Store, corridor string) ([]*IntegrityTransition, error) {
-	// Fetch enough history to compare consecutive runs. We need at least 2
-	// runs to have any transitions at all.
-	records, err := store.Recent(ctx, corridor, 100)
+	// Load the complete corridor history to find all transitions.
+	// Using Recent(100) would miss older transitions in corridors with
+	// more than 100 runs.
+	records, err := store.All(ctx, corridor)
 	if err != nil {
 		return nil, fmt.Errorf("runstore: fetching history for %s: %w", corridor, err)
 	}
@@ -118,17 +119,12 @@ func DetectTransitions(ctx context.Context, store Store, corridor string) ([]*In
 		return nil, nil
 	}
 
-	// Records are returned newest first; reverse to process chronologically.
-	chronological := make([]*Record, len(records))
-	for i, r := range records {
-		chronological[len(records)-1-i] = r
-	}
-
+	// All() returns records in chronological order (oldest first).
 	var transitions []*IntegrityTransition
 
-	for i := 1; i < len(chronological); i++ {
-		prev := chronological[i-1]
-		curr := chronological[i]
+	for i := 1; i < len(records); i++ {
+		prev := records[i-1]
+		curr := records[i]
 
 		transition := compareRuns(prev, curr)
 		if transition != nil {
@@ -186,8 +182,8 @@ func compareRuns(prev, curr *Record) *IntegrityTransition {
 				CurrentRunAt:           curr.RecordedAt,
 				PreviousDependsOn:      prev.DependsOn,
 				CurrentDependsOn:       curr.DependsOn,
-				PreviousReferenceSource: prev.Reference.ScoredAgainst,
-				CurrentReferenceSource:  curr.Reference.ScoredAgainst,
+				PreviousReferenceSource: prev.Reference.Source,
+				CurrentReferenceSource:  curr.Reference.Source,
 				TransitionType:         TransitionDependsOnChanged,
 			}
 		}
@@ -203,29 +199,46 @@ func compareRuns(prev, curr *Record) *IntegrityTransition {
 		CurrentRunAt:           curr.RecordedAt,
 		PreviousDependsOn:      prev.DependsOn,
 		CurrentDependsOn:       curr.DependsOn,
-		PreviousReferenceSource: prev.Reference.ScoredAgainst,
-		CurrentReferenceSource:  curr.Reference.ScoredAgainst,
+		PreviousReferenceSource: prev.Reference.Source,
+		CurrentReferenceSource:  curr.Reference.Source,
 		TransitionType:         TransitionIntegrityStateChange,
 	}
 }
 
 // depsetsEqual compares two sorted string slices for equality.
 func depsetsEqual(a, b []string) bool {
+	// Deduplicate each input before comparing, so duplicate values
+	// are treated as a single dependency.
+	a = dedup(a)
+	b = dedup(b)
 	if len(a) != len(b) {
 		return false
 	}
-	// Both should already be sorted by the caller, but sort defensively
-	// for correctness.
-	sa := make([]string, len(a))
-	sb := make([]string, len(b))
-	copy(sa, a)
-	copy(sb, b)
-	sort.Strings(sa)
-	sort.Strings(sb)
-	for i := range sa {
-		if sa[i] != sb[i] {
+	sort.Strings(a)
+	sort.Strings(b)
+	for i := range a {
+		if a[i] != b[i] {
 			return false
 		}
 	}
 	return true
+}
+
+// dedup removes duplicate strings from a sorted or unsorted slice,
+// returning a sorted slice of unique values.
+func dedup(in []string) []string {
+	if len(in) <= 1 {
+		return in
+	}
+	// Sort first so duplicates are adjacent.
+	sorted := make([]string, len(in))
+	copy(sorted, in)
+	sort.Strings(sorted)
+	out := sorted[:1]
+	for _, s := range sorted[1:] {
+		if s != out[len(out)-1] {
+			out = append(out, s)
+		}
+	}
+	return out
 }

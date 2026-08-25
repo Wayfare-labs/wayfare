@@ -120,6 +120,12 @@ func (s *ReadOnly) Recent(_ context.Context, corridor string, n int) ([]*Record,
 	return out, nil
 }
 
+// All returns the complete corridor history in chronological order
+// (oldest first).
+func (s *ReadOnly) All(_ context.Context, corridor string) ([]*Record, error) {
+	return s.records[strings.ToUpper(corridor)], nil
+}
+
 // Verify re-walks a corridor's chain.
 func (s *ReadOnly) Verify(_ context.Context, corridor string) error {
 	corridor = strings.ToUpper(corridor)

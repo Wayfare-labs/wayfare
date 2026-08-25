@@ -94,6 +94,12 @@ func TestDetectTransitions_IntegrityStateChange(t *testing.T) {
 	if tr.TransitionType != TransitionIntegrityStateChange {
 		t.Errorf("TransitionType = %v, want TransitionIntegrityStateChange", tr.TransitionType)
 	}
+	if tr.PreviousReferenceSource != "exchangerate-api" {
+		t.Errorf("PreviousReferenceSource = %s, want exchangerate-api", tr.PreviousReferenceSource)
+	}
+	if tr.CurrentReferenceSource != "exchangerate-api" {
+		t.Errorf("CurrentReferenceSource = %s, want exchangerate-api", tr.CurrentReferenceSource)
+	}
 }
 
 func TestDetectTransitions_DependonsChanged(t *testing.T) {
@@ -245,6 +251,58 @@ func TestDetectTransitions_NoMarketToPriceable(t *testing.T) {
 	}
 }
 
+func TestDetectTransitions_CompleteHistory(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	corridor := "USDC-NGNC"
+
+	// Write 105 runs: 102 DIRECT, then DERIVATIVE.
+	// The old Recent(100) limit would miss the DIRECT→DERIVATIVE transition
+	// at position 102, but All() loads the complete history.
+	for i := 0; i < 105; i++ {
+		integrity := "DIRECT"
+		if i >= 102 {
+			integrity = "DERIVATIVE"
+		}
+		rec := &Record{
+			Version:   Version,
+			Seq:       int64(i + 1),
+			RecordedAt: time.Date(2026, 1, 1+i, 12, 0, 0, 0, time.UTC),
+			Corridor:  corridor,
+			Integrity: integrity,
+			DependsOn: []string{},
+			Reference: Reference{
+				Mid:    "1500",
+				Source: "exchangerate-api",
+			},
+		}
+		if err := store.Append(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	transitions, err := DetectTransitions(ctx, store, corridor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(transitions) != 1 {
+		t.Fatalf("expected 1 transition (at position 102→103), got %d", len(transitions))
+	}
+
+	tr := transitions[0]
+	if tr.PreviousIntegrity != "DIRECT" {
+		t.Errorf("PreviousIntegrity = %s, want DIRECT", tr.PreviousIntegrity)
+	}
+	if tr.CurrentIntegrity != "DERIVATIVE" {
+		t.Errorf("CurrentIntegrity = %s, want DERIVATIVE", tr.CurrentIntegrity)
+	}
+}
+
 func TestDetectLatestTransition(t *testing.T) {
 	dir := t.TempDir()
 	store, err := Open(dir)
@@ -297,12 +355,15 @@ func TestDepsetsEqual(t *testing.T) {
 		a, b []string
 		want bool
 	}{
-		{"both nil", nil, nil, true},
-		{"both empty", []string{}, []string{}, true},
-		{"equal", []string{"KESC", "NGNC"}, []string{"KESC", "NGNC"}, true},
-		{"same elements different order", []string{"NGNC", "KESC"}, []string{"KESC", "NGNC"}, true},
-		{"different length", []string{"KESC"}, []string{"KESC", "NGNC"}, false},
-		{"different values", []string{"KESC"}, []string{"NGNC"}, false},
+	{"both nil", nil, nil, true},
+	{"both empty", []string{}, []string{}, true},
+	{"equal", []string{"KESC", "NGNC"}, []string{"KESC", "NGNC"}, true},
+	{"same elements different order", []string{"NGNC", "KESC"}, []string{"KESC", "NGNC"}, true},
+	{"different length", []string{"KESC"}, []string{"KESC", "NGNC"}, false},
+	{"different values", []string{"KESC"}, []string{"NGNC"}, false},
+	{"dedup one unique vs repeated", []string{"NGNC", "NGNC"}, []string{"NGNC"}, true},
+	{"dedup with extra unique", []string{"NGNC", "NGNC", "KESC"}, []string{"NGNC", "KESC"}, true},
+	{"dedup different unique counts", []string{"NGNC", "NGNC"}, []string{"KESC", "KESC"}, false},
 	}
 
 	for _, tt := range tests {

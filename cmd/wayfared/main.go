@@ -91,14 +91,18 @@ func main() {
 		os.Exit(2)
 	}
 
+	dex.SetLogger(logger)
+	refrate.SetLogger(logger)
+	server.SetLogger(logger)
+
 	engine := &route.Engine{
-		DEX: &dex.Client{HorizonURL: *horizon, Logger: logger},
+		DEX: &dex.Client{HorizonURL: *horizon},
 		// Two independent providers, each cached, cross-checked for
 		// divergence. Caching matters here specifically: a ladder is a
 		// dozen quotes that would otherwise each fetch the same mid.
 		RefRate: &refrate.Cross{
-			Primary:   &refrate.Cached{Inner: &refrate.ExchangeRateAPI{Logger: logger}},
-			Secondary: &refrate.Cached{Inner: &refrate.CurrencyAPI{Logger: logger}},
+			Primary:   &refrate.Cached{Inner: &refrate.ExchangeRateAPI{}},
+			Secondary: &refrate.Cached{Inner: &refrate.CurrencyAPI{}},
 		},
 	}
 
@@ -145,7 +149,6 @@ func main() {
 		Timeout:      *timeout,
 		HistoryFirst: *histFirst,
 		Checks:       &checks.Runner{HorizonURL: *horizon},
-		Logger:       logger,
 	}
 		httpSrv := &http.Server{
 			Addr:              *addr,

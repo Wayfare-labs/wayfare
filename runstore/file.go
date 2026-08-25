@@ -242,6 +242,22 @@ func (s *FileStore) Recent(ctx context.Context, corridor string, n int) ([]*Reco
 	return out, nil
 }
 
+// All returns the complete corridor history in chronological order
+// (oldest first).
+func (s *FileStore) All(ctx context.Context, corridor string) ([]*Record, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	all, err := s.readAll(strings.ToUpper(corridor))
+	if err != nil {
+		return nil, err
+	}
+	return all, nil
+}
+
 // Verify walks a corridor's whole chain.
 func (s *FileStore) Verify(ctx context.Context, corridor string) error {
 	if err := ctx.Err(); err != nil {

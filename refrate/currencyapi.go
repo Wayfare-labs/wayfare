@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
+
+	"github.com/Wayfare-labs/wayfare/transport"
 )
 
 // DefaultCurrencyAPI is the keyless endpoint of the CC0-licensed
@@ -41,10 +42,6 @@ const DefaultCurrencyAPI = "https://latest.currency-api.pages.dev/v1/currencies/
 type CurrencyAPI struct {
 	BaseURL string       // defaults to DefaultCurrencyAPI
 	Client  *http.Client // defaults to a client with a 10s timeout
-
-	// Logger is the structured logger for upstream call logging.
-	// Nil means slog.Default().
-	Logger *slog.Logger
 }
 
 // Name identifies the provider.
@@ -62,13 +59,6 @@ func (c *CurrencyAPI) baseURL() string {
 		return c.BaseURL
 	}
 	return DefaultCurrencyAPI
-}
-
-func (c *CurrencyAPI) log() *slog.Logger {
-	if c.Logger != nil {
-		return c.Logger
-	}
-	return slog.Default()
 }
 
 // Rate implements Provider.
@@ -94,24 +84,24 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 
 	resp, err := c.client().Do(req)
 	if err != nil {
-		c.log().Error("currency-api request failed",
+		log().Error("currency-api request failed",
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
-			"error", err)
+			"error", transport.SanitizeTransportError(err))
 		return Rate{}, fmt.Errorf("refrate: fetching %s rates: %w", base, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
-		c.log().Warn("currency-api rate limited",
+		log().Warn("currency-api rate limited",
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, &ErrRateLimited{Source: c.Name(), RetryAfter: retryAfter(resp)}
 	}
 	if resp.StatusCode != http.StatusOK {
-		c.log().Error("currency-api returned error",
+		log().Error("currency-api returned error",
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"status", resp.StatusCode,
@@ -121,30 +111,57 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 
 	var envelope map[string]json.RawMessage
 	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		log().Error("currency-api decode failed",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String(),
+			"error", err)
 		return Rate{}, fmt.Errorf("refrate: decoding response: %w", err)
 	}
 
 	rates, ok := envelope[lowBase]
 	if !ok {
+		log().Error("currency-api missing base rates",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, &ErrNoRate{Base: base, Quote: quote, Source: c.Name()}
 	}
 	var byCode map[string]json.RawMessage
 	if err := json.Unmarshal(rates, &byCode); err != nil {
+		log().Error("currency-api rates decode failed",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String(),
+			"error", err)
 		return Rate{}, fmt.Errorf("refrate: decoding %s rates: %w", base, err)
 	}
 
 	raw, ok := byCode[lowQuote]
 	if !ok {
+		log().Error("currency-api missing quote rate",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, &ErrNoRate{Base: base, Quote: quote, Source: c.Name()}
 	}
 	mid, err := decimal.NewFromString(string(raw))
 	if err != nil {
+		log().Error("currency-api rate parse failed",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String(),
+			"error", err)
 		return Rate{}, fmt.Errorf("refrate: parsing %s/%s rate %q: %w", base, quote, raw, err)
 	}
 	// A rate of exactly zero is absence, not a quote. Taken at face value it
 	// would divide by zero in the spread calculation, or report a route as
 	// infinitely good.
 	if mid.IsZero() {
+		log().Error("currency-api zero rate",
+			"service", c.Name(),
+			"pair", base+"/"+quote,
+			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, &ErrNoRate{Base: base, Quote: quote, Source: c.Name()}
 	}
 
@@ -158,7 +175,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 		}
 	}
 
-	c.log().Debug("currency-api rate fetched",
+	log().Debug("currency-api rate fetched",
 		"service", c.Name(),
 		"pair", base+"/"+quote,
 		"duration", time.Since(started).Round(time.Millisecond).String())

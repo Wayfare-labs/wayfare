@@ -35,6 +35,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/transport"
 )
 
 // DefaultHorizonURL is SDF's public mainnet Horizon instance.
@@ -44,10 +45,6 @@ const DefaultHorizonURL = "https://horizon.stellar.org"
 type Client struct {
 	HorizonURL string
 	HTTPClient *http.Client
-
-	// Logger is the structured logger for upstream call logging.
-	// Nil means slog.Default().
-	Logger *slog.Logger
 }
 
 func (c *Client) horizonURL() string {
@@ -242,9 +239,16 @@ func (c *Client) MeasureSlippage(ctx context.Context, source asset.Asset, amount
 	return s, nil
 }
 
-func (c *Client) log() *slog.Logger {
-	if c.Logger != nil {
-		return c.Logger
+// pkgLogger is the package-level logger for upstream call logging.
+// Set via SetLogger; nil means slog.Default().
+var pkgLogger *slog.Logger
+
+// SetLogger configures the package-level logger for upstream call logging.
+func SetLogger(l *slog.Logger) { pkgLogger = l }
+
+func log() *slog.Logger {
+	if pkgLogger != nil {
+		return pkgLogger
 	}
 	return slog.Default()
 }
@@ -264,17 +268,17 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		c.log().Error("horizon request failed",
+		log().Error("horizon request failed",
 			"service", "horizon",
 			"endpoint", path,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
-			"error", err)
+			"error", transport.SanitizeTransportError(err))
 		return fmt.Errorf("dex: querying horizon: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		c.log().Error("horizon returned error",
+		log().Error("horizon returned error",
 			"service", "horizon",
 			"endpoint", path,
 			"status", resp.StatusCode,
@@ -282,7 +286,7 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 		return fmt.Errorf("dex: horizon returned HTTP %d for %s", resp.StatusCode, path)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		c.log().Error("horizon response decode failed",
+		log().Error("horizon response decode failed",
 			"service", "horizon",
 			"endpoint", path,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
@@ -290,7 +294,7 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 		return fmt.Errorf("dex: decoding horizon response: %w", err)
 	}
 
-	c.log().Debug("horizon request succeeded",
+	log().Debug("horizon request succeeded",
 		"service", "horizon",
 		"endpoint", path,
 		"status", resp.StatusCode,
