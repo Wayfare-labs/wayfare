@@ -68,6 +68,22 @@ type CorridorJSON struct {
 	// current figure from a reused one.
 	ReferenceFetchedAt string `json:"reference_fetched_at,omitempty"`
 
+	// The parallel/street-market reference, reported as a second dimension
+	// alongside the official rate and never blended into it. The whole block
+	// is absent when no parallel source is configured; present-but-
+	// UNABLE-TO-DETERMINE (with parallel_reason) when a source was configured
+	// but could not be defended.
+	//
+	// ParallelStatus is REPORTED or UNABLE-TO-DETERMINE. parallel_gap_pct is
+	// how far the parallel mid sits from the official mid, signed, and is
+	// meaningful only when the status is REPORTED. The official verdict and
+	// loss figures above are computed without reference to any of these.
+	ParallelStatus string `json:"parallel_status,omitempty"`
+	ParallelMid    string `json:"parallel_mid,omitempty"`
+	ParallelSource string `json:"parallel_source,omitempty"`
+	ParallelGapPct string `json:"parallel_gap_pct,omitempty"`
+	ParallelReason string `json:"parallel_reason,omitempty"`
+
 	Floor     string `json:"floor_loss_pct"`
 	FloorSize string `json:"floor_size"`
 	WorstLoss string `json:"worst_loss_pct"`
@@ -174,6 +190,15 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 	}
 	if !l.Reference.DivergencePct.IsZero() {
 		out.ReferenceDivergencePct = l.Reference.DivergencePct.StringFixed(4)
+	}
+	if l.Parallel != nil {
+		out.ParallelStatus = l.Parallel.Status.String()
+		out.ParallelSource = l.Parallel.Source
+		out.ParallelReason = l.Parallel.Reason
+		if l.Parallel.Reported() {
+			out.ParallelMid = l.Parallel.Mid.String()
+			out.ParallelGapPct = l.Parallel.GapPct.StringFixed(4)
+		}
 	}
 
 	if l.Recommended != nil {
