@@ -152,7 +152,7 @@ async function measure() {
   $('status').textContent = 'measuring live — a full ladder is a dozen round trips…';
   $('out').innerHTML = '';
   try {
-    const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}`);
+    const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}&live=1`);
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
     render(data);

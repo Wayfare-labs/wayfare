@@ -22,7 +22,7 @@ type QuoteJSON struct {
 	ReceiveAmount string   `json:"receive_amount"`
 	EffectiveRate string   `json:"effective_rate"`
 	LossPct       string   `json:"loss_pct"`
-	LossAmount    string   `json:"loss_amount"`
+	LossAmount    string   `json:"loss_amount,omitempty"`
 	Verdict       string   `json:"verdict"`
 	Warnings      []string `json:"warnings"`
 }
