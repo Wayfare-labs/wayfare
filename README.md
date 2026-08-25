@@ -101,7 +101,10 @@ monitor carries an integrity state alongside the loss grade.
 
 **The benchmark is the charitable one.** The reference is the official
 USD/NGN rate. If the rate people actually transact at is weaker, every figure
-above *understates* the loss.
+above *understates* the loss. Whether a defensible parallel-rate source exists
+that could provide a less charitable benchmark was investigated — no usable
+source was found. See
+[docs/parallel-rate-research.md](docs/parallel-rate-research.md).
 
 The issuer set is case study #1, not the product. Wayfare measures any
 stablecoin → fiat-token corridor.
