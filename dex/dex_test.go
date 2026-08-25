@@ -3,11 +3,13 @@ package dex_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -318,6 +320,113 @@ func TestUnrecordedRequestDoesNotReachTheNetwork(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no recorded response") {
 		t.Errorf("error %q should say the request was not recorded", err)
+	}
+}
+
+// TestHorizonThrottleSurfacesAsRateLimited pins the distinction between a
+// throttled Horizon and a broken one.
+//
+// A 429 is routine under a monitoring schedule — the remedy is to wait for
+// the interval and retry. A 500 means the upstream is unhealthy. Both used to
+// surface as the same generic error string, so a corridor that was merely
+// rate-limited read as an outage. The typed error must survive unwrapping so
+// a caller can branch on it programmatically rather than by substring.
+func TestHorizonThrottleSurfacesAsRateLimited(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "90")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := &dex.Client{HorizonURL: srv.URL}
+	_, err := c.StrictSendPaths(context.Background(), asset.USDC(), dec(t, "100"), asset.NGNC())
+	if err == nil {
+		t.Fatal("expected an error for HTTP 429, got none")
+	}
+
+	var limited *dex.ErrRateLimited
+	if !errors.As(err, &limited) {
+		t.Fatalf("error %q does not unwrap to ErrRateLimited; a throttled corridor "+
+			"is indistinguishable from a broken one", err)
+	}
+	if limited.Endpoint != "/paths/strict-send" {
+		t.Errorf("Endpoint = %q, want the pathfinding endpoint", limited.Endpoint)
+	}
+	if limited.RetryAfter != 90*time.Second {
+		t.Errorf("RetryAfter = %s, want the 90s the header asked for", limited.RetryAfter)
+	}
+	if !strings.Contains(err.Error(), "rate-limited") {
+		t.Errorf("error %q should say plainly that Horizon rate-limited the request", err)
+	}
+}
+
+// TestHorizonThrottleWithHTTPDateRetryAfter covers the other legal form of
+// the header.
+func TestHorizonThrottleWithHTTPDateRetryAfter(t *testing.T) {
+	when := time.Now().Add(2 * time.Minute).UTC().Truncate(time.Second)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", when.Format(http.TimeFormat))
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := &dex.Client{HorizonURL: srv.URL}
+	_, err := c.StrictSendPaths(context.Background(), asset.USDC(), dec(t, "100"), asset.NGNC())
+
+	var limited *dex.ErrRateLimited
+	if !errors.As(err, &limited) {
+		t.Fatalf("error %q does not unwrap to ErrRateLimited", err)
+	}
+	if limited.RetryAfter <= 0 || limited.RetryAfter > 3*time.Minute {
+		t.Errorf("RetryAfter = %s, want roughly the two minutes the date encodes",
+			limited.RetryAfter)
+	}
+}
+
+// TestMissingRetryAfterIsReportedNotGuessed: Horizon is free not to send the
+// header, and inventing a backoff would be exactly the plausible-looking
+// number this project refuses everywhere else. Zero means unknown.
+func TestMissingRetryAfterIsReportedNotGuessed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := &dex.Client{HorizonURL: srv.URL}
+	_, err := c.StrictSendPaths(context.Background(), asset.USDC(), dec(t, "100"), asset.NGNC())
+
+	var limited *dex.ErrRateLimited
+	if !errors.As(err, &limited) {
+		t.Fatalf("error %q does not unwrap to ErrRateLimited", err)
+	}
+	if limited.RetryAfter != 0 {
+		t.Errorf("RetryAfter = %s, want zero when no header was sent", limited.RetryAfter)
+	}
+	if !strings.Contains(err.Error(), "no usable Retry-After") {
+		t.Errorf("error %q should say the interval is unknown rather than imply one exists", err)
+	}
+}
+
+// TestServerErrorStaysAGenericFailure keeps the boundary honest from the
+// other side: a 500 must not be misread as a throttle.
+func TestServerErrorStaysAGenericFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := &dex.Client{HorizonURL: srv.URL}
+	_, err := c.StrictSendPaths(context.Background(), asset.USDC(), dec(t, "100"), asset.NGNC())
+	if err == nil {
+		t.Fatal("expected an error for HTTP 500, got none")
+	}
+	var limited *dex.ErrRateLimited
+	if errors.As(err, &limited) {
+		t.Errorf("error %q unwraps to ErrRateLimited; a broken upstream must not "+
+			"read as one that is merely throttled", err)
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error %q should carry the status code", err)
 	}
 }
 

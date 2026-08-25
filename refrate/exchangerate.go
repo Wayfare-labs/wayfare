@@ -104,7 +104,7 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 			"service", e.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String())
-		return Rate{}, &ErrRateLimited{Source: e.Name(), RetryAfter: retryAfter(resp)}
+		return Rate{}, &ErrRateLimited{Source: e.Name(), RetryAfter: transport.RetryAfter(resp)}
 	}
 	if resp.StatusCode != http.StatusOK {
 		e.log().Error("exchangerate-api returned error",

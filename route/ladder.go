@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/shopspring/decimal"
@@ -65,6 +66,19 @@ type Rung struct {
 // Priced reports whether this rung produced a quote.
 func (r Rung) Priced() bool {
 	return r.Err == nil && r.Result != nil && len(r.Result.Quotes) > 0
+}
+
+// Unmeasured reports whether this rung learned anything at all about the
+// corridor.
+//
+// Two shapes of rung learn nothing: one whose request failed before reaching
+// an upstream (Err set), and one whose request never landed, recorded by
+// Engine.Quote as a note rather than an error and arriving with no quotes and
+// IntegrityUnknown — identical in shape to NO-MARKET, but with nothing
+// learned either way. A rung Horizon answered, even "there is no path", is
+// measured: NO-MARKET is a finding about the corridor, not an outage.
+func (r Rung) Unmeasured() bool {
+	return r.Err != nil || r.Result == nil || r.Result.Integrity == IntegrityUnknown
 }
 
 // LadderResult is a corridor measured across sizes.
@@ -131,25 +145,80 @@ func (l *LadderResult) Viable() bool { return l.Recommended != nil }
 // shape to NO-MARKET. What separates them is that Horizon answering "no path"
 // yields IntegrityNoMarket, while a request that never landed leaves the state
 // IntegrityUnknown, because nothing was learned about the corridor's structure.
+//
+// # What a half-measured ladder means
+//
+// Ladder returns a result even when only some rungs could be priced; it
+// returns an error only when the run as a whole was impossible, such as a
+// cancelled context. The contract for the in-between case:
+//
+//   - Every figure — Floor, WorstLoss, Recommended, the reference fields —
+//     describes only the sizes that were measured. An unmeasured size
+//     contributes nothing: its absence is unknown, never zero loss and never
+//     no-market.
+//   - Integrity still reflects every rung that learned something. One dead
+//     size cannot erase a direct path found at another.
+//   - PartiallyFailed reports the in-between state, UnmeasuredSizes names the
+//     sizes nothing is known about, and the Finding states the qualification
+//     in prose so no reader mistakes a partial curve for a complete one.
+//   - Only Failed() — every rung unmeasured — means nothing was learned at
+//     all, and any figure the result carries is a zero-value artefact rather
+//     than a measurement.
 func (l *LadderResult) Failed() bool {
 	if len(l.Rungs) == 0 {
 		return true
 	}
 	for _, r := range l.Rungs {
-		if r.Err != nil || r.Result == nil {
-			continue
-		}
-		if r.Result.Integrity != IntegrityUnknown {
+		if !r.Unmeasured() {
 			return false
 		}
 	}
 	return true
 }
 
+// PartiallyFailed reports whether some sizes were measured while others were
+// not — the in-between case Failed does not cover.
+//
+// A half-measured ladder is a real measurement of the sizes that answered,
+// qualified by the ones that did not; it is neither a clean run nor a failed
+// one. Callers publishing figures from a ladder should consult this alongside
+// Viable(): the floor of a corridor known at three of twelve sizes is a weaker
+// claim than the same number on a full curve, and the Finding says so.
+func (l *LadderResult) PartiallyFailed() bool {
+	if len(l.Rungs) == 0 {
+		return false
+	}
+	unmeasured := 0
+	for _, r := range l.Rungs {
+		if r.Unmeasured() {
+			unmeasured++
+		}
+	}
+	return unmeasured > 0 && unmeasured < len(l.Rungs)
+}
+
+// UnmeasuredSizes names the send amounts at which nothing was learned, in
+// ascending order. Empty means every size produced information about the
+// corridor.
+func (l *LadderResult) UnmeasuredSizes() []decimal.Decimal {
+	var out []decimal.Decimal
+	for _, r := range l.Rungs {
+		if r.Unmeasured() {
+			out = append(out, r.SendAmount)
+		}
+	}
+	return out
+}
+
 // Ladder prices a corridor at every size and summarises the curve.
 //
 // Individual sizes are priced concurrently but reported in ascending order,
 // so the output is deterministic regardless of which request returned first.
+//
+// A size that cannot be priced leaves an unmeasured rung rather than failing
+// the ladder: the returned result carries whatever the surviving sizes
+// established, and Failed, PartiallyFailed and UnmeasuredSizes separate a
+// full curve from a partial one from no measurement at all.
 func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, error) {
 	sizes := req.Sizes
 	if len(sizes) == 0 {
@@ -287,6 +356,10 @@ func (l *LadderResult) summarise() {
 // Every branch here describes a measurement. None of them recommends, and the
 // no-market and derivative cases are never folded into a loss percentage,
 // because the whole point of the taxonomy is that those are different results.
+//
+// A partially-measured ladder keeps its headline and carries the gap as a
+// qualification appended to it — the figures are real, but a reader must be
+// able to tell a full curve from a partial one.
 func (l *LadderResult) finding(anyPriced bool, firstErr error) string {
 	send, recv := l.Request.SendAsset.Code, l.Request.ReceiveAsset.Code
 
@@ -314,20 +387,40 @@ func (l *LadderResult) finding(anyPriced bool, firstErr error) string {
 			send, recv, describeAssets(l.DependsOn), recv, describeAssets(l.DependsOn))
 	}
 
+	var body string
 	if l.Viable() {
-		return prefix + fmt.Sprintf(
+		body = fmt.Sprintf(
 			"Best available: %s%% below the %s mid at %s %s, graded %s. "+
 				"Loss reaches %s%% at %s %s.",
 			l.Recommended.LossPct.StringFixed(2), l.ReferenceSource,
 			l.RecommendedSize, send, l.Recommended.Verdict,
 			l.WorstLoss.StringFixed(2), l.WorstSize, send)
+	} else {
+		body = fmt.Sprintf(
+			"No usable size. Loss against the %s mid is %s%% at %s %s — where price "+
+				"impact is negligible, so that is the corridor's structural floor, not "+
+				"a depth effect — rising to %s%% at %s %s. Every size tested is graded "+
+				"Unusable, so nothing is recommended.",
+			l.ReferenceSource, l.Floor.StringFixed(2), l.FloorSize, send,
+			l.WorstLoss.StringFixed(2), l.WorstSize, send)
 	}
 
-	return prefix + fmt.Sprintf(
-		"No usable size. Loss against the %s mid is %s%% at %s %s — where price "+
-			"impact is negligible, so that is the corridor's structural floor, not "+
-			"a depth effect — rising to %s%% at %s %s. Every size tested is graded "+
-			"Unusable, so nothing is recommended.",
-		l.ReferenceSource, l.Floor.StringFixed(2), l.FloorSize, send,
-		l.WorstLoss.StringFixed(2), l.WorstSize, send)
+	return prefix + body + l.partialQualification()
+}
+
+// partialQualification names the sizes a partially-measured ladder says
+// nothing about. It qualifies the headline; it never rewrites one.
+func (l *LadderResult) partialQualification() string {
+	sizes := l.UnmeasuredSizes()
+	if len(sizes) == 0 {
+		return ""
+	}
+	shown := make([]string, 0, len(sizes))
+	for _, s := range sizes {
+		shown = append(shown, s.String())
+	}
+	return fmt.Sprintf(
+		" %d of %d sizes could not be measured (%s), so every figure here "+
+			"describes only the sizes that were.",
+		len(sizes), len(l.Rungs), strings.Join(shown, ", "))
 }

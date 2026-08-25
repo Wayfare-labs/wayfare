@@ -65,6 +65,32 @@ func (c *Client) httpClient() *http.Client {
 	return &http.Client{Timeout: 20 * time.Second}
 }
 
+// ErrRateLimited reports that Horizon refused a request with HTTP 429.
+//
+// It is distinct from a generic failure because the remedy differs, and a
+// caller that cannot tell them apart treats a throttled corridor as a broken
+// one: under a monitoring schedule a 429 is routine and transient — ask again
+// after the interval — while a 500 means the upstream is unhealthy and no
+// interval fixes it. Collapsing the two would make every quota blip read as
+// an outage.
+type ErrRateLimited struct {
+	Endpoint string
+
+	// RetryAfter is what Horizon's Retry-After header asked for. Zero when
+	// the header was absent or unparseable — reported rather than guessed.
+	RetryAfter time.Duration
+}
+
+func (e *ErrRateLimited) Error() string {
+	msg := fmt.Sprintf("dex: horizon rate-limited %s", e.Endpoint)
+	if e.RetryAfter > 0 {
+		msg += fmt.Sprintf("; retry after %s", e.RetryAfter)
+	} else {
+		msg += "; horizon sent no usable Retry-After"
+	}
+	return msg
+}
+
 // Path is one route Horizon found through the DEX.
 type Path struct {
 	SourceAsset  asset.Asset
@@ -280,6 +306,9 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 			"endpoint", path,
 			"status", resp.StatusCode,
 			"duration", time.Since(started).Round(time.Millisecond).String())
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return &ErrRateLimited{Endpoint: path, RetryAfter: transport.RetryAfter(resp)}
+		}
 		return fmt.Errorf("dex: horizon returned HTTP %d for %s", resp.StatusCode, path)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {

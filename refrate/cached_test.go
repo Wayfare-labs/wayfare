@@ -268,6 +268,132 @@ func TestRateLimitIsSurfacedDistinctly(t *testing.T) {
 	}
 }
 
+// TestCachedServesRateWhenProviderTimesOutInsideBound covers the half of the
+// age bound that makes it a bound rather than a trap: while a fetched rate is
+// inside its TTL, an unreachable provider does not invalidate it.
+//
+// The provider timing out is not new information about the rate — the rate was
+// obtained from a live source and is still within its documented age. Serving
+// it is what the bound exists to permit; refusing would turn every upstream
+// blip into a missing benchmark for the whole TTL.
+func TestCachedServesRateWhenProviderTimesOutInsideBound(t *testing.T) {
+	inner := &countingProvider{mid: "1350"}
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	c := &Cached{Inner: inner, TTL: time.Hour, Clock: func() time.Time { return now }}
+
+	first, err := c.Rate(context.Background(), "USD", "NGN")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inner.err = context.DeadlineExceeded
+	now = now.Add(30 * time.Minute)
+
+	got, err := c.Rate(context.Background(), "USD", "NGN")
+	if err != nil {
+		t.Fatalf("provider timed out inside the age bound, but the cached rate was refused: %v", err)
+	}
+	if !got.Mid.Equal(first.Mid) {
+		t.Errorf("Mid = %s, want the cached %s", got.Mid, first.Mid)
+	}
+	if !got.FetchedAt.Equal(first.FetchedAt) {
+		t.Errorf("FetchedAt = %s, want the original fetch time so the age stays honest",
+			got.FetchedAt)
+	}
+	if got := inner.calls.Load(); got != 1 {
+		t.Errorf("upstream called %d times, want 1 — the hit path must not re-probe a dead provider", got)
+	}
+}
+
+// TestBothProvidersTimeOutOfTheirCachesServeTheCross is the deployment shape
+// of the timeout question: Cross over two Cached providers, both inner
+// providers timing out, both cached rates still inside their bounds.
+//
+// The cross-check must proceed on the cached figures exactly as it would on
+// fresh ones — agreement, divergence and selection are properties of the two
+// rates, not of how they were obtained. An implementation that propagated one
+// provider's timeout into a hard error would take the whole benchmark down
+// because one feed blinked.
+func TestBothProvidersTimeOutOfTheirCachesServeTheCross(t *testing.T) {
+	p1 := &countingProvider{mid: "1348"}
+	p2 := &countingProvider{mid: "1350"}
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+
+	stack := &Cross{
+		Primary:   &Cached{Inner: p1, TTL: time.Hour, Clock: clock},
+		Secondary: &Cached{Inner: p2, TTL: time.Hour, Clock: clock},
+	}
+
+	first, err := stack.Rate(context.Background(), "USD", "NGN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Agreement != AgreementAgree {
+		t.Fatalf("Agreement = %s on primed caches, want AGREE", first.Agreement)
+	}
+
+	// Both providers time out; both caches stay inside their bounds.
+	p1.err = context.DeadlineExceeded
+	p2.err = context.DeadlineExceeded
+	now = now.Add(30 * time.Minute)
+
+	r, err := stack.Rate(context.Background(), "USD", "NGN")
+	if err != nil {
+		t.Fatalf("both caches were within their bounds yet the cross failed: %v", err)
+	}
+	if r.Agreement != AgreementAgree {
+		t.Errorf("Agreement = %s, want AGREE computed from the two cached rates", r.Agreement)
+	}
+	if !r.Mid.Equal(decimal.RequireFromString("1348")) ||
+		!r.SecondaryMid.Equal(decimal.RequireFromString("1350")) {
+		t.Errorf("mids = %s/%s, want the cached 1348/1350", r.Mid, r.SecondaryMid)
+	}
+	if p1.calls.Load() != 1 || p2.calls.Load() != 1 {
+		t.Errorf("upstream calls = %d/%d, want 1/1 — timeouts must not be re-probed on hits",
+			p1.calls.Load(), p2.calls.Load())
+	}
+}
+
+// TestOneExpiredCachePlusTimeoutDegradesToSingle is the boundary between the
+// two rules above: the primary's cache is still good, but the secondary's has
+// aged out at the same moment its provider times out.
+//
+// The secondary cannot answer and may not be substituted for, so the result
+// degrades to SINGLE and says so — the primary's usable rate is not thrown
+// away with it.
+func TestOneExpiredCachePlusTimeoutDegradesToSingle(t *testing.T) {
+	p1 := &countingProvider{mid: "1348"}
+	p2 := &countingProvider{mid: "1350"}
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+
+	stack := &Cross{
+		Primary:   &Cached{Inner: p1, TTL: time.Hour, Clock: clock},
+		Secondary: &Cached{Inner: p2, TTL: time.Hour, Clock: clock},
+	}
+	if _, err := stack.Rate(context.Background(), "USD", "NGN"); err != nil {
+		t.Fatal(err)
+	}
+
+	p2.err = context.DeadlineExceeded
+	now = now.Add(2 * time.Hour) // past the secondary's bound only
+
+	r, err := stack.Rate(context.Background(), "USD", "NGN")
+	if err != nil {
+		t.Fatalf("the primary's cache was still valid yet the whole cross failed: %v", err)
+	}
+	if r.Agreement != AgreementSingle {
+		t.Errorf("Agreement = %s, want SINGLE", r.Agreement)
+	}
+	if !r.Mid.Equal(decimal.RequireFromString("1348")) {
+		t.Errorf("Mid = %s, want the primary's cached 1348", r.Mid)
+	}
+	if !strings.Contains(r.Note, "uncorroborated") {
+		t.Errorf("Note = %q, want it to say the surviving rate is uncorroborated", r.Note)
+	}
+}
+
 // TestNegativeTTLDisablesCaching keeps the escape hatch honest.
 func TestNegativeTTLDisablesCaching(t *testing.T) {
 	inner := &countingProvider{mid: "1350"}

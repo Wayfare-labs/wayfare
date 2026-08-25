@@ -110,7 +110,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String())
-		return Rate{}, &ErrRateLimited{Source: c.Name(), RetryAfter: retryAfter(resp)}
+		return Rate{}, &ErrRateLimited{Source: c.Name(), RetryAfter: transport.RetryAfter(resp)}
 	}
 	if resp.StatusCode != http.StatusOK {
 		c.log().Error("currency-api returned error",
