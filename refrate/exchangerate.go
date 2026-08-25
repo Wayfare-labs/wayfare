@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -31,6 +32,10 @@ const DefaultExchangeRateAPI = "https://open.er-api.com/v6/latest/"
 type ExchangeRateAPI struct {
 	BaseURL string       // defaults to DefaultExchangeRateAPI
 	Client  *http.Client // defaults to a client with a 10s timeout
+
+	// Logger is the structured logger for upstream call logging.
+	// Nil means slog.Default().
+	Logger *slog.Logger
 }
 
 // Name identifies the provider.
@@ -64,6 +69,13 @@ type erAPIResponse struct {
 	TimeLastUpdateUnix int64                      `json:"time_last_update_unix"`
 	Rates              map[string]json.RawMessage `json:"rates"`
 	ErrorType          string                     `json:"error-type"`
+}
+
+func (e *ExchangeRateAPI) log() *slog.Logger {
+	if e.Logger != nil {
+		return e.Logger
+	}
+	return slog.Default()
 }
 
 // Rate implements Provider.

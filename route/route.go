@@ -289,6 +289,15 @@ type Result struct {
 	// engine having to flatten that into prose.
 	Reference refrate.Rate
 
+	// Parallel is the parallel/street-market reference, reported alongside
+	// the official one and never blended into it. It is nil when the engine
+	// has no parallel source configured at all — absent rather than
+	// UNABLE-TO-DETERMINE, since a corridor that was never asked the question
+	// is a different state from one whose source failed. When non-nil it is
+	// REPORTED with a gap, or UNABLE-TO-DETERMINE with a reason. The official
+	// verdict and every loss figure are scored without reference to it.
+	Parallel *refrate.Parallel
+
 	// Integrity is the corridor's structural state, independent of pricing.
 	// A caller that reports only Quotes and Recommended will silently
 	// misrepresent a no-market or derivative corridor.
@@ -309,6 +318,12 @@ func (r *Result) Viable() bool { return r.Recommended != nil }
 type Engine struct {
 	DEX     *dex.Client
 	RefRate refrate.Provider
+
+	// Parallel is an optional parallel/street-market rate source, reported as
+	// a second reference dimension alongside RefRate. It never feeds a
+	// verdict: the official rate remains the only thing routes are scored
+	// against. Nil leaves the parallel dimension off the result entirely.
+	Parallel refrate.Provider
 
 	// ProbeAmount sizes the slippage probe. Defaults to 10 send units.
 	ProbeAmount decimal.Decimal
@@ -344,6 +359,10 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 		ReferenceSource: ref.Source,
 		ReferenceAsOf:   ref.AsOf,
 		Reference:       ref,
+	}
+	if e.Parallel != nil {
+		p := refrate.ParallelAgainst(ctx, e.Parallel, ref)
+		res.Parallel = &p
 	}
 
 	if e.DEX != nil {
@@ -414,6 +433,10 @@ func (e *Engine) unscored(ctx context.Context, req Request, ref refrate.Rate) (*
 		ReferenceSource: ref.Source,
 		ReferenceAsOf:   ref.AsOf,
 		Reference:       ref,
+	}
+	if e.Parallel != nil {
+		p := refrate.ParallelAgainst(ctx, e.Parallel, ref)
+		res.Parallel = &p
 	}
 
 	if e.DEX != nil {

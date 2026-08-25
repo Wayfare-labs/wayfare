@@ -86,6 +86,10 @@ type LadderResult struct {
 	// provider's mid and how far the two diverged.
 	Reference refrate.Rate
 
+	// Parallel carries the parallel/street-market reference reported
+	// alongside the official one. Nil when no parallel source is configured.
+	Parallel *refrate.Parallel
+
 	// Floor is the loss percentage at the smallest size priced. It
 	// approximates the corridor's cost with price impact removed.
 	Floor decimal.Decimal
@@ -217,6 +221,7 @@ func (l *LadderResult) summarise() {
 			l.ReferenceMid = r.Result.ReferenceMid
 			l.ReferenceSource = r.Result.ReferenceSource
 			l.Reference = r.Result.Reference
+			l.Parallel = r.Result.Parallel
 		}
 
 		switch r.Result.Integrity {

@@ -45,6 +45,10 @@ const DefaultHorizonURL = "https://horizon.stellar.org"
 type Client struct {
 	HorizonURL string
 	HTTPClient *http.Client
+
+	// Logger is the structured logger for upstream call logging.
+	// Nil means slog.Default().
+	Logger *slog.Logger
 }
 
 func (c *Client) horizonURL() string {

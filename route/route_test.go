@@ -73,6 +73,63 @@ func ngnRequest(amount string) Request {
 	}
 }
 
+// TestDualMid covers the parallel-rate dimension: a second reference reported
+// alongside the official one, never blended into it and never able to move the
+// official verdict.
+func TestDualMid(t *testing.T) {
+	srv := horizonStub(t, liveStrictSendResponse)
+	defer srv.Close()
+
+	// Baseline: no parallel source configured. The official rate scores as
+	// usual and the parallel dimension is absent entirely — not
+	// UNABLE-TO-DETERMINE, which would imply a source was asked and failed.
+	base := &Engine{DEX: &dex.Client{HorizonURL: srv.URL}, RefRate: usdToNGN("1500")}
+	baseRes, err := base.Quote(context.Background(), ngnRequest("100"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+	if baseRes.Parallel != nil {
+		t.Fatalf("expected no parallel dimension without a source, got %+v", baseRes.Parallel)
+	}
+	if len(baseRes.Quotes) != 1 {
+		t.Fatalf("expected 1 official quote, got %d", len(baseRes.Quotes))
+	}
+	officialVerdict := baseRes.Quotes[0].Verdict
+	officialLoss := baseRes.Quotes[0].LossPct
+
+	// With a parallel source, the parallel mid is reported separately, the gap
+	// to the official mid is derived, and the official verdict and loss are
+	// byte-for-byte what they were without it.
+	dual := &Engine{
+		DEX:      &dex.Client{HorizonURL: srv.URL},
+		RefRate:  usdToNGN("1500"),
+		Parallel: usdToNGN("1650"),
+	}
+	dualRes, err := dual.Quote(context.Background(), ngnRequest("100"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+	if dualRes.Parallel == nil || !dualRes.Parallel.Reported() {
+		t.Fatalf("expected a reported parallel dimension, got %+v", dualRes.Parallel)
+	}
+	if !dualRes.Parallel.Mid.Equal(decimal.RequireFromString("1650")) {
+		t.Fatalf("parallel mid = %s, want 1650", dualRes.Parallel.Mid)
+	}
+	// (1650 - 1500) / 1500 * 100 = 10%.
+	if dualRes.Parallel.GapPct.Round(4).String() != "10" {
+		t.Fatalf("parallel gap = %s, want 10", dualRes.Parallel.GapPct.Round(4))
+	}
+	if dualRes.ReferenceMid.String() != "1500" {
+		t.Fatalf("official mid changed to %s", dualRes.ReferenceMid)
+	}
+	if got := dualRes.Quotes[0].Verdict; got != officialVerdict {
+		t.Fatalf("official verdict moved from %s to %s", officialVerdict, got)
+	}
+	if got := dualRes.Quotes[0].LossPct; !got.Equal(officialLoss) {
+		t.Fatalf("official loss moved from %s to %s", officialLoss, got)
+	}
+}
+
 // TestLiveCorridorIsRefused is the project's headline test.
 //
 // Given the real mainnet path data and a realistic USD/NGN mid of 1,500, the

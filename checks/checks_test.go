@@ -3,6 +3,8 @@ package checks
 import (
 	"context"
 	"encoding/base32"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -92,7 +94,7 @@ func TestDescriptorRequiresItsLimits(t *testing.T) {
 		})
 	}
 
-	for _, c := range []Check{AnchorAssetISO4217{}, IssuerAuthFlags{}, SEP10EndpointResponds{}} {
+	for _, c := range []Check{AnchorAssetISO4217{}, IssuerAuthFlags{}, SEP10EndpointResponds{}, HomeDomainRoundTrip{}} {
 		d := c.Describe()
 		if err := d.Validate(); err != nil {
 			t.Errorf("%s: %v", d.ID, err)
@@ -667,6 +669,68 @@ func TestSEP10GenuineErrorStillFails(t *testing.T) {
 	}
 }
 
+// sep24.info-lists-asset ------------------------------------------------------
+
+func sep24Profile(server string) *anchor.Profile {
+	return &anchor.Profile{
+		Domain: "example.test",
+		TOML: anchor.TOML{
+			TransferServer24: server,
+			Currencies:       []anchor.Currency{{Code: "NGNC", Issuer: "GISSUER", AnchorAsset: "NGN"}},
+		},
+	}
+}
+
+func TestSEP24InfoListsAsset(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		body       string
+		determined bool
+		passed     bool
+		contains   string
+	}{
+		{name: "deposit and withdrawal enabled", status: 200,
+			body:       `{"deposit":{"NGN":{"enabled":true}},"withdraw":{"NGN":{"enabled":true}}}`,
+			determined: true, passed: true, contains: "deposit enabled; withdrawal enabled"},
+		{name: "deposit enabled and withdrawal disabled", status: 200,
+			body:       `{"deposit":{"NGN":{"enabled":true}},"withdraw":{"NGN":{"enabled":false}}}`,
+			determined: true, passed: true, contains: "deposit enabled; withdrawal disabled"},
+		{name: "withdrawal enabled and deposit disabled", status: 200,
+			body:       `{"deposit":{"NGN":{"enabled":false}},"withdraw":{"NGN":{"enabled":true}}}`,
+			determined: true, passed: true, contains: "deposit disabled; withdrawal enabled"},
+		{name: "asset omitted", status: 200,
+			body:       `{"deposit":{"USD":{"enabled":true}},"withdraw":{"USD":{"enabled":true}}}`,
+			determined: true, passed: false, contains: "omits asset \"NGN\""},
+		{name: "server error", status: 503, body: `{}`,
+			determined: true, passed: false, contains: "HTTP 503"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := flagServer(t, tc.status, tc.body)
+			r := Run(ctx(), SEP24InfoListsAsset{HTTPClient: srv.Client()},
+				Subject{Asset: asset.Stellar("NGNC", "GISSUER"), Profile: sep24Profile(srv.URL)})
+			if r.Determined != tc.determined || (tc.determined && r.Passed != tc.passed) {
+				t.Fatalf("result determined=%v passed=%v, want %v/%v (%s)", r.Determined, r.Passed, tc.determined, tc.passed, r.Summary)
+			}
+			if !strings.Contains(r.Summary+" "+r.Reason, tc.contains) {
+				t.Errorf("result %q / %q does not mention %q", r.Summary, r.Reason, tc.contains)
+			}
+			if len(r.Evidence) == 0 {
+				t.Error("result has no evidence")
+			}
+		})
+	}
+}
+
+func TestSEP24InfoNotDeclaredIsUndetermined(t *testing.T) {
+	r := Run(ctx(), SEP24InfoListsAsset{}, Subject{Asset: asset.Stellar("NGNC", "GISSUER"), Profile: sep24Profile("")})
+	if r.Determined || !strings.Contains(r.Reason, "declares no TRANSFER_SERVER_SEP0024") {
+		t.Fatalf("result = determined=%v reason=%q, want undetermined absent server", r.Determined, r.Reason)
+	}
+}
+
 // SSRF guard ------------------------------------------------------------------
 
 // TestGuardRejectsInternalTargets is the attack CodeRabbit identified.
@@ -1070,5 +1134,125 @@ func TestRunMetricValidEvidence(t *testing.T) {
 	r := RunMetric(ctx(), evidenceValid{}, Subject{})
 	if !r.Determined {
 		t.Errorf("valid evidence should produce a determined result, got reason: %s", r.Reason)
+	}
+}
+
+type recordedResponse struct {
+	status int
+	body   string
+	err    error
+}
+
+type recordedTransport map[string]recordedResponse
+
+func (t recordedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r, ok := t[req.Method+" "+req.URL.String()]
+	if !ok {
+		return nil, fmt.Errorf("unrecorded request: %s %s", req.Method, req.URL)
+	}
+	if r.err != nil {
+		return nil, r.err
+	}
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return &http.Response{
+		StatusCode: r.status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(r.body)),
+		Request:    req,
+	}, nil
+}
+
+func TestHomeDomainRoundTrip(t *testing.T) {
+	const (
+		issuer = "GISSUER"
+		code   = "TOK"
+		domain = "issuer.example"
+	)
+	accountURL := "https://horizon.example/accounts/" + issuer
+	tomlURL := anchor.TOMLURL(domain)
+
+	cases := []struct {
+		name       string
+		account    string
+		toml       string
+		tomlStatus int
+		err        error
+		determined bool
+		passed     bool
+		contains   string
+	}{
+		{
+			name:       "matching account and document",
+			account:    `{"home_domain":"` + domain + `"}`,
+			toml:       `[[CURRENCIES]]` + "\ncode=\"" + code + "\"\nissuer=\"" + issuer + "\"\n",
+			determined: true, passed: true, contains: "both identify",
+		},
+		{
+			name:       "document lists code for another issuer",
+			account:    `{"home_domain":"` + domain + `"}`,
+			toml:       `[[CURRENCIES]]` + "\ncode=\"" + code + "\"\nissuer=\"GOTHER\"\n",
+			determined: true, passed: false, contains: "no [[CURRENCIES]] entry matching both code and issuer",
+		},
+		{
+			name:       "account declares no home domain",
+			account:    `{}`,
+			determined: false, contains: "declares no home_domain",
+		},
+		{
+			name:       "Horizon is unavailable",
+			err:        fmt.Errorf("offline"),
+			determined: false, contains: "Horizon was unreachable",
+		},
+		{
+			name:       "stellar toml is unavailable",
+			account:    `{"home_domain":"` + domain + `"}`,
+			tomlStatus: http.StatusNotFound,
+			determined: false, contains: "document could not be fetched",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			responses := recordedTransport{}
+			if tc.err != nil {
+				responses[http.MethodGet+" "+accountURL] = recordedResponse{err: tc.err}
+			} else {
+				responses[http.MethodGet+" "+accountURL] = recordedResponse{body: tc.account}
+			}
+			if tc.toml != "" || tc.tomlStatus != 0 {
+				responses[http.MethodGet+" "+tomlURL] = recordedResponse{status: tc.tomlStatus, body: tc.toml}
+			}
+
+			check := HomeDomainRoundTrip{
+				HorizonURL: "https://horizon.example",
+				HTTPClient: &http.Client{Transport: responses},
+			}
+			r := Run(ctx(), check, Subject{Asset: asset.Stellar(code, issuer)})
+			if r.Determined != tc.determined {
+				t.Fatalf("Determined = %v, want %v: %s", r.Determined, tc.determined, r.Summary)
+			}
+			if tc.determined && r.Passed != tc.passed {
+				t.Errorf("Passed = %v, want %v: %s", r.Passed, tc.passed, r.Summary)
+			}
+			if !strings.Contains(r.Summary+" "+r.Reason, tc.contains) {
+				t.Errorf("result %q does not mention %q", r.Summary+" "+r.Reason, tc.contains)
+			}
+			if len(r.Evidence) == 0 {
+				t.Error("result must record account evidence")
+			}
+			if tc.determined && len(r.Evidence) != 2 {
+				t.Fatalf("determined result has %d evidence entries, want account and document", len(r.Evidence))
+			}
+			if tc.determined {
+				if !strings.Contains(r.Evidence[0].Source, "/accounts/"+issuer) {
+					t.Errorf("account evidence source = %q, want issuer account", r.Evidence[0].Source)
+				}
+				if !strings.Contains(r.Evidence[1].Source, tomlURL) {
+					t.Errorf("document evidence source = %q, want %s", r.Evidence[1].Source, tomlURL)
+				}
+			}
+		})
 	}
 }

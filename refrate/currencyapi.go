@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -42,6 +43,10 @@ const DefaultCurrencyAPI = "https://latest.currency-api.pages.dev/v1/currencies/
 type CurrencyAPI struct {
 	BaseURL string       // defaults to DefaultCurrencyAPI
 	Client  *http.Client // defaults to a client with a 10s timeout
+
+	// Logger is the structured logger for upstream call logging.
+	// Nil means slog.Default().
+	Logger *slog.Logger
 }
 
 // Name identifies the provider.
@@ -59,6 +64,13 @@ func (c *CurrencyAPI) baseURL() string {
 		return c.BaseURL
 	}
 	return DefaultCurrencyAPI
+}
+
+func (c *CurrencyAPI) log() *slog.Logger {
+	if c.Logger != nil {
+		return c.Logger
+	}
+	return slog.Default()
 }
 
 // Rate implements Provider.
