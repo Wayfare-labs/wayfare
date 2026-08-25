@@ -19,12 +19,12 @@ func TestDetectTransitions_NoChange(t *testing.T) {
 	// Write two consecutive runs with the same integrity state.
 	for i := 0; i < 2; i++ {
 		rec := &Record{
-			Version:   Version,
-			Seq:       int64(i + 1),
+			Version:    Version,
+			Seq:        int64(i + 1),
 			RecordedAt: time.Date(2026, 8, 20+i, 12, 0, 0, 0, time.UTC),
-			Corridor:  corridor,
-			Integrity: "DIRECT",
-			DependsOn: []string{},
+			Corridor:   corridor,
+			Integrity:  "DIRECT",
+			DependsOn:  []string{},
 			Reference: Reference{
 				Mid:    "1500",
 				Source: "exchangerate-api",
@@ -57,12 +57,12 @@ func TestDetectTransitions_IntegrityStateChange(t *testing.T) {
 	// Write two consecutive runs with different integrity states.
 	for i, integrity := range []string{"DIRECT", "DERIVATIVE"} {
 		rec := &Record{
-			Version:   Version,
-			Seq:       int64(i + 1),
+			Version:    Version,
+			Seq:        int64(i + 1),
 			RecordedAt: time.Date(2026, 8, 20+i, 12, 0, 0, 0, time.UTC),
-			Corridor:  corridor,
-			Integrity: integrity,
-			DependsOn: []string{},
+			Corridor:   corridor,
+			Integrity:  integrity,
+			DependsOn:  []string{},
 			Reference: Reference{
 				Mid:    "1500",
 				Source: "exchangerate-api",
@@ -119,12 +119,12 @@ func TestDetectTransitions_DependonsChanged(t *testing.T) {
 		{"NGNC", "KESC"},
 	} {
 		rec := &Record{
-			Version:   Version,
-			Seq:       int64(i + 1),
+			Version:    Version,
+			Seq:        int64(i + 1),
 			RecordedAt: time.Date(2026, 8, 20+i, 12, 0, 0, 0, time.UTC),
-			Corridor:  corridor,
-			Integrity: "DERIVATIVE",
-			DependsOn: deps,
+			Corridor:   corridor,
+			Integrity:  "DERIVATIVE",
+			DependsOn:  deps,
 			Reference: Reference{
 				Mid:    "1500",
 				Source: "exchangerate-api",
@@ -170,12 +170,12 @@ func TestDetectTransitions_UnknownExcluded(t *testing.T) {
 	integrities := []string{"DIRECT", "UNKNOWN", "DERIVATIVE"}
 	for i, integrity := range integrities {
 		rec := &Record{
-			Version:   Version,
-			Seq:       int64(i + 1),
+			Version:    Version,
+			Seq:        int64(i + 1),
 			RecordedAt: time.Date(2026, 8, 20+i, 12, 0, 0, 0, time.UTC),
-			Corridor:  corridor,
-			Integrity: integrity,
-			DependsOn: []string{},
+			Corridor:   corridor,
+			Integrity:  integrity,
+			DependsOn:  []string{},
 			Reference: Reference{
 				Mid:    "1500",
 				Source: "exchangerate-api",
@@ -218,12 +218,12 @@ func TestDetectTransitions_NoMarketToPriceable(t *testing.T) {
 	// Write two runs: NO-MARKET → DIRECT
 	for i, integrity := range []string{"NO-MARKET", "DIRECT"} {
 		rec := &Record{
-			Version:   Version,
-			Seq:       int64(i + 1),
+			Version:    Version,
+			Seq:        int64(i + 1),
 			RecordedAt: time.Date(2026, 8, 20+i, 12, 0, 0, 0, time.UTC),
-			Corridor:  corridor,
-			Integrity: integrity,
-			DependsOn: []string{},
+			Corridor:   corridor,
+			Integrity:  integrity,
+			DependsOn:  []string{},
 			Reference: Reference{
 				Mid:    "1500",
 				Source: "exchangerate-api",
@@ -270,12 +270,12 @@ func TestDetectTransitions_CompleteHistory(t *testing.T) {
 			integrity = "DERIVATIVE"
 		}
 		rec := &Record{
-			Version:   Version,
-			Seq:       int64(i + 1),
+			Version:    Version,
+			Seq:        int64(i + 1),
 			RecordedAt: time.Date(2026, 1, 1+i, 12, 0, 0, 0, time.UTC),
-			Corridor:  corridor,
-			Integrity: integrity,
-			DependsOn: []string{},
+			Corridor:   corridor,
+			Integrity:  integrity,
+			DependsOn:  []string{},
 			Reference: Reference{
 				Mid:    "1500",
 				Source: "exchangerate-api",
@@ -320,12 +320,12 @@ func TestDetectLatestTransition(t *testing.T) {
 			integrity = "DERIVATIVE"
 		}
 		rec := &Record{
-			Version:   Version,
-			Seq:       int64(i + 1),
+			Version:    Version,
+			Seq:        int64(i + 1),
 			RecordedAt: time.Date(2026, 8, 20+i, 12, 0, 0, 0, time.UTC),
-			Corridor:  corridor,
-			Integrity: integrity,
-			DependsOn: []string{},
+			Corridor:   corridor,
+			Integrity:  integrity,
+			DependsOn:  []string{},
 			Reference: Reference{
 				Mid:    "1500",
 				Source: "exchangerate-api",
@@ -355,15 +355,15 @@ func TestDepsetsEqual(t *testing.T) {
 		a, b []string
 		want bool
 	}{
-	{"both nil", nil, nil, true},
-	{"both empty", []string{}, []string{}, true},
-	{"equal", []string{"KESC", "NGNC"}, []string{"KESC", "NGNC"}, true},
-	{"same elements different order", []string{"NGNC", "KESC"}, []string{"KESC", "NGNC"}, true},
-	{"different length", []string{"KESC"}, []string{"KESC", "NGNC"}, false},
-	{"different values", []string{"KESC"}, []string{"NGNC"}, false},
-	{"dedup one unique vs repeated", []string{"NGNC", "NGNC"}, []string{"NGNC"}, true},
-	{"dedup with extra unique", []string{"NGNC", "NGNC", "KESC"}, []string{"NGNC", "KESC"}, true},
-	{"dedup different unique counts", []string{"NGNC", "NGNC"}, []string{"KESC", "KESC"}, false},
+		{"both nil", nil, nil, true},
+		{"both empty", []string{}, []string{}, true},
+		{"equal", []string{"KESC", "NGNC"}, []string{"KESC", "NGNC"}, true},
+		{"same elements different order", []string{"NGNC", "KESC"}, []string{"KESC", "NGNC"}, true},
+		{"different length", []string{"KESC"}, []string{"KESC", "NGNC"}, false},
+		{"different values", []string{"KESC"}, []string{"NGNC"}, false},
+		{"dedup one unique vs repeated", []string{"NGNC", "NGNC"}, []string{"NGNC"}, true},
+		{"dedup with extra unique", []string{"NGNC", "NGNC", "KESC"}, []string{"NGNC", "KESC"}, true},
+		{"dedup different unique counts", []string{"NGNC", "NGNC"}, []string{"KESC", "KESC"}, false},
 	}
 
 	for _, tt := range tests {

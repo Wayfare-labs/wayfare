@@ -31,6 +31,7 @@
 package snapshot
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -215,6 +216,9 @@ func Load(dir string) (*Manifest, error) {
 		if err != nil {
 			return nil, fmt.Errorf("snapshot: reading body for %q: %w", in.Key, err)
 		}
+		// Normalize CRLF to LF so the hash matches snapshots captured on
+		// Linux, where the Recorder originally wrote them.
+		body = bytes.ReplaceAll(body, []byte("\r\n"), []byte("\n"))
 		if got := bodyHash(body); got != in.BodySHA256 {
 			return nil, fmt.Errorf(
 				"snapshot: body %s does not match its recorded hash (manifest %s, file %s); "+

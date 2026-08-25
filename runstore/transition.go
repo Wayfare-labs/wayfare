@@ -175,16 +175,16 @@ func compareRuns(prev, curr *Record) *IntegrityTransition {
 	if prev.Integrity == curr.Integrity {
 		if curr.Integrity == "DERIVATIVE" && !depsetsEqual(prev.DependsOn, curr.DependsOn) {
 			return &IntegrityTransition{
-				Corridor:               curr.Corridor,
-				PreviousIntegrity:      prev.Integrity,
-				CurrentIntegrity:       curr.Integrity,
-				PreviousRunAt:          prev.RecordedAt,
-				CurrentRunAt:           curr.RecordedAt,
-				PreviousDependsOn:      prev.DependsOn,
-				CurrentDependsOn:       curr.DependsOn,
+				Corridor:                curr.Corridor,
+				PreviousIntegrity:       prev.Integrity,
+				CurrentIntegrity:        curr.Integrity,
+				PreviousRunAt:           prev.RecordedAt,
+				CurrentRunAt:            curr.RecordedAt,
+				PreviousDependsOn:       prev.DependsOn,
+				CurrentDependsOn:        curr.DependsOn,
 				PreviousReferenceSource: prev.Reference.Source,
 				CurrentReferenceSource:  curr.Reference.Source,
-				TransitionType:         TransitionDependsOnChanged,
+				TransitionType:          TransitionDependsOnChanged,
 			}
 		}
 		return nil
@@ -192,16 +192,16 @@ func compareRuns(prev, curr *Record) *IntegrityTransition {
 
 	// Integrity state changed.
 	return &IntegrityTransition{
-		Corridor:               curr.Corridor,
-		PreviousIntegrity:      prev.Integrity,
-		CurrentIntegrity:       curr.Integrity,
-		PreviousRunAt:          prev.RecordedAt,
-		CurrentRunAt:           curr.RecordedAt,
-		PreviousDependsOn:      prev.DependsOn,
-		CurrentDependsOn:       curr.DependsOn,
+		Corridor:                curr.Corridor,
+		PreviousIntegrity:       prev.Integrity,
+		CurrentIntegrity:        curr.Integrity,
+		PreviousRunAt:           prev.RecordedAt,
+		CurrentRunAt:            curr.RecordedAt,
+		PreviousDependsOn:       prev.DependsOn,
+		CurrentDependsOn:        curr.DependsOn,
 		PreviousReferenceSource: prev.Reference.Source,
 		CurrentReferenceSource:  curr.Reference.Source,
-		TransitionType:         TransitionIntegrityStateChange,
+		TransitionType:          TransitionIntegrityStateChange,
 	}
 }
 

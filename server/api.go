@@ -51,7 +51,6 @@ type Server struct {
 	// Timeout bounds a single corridor measurement. A full ladder is a
 	// dozen round trips to Horizon, so this is generous by HTTP standards.
 	Timeout time.Duration
-
 }
 
 // pkgLogger is the package-level logger for request and upstream logging.
