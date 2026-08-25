@@ -15,6 +15,10 @@
     --bad: #a03e2f;
     --warn: #96712a;
     --ok: #2f6f5e;
+    --ok-soft: #e9f4ef;
+    --bad-soft: #fbeceb;
+    --unknown: #666b70;
+    --unknown-soft: #f0f1f2;
     --grid: #ecebe7;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
@@ -29,6 +33,10 @@
       --bad: #e08b78;
       --warn: #d9b06a;
       --ok: #7fb8a4;
+      --ok-soft: #20372f;
+      --bad-soft: #422522;
+      --unknown: #b7b9b8;
+      --unknown-soft: #2a2d2d;
       --grid: #2a2e27;
     }
   }
@@ -85,10 +93,18 @@
                  border-bottom: 1px solid var(--grid); }
   .finding-row:last-child { border-bottom: 0; }
   .f-state { font: 600 .68rem/1.5 var(--mono); letter-spacing: .05em; padding: .1rem .45rem;
+             display: inline-flex; align-items: center; gap: .28rem; min-width: 5.3rem;
              border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }
-  .f-pass { color: var(--ok); }
-  .f-fail { color: var(--bad); }
-  .f-unknown { color: var(--muted); }
+  .f-state::before { font: 700 .8rem/1 var(--mono); }
+  .f-pass { color: var(--ok); background: var(--ok-soft); }
+  .f-pass::before { content: "✓"; }
+  .f-fail { color: var(--bad); background: var(--bad-soft); }
+  .f-fail::before { content: "×"; }
+  .f-unknown { color: var(--unknown); background: var(--unknown-soft); }
+  .f-unknown::before { content: "?"; }
+  .finding-row:has(.f-pass) { background: var(--ok-soft); border-left: 3px solid var(--ok); padding-left: .65rem; }
+  .finding-row:has(.f-fail) { background: var(--bad-soft); border-left: 3px solid var(--bad); padding-left: .65rem; }
+  .finding-row:has(.f-unknown) { background: var(--unknown-soft); border-left: 3px solid var(--unknown); padding-left: .65rem; }
   .f-body { flex: 1; min-width: 0; }
   .f-id { font-family: var(--mono); font-size: .76rem; color: var(--muted); }
   .f-summary { font-size: .9rem; }
@@ -98,6 +114,9 @@
   .meta { color: var(--muted); font-size: .82rem; margin-top: .9rem; }
   .err { color: var(--bad); }
   h2 { font-size: .95rem; margin: 0 0 .8rem; letter-spacing: .01em; }
+  .legend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .55rem; margin-top: .9rem; }
+  .legend-item { display: flex; align-items: center; gap: .45rem; min-width: 0; }
+  .legend-item span:last-child { font-size: .8rem; }
   .case { font-size: .88rem; color: var(--muted); }
   .case strong { color: var(--ink); font-weight: 600; }
   svg { width: 100%; height: auto; display: block; }
@@ -333,6 +352,11 @@ function legend() {
       <span class="v-poor">POOR</span> ≤ 20% &middot;
       <span class="v-unusable">UNUSABLE</span> &gt; 20%
     </p>
+    <div class="legend-grid" aria-label="Finding state legend">
+      <div class="legend-item"><span class="f-state f-pass">PASS</span><span>Observed and clear</span></div>
+      <div class="legend-item"><span class="f-state f-fail">FAIL</span><span>Observed concern</span></div>
+      <div class="legend-item"><span class="f-state f-unknown">UNKNOWN</span><span>Could not determine</span></div>
+    </div>
     <p>When no size produces a verdict of POOR or better, nothing is recommended.</p>
   </div>`;
 }
