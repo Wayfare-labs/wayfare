@@ -93,6 +93,11 @@ This does mean the absolute loss percentages carry the reference provider's
 accuracy as a dependency. The ordering, the monotonicity, and the marginal-rate
 collapse do not — those are properties of the on-chain data alone.
 
+For what "fair value" means here — which rate the NGN providers actually track
+(official/interbank, not the parallel/street rate), the evidence for it, and
+why the official mid is the charitable benchmark — see
+[docs/fair-value-ngn.md](fair-value-ngn.md).
+
 ---
 
 ## Comparison with the 2026-08-04 run
