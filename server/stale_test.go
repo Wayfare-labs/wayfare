@@ -120,6 +120,64 @@ func TestStaleReadingIsLabelled(t *testing.T) {
 	}
 }
 
+// TestStaleServesReferenceFetchedAt covers backlog #7: a stored reading must
+// carry reference_fetched_at so a reader can tell how old the benchmark was
+// when the reading was taken — a rate reused from the cache is older than the
+// measurement itself, and hiding that would make stored history look current.
+func TestStaleServesReferenceFetchedAt(t *testing.T) {
+	fetchedAt := time.Date(2026, 8, 21, 21, 0, 0, 0, time.UTC)
+	recorded := fetchedAt.Add(2 * time.Hour)
+
+	// A record that carries the fetch timestamp: the field must round-trip.
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &runstore.Record{
+		RecordedAt: recorded,
+		Corridor:   "USDC-NGNC",
+		Integrity:  "DIRECT",
+		Reference: runstore.Reference{
+			Mid: "1350.2568", Source: "currency-api",
+			AsOf:      "2026-08-21T00:00:00Z",
+			FetchedAt: fetchedAt.UTC().Format(time.RFC3339),
+		},
+		FloorLossPct: "25.02", FloorSize: "0.1",
+		WorstLossPct: "97.68", WorstSize: "5000",
+		Finding: "No usable size.",
+		Rungs:   []runstore.Rung{},
+	}
+	if err := st.Append(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	srv := deadServer(t, st)
+	_, body := getJSON(t, srv.URL+"/api/corridor?to=NGNC&sizes=100")
+
+	want := fetchedAt.UTC().Format(time.RFC3339)
+	if got, _ := body["reference_fetched_at"].(string); got != want {
+		t.Errorf("reference_fetched_at = %q, want %q", got, want)
+	}
+
+	// A record without it (a pre-Version-3 chain) must omit the field, not
+	// invent a timestamp — an absent benchmark age is unknown, and claiming
+	// one would be the default-to-current failure in a new place.
+	st2, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	recNoFetch := *rec
+	recNoFetch.Reference.FetchedAt = ""
+	if err := st2.Append(context.Background(), &recNoFetch); err != nil {
+		t.Fatal(err)
+	}
+	srv2 := deadServer(t, st2)
+	_, body2 := getJSON(t, srv2.URL+"/api/corridor?to=NGNC&sizes=100")
+	if _, present := body2["reference_fetched_at"]; present {
+		t.Error("reference_fetched_at present on a record that never stored one; " +
+			"an unknown benchmark age must stay absent")
+	}
+}
+
 // TestNoHistoryIsAnErrorNotANumber is the other half, and the more important
 // one. With nothing stored, a failed measurement must error rather than return
 // a plausible figure.
