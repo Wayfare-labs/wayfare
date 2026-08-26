@@ -148,14 +148,11 @@ var (
 )
 
 func init() {
+	if err := validateRegistry(registry); err != nil {
+		panic(fmt.Sprintf("asset: %v", err))
+	}
 	for _, e := range registry {
-		if err := ValidateEntry(e); err != nil {
-			panic(fmt.Sprintf("asset: invalid registry entry %q: %v", e.Code, err))
-		}
 		a := Stellar(e.Code, e.Issuer)
-		if existing, dup := known[e.Code]; dup && existing.Issuer != e.Issuer {
-			panic(fmt.Sprintf("asset: code %q registered with issuer %q and %q — two assets sharing a code with different issuers must not be conflated", e.Code, existing.Issuer, e.Issuer))
-		}
 		known[e.Code] = a
 		if e.Peg != "" {
 			fiatPegs[e.Code+":"+e.Issuer] = e.Peg
@@ -165,6 +162,25 @@ func init() {
 		}
 		entries[e.Code+":"+e.Issuer] = e
 	}
+}
+
+// validateRegistry checks that every entry is individually valid and that no
+// two entries share a code with a different issuer. The second condition is
+// the property issue #137 exists to enforce: asset.Lookup resolves by code,
+// so two assets sharing a code but differing by issuer must never be silently
+// conflated.
+func validateRegistry(entries []Entry) error {
+	seen := make(map[string]string) // code → first issuer
+	for _, e := range entries {
+		if err := ValidateEntry(e); err != nil {
+			return fmt.Errorf("entry %q: %w", e.Code, err)
+		}
+		if prev, dup := seen[e.Code]; dup && prev != e.Issuer {
+			return fmt.Errorf("code %q registered with issuer %q and %q — two assets sharing a code with different issuers must not be conflated", e.Code, prev, e.Issuer)
+		}
+		seen[e.Code] = e.Issuer
+	}
+	return nil
 }
 
 // USDC is the settlement asset senders start from.

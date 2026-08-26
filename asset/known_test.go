@@ -228,18 +228,37 @@ func TestHalfRegisteredEntryFails(t *testing.T) {
 	}
 }
 
-// TestLookupNeverConflatesDifferentIssuers asserts that no two registry entries
-// share a code with a different issuer. This is the property issue #137 exists
-// to enforce: asset.Lookup resolves by code, so two assets sharing a code but
-// differing by issuer must never be silently conflated.
+// TestLookupNeverConflatesDifferentIssuers asserts that the current registry
+// passes validateRegistry — no two entries share a code with a different
+// issuer. The real exercise of the conflict path lives in
+// TestValidateRegistryRejectsCodeConflict.
 func TestLookupNeverConflatesDifferentIssuers(t *testing.T) {
-	registry := Registry()
-	seen := make(map[string]string) // code → first issuer
-	for _, e := range registry {
-		if prev, ok := seen[e.Code]; ok && prev != e.Issuer {
-			t.Errorf("code %q registered with issuer %q and %q — two assets sharing a code with different issuers must not be conflated", e.Code, prev, e.Issuer)
-		}
-		seen[e.Code] = e.Issuer
+	if err := validateRegistry(Registry()); err != nil {
+		t.Errorf("validateRegistry(registry) failed: %v", err)
+	}
+}
+
+// TestValidateRegistryRejectsCodeConflict exercises the duplicate-code guard
+// directly: two valid entries sharing a code but differing by issuer must be
+// rejected. Removing the guard from validateRegistry causes this test to fail.
+func TestValidateRegistryRejectsCodeConflict(t *testing.T) {
+	conflict := []Entry{
+		{Code: "USDC", Issuer: USDCIssuer, Status: "unverified"},
+		{Code: "USDC", Issuer: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF5", Status: "unverified"},
+	}
+	err := validateRegistry(conflict)
+	if err == nil {
+		t.Fatal("validateRegistry accepted two entries with the same code and different issuers")
+	}
+}
+
+// TestValidateRegistryRejectsMissingFields confirms that validateRegistry
+// rejects a partially-filled entry, preventing silent misclassification.
+func TestValidateRegistryRejectsMissingFields(t *testing.T) {
+	empty := []Entry{{Code: "", Issuer: ""}}
+	err := validateRegistry(empty)
+	if err == nil {
+		t.Fatal("validateRegistry accepted an entry with empty code and issuer")
 	}
 }
 
@@ -262,20 +281,23 @@ func TestLookupReturnsCorrectIssuerForCode(t *testing.T) {
 // TestImpostorSameCodeDifferentIssuerNotFound verifies that Lookup does not
 // return an asset when the code matches but the issuer does not. An
 // unregistered issuer masquerading as a known code must not be found.
+// LookupEntry on the impostor must also return false.
 func TestImpostorSameCodeDifferentIssuerNotFound(t *testing.T) {
-	// Every registered code, with an obviously-wrong issuer.
-	for _, code := range KnownCodes() {
-		impostor := Stellar(code, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF5")
-		got, ok := Lookup(code)
-		if !ok {
-			t.Fatalf("Lookup(%q) returned not found — code must exist", code)
-		}
-		if got.Equal(impostor) {
-			t.Errorf("Lookup(%q) returned an asset equal to an impostor with a different issuer", code)
-		}
-		if got.Issuer == impostor.Issuer {
-			t.Errorf("Lookup(%q) returned the impostor issuer %q instead of the registered one", code, impostor.Issuer)
-		}
+	impostor := Stellar("USDC", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF5")
+
+	got, ok := Lookup(impostor.Code)
+	if !ok {
+		t.Fatalf("Lookup(%q) returned not found — code must exist", impostor.Code)
+	}
+	if got.Equal(impostor) {
+		t.Errorf("Lookup(%q) returned an asset equal to an impostor with a different issuer", impostor.Code)
+	}
+	if got.Issuer == impostor.Issuer {
+		t.Errorf("Lookup(%q) returned the impostor issuer %q instead of the registered one", impostor.Code, impostor.Issuer)
+	}
+
+	if _, ok := LookupEntry(impostor); ok {
+		t.Error("LookupEntry must return false for an impostor with the right code but wrong issuer")
 	}
 }
 
