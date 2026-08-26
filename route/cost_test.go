@@ -261,8 +261,9 @@ func TestCostBlockJSONShape(t *testing.T) {
 		}
 	}
 
-	// The two determined components carry amount and pct as strings; the
-	// two undetermined ones carry none, only a reason.
+	// fx_loss is the only determined component, and it carries amount and
+	// pct as decimal strings; fees, slippage and expected failure carry no
+	// number at all, only a reason.
 	if got := componentOf(t, parts[0]); got != string(CostFXLoss) {
 		t.Fatalf("parts[0].component = %q, want %q", got, CostFXLoss)
 	}
@@ -271,7 +272,7 @@ func TestCostBlockJSONShape(t *testing.T) {
 	if got := componentOf(t, parts[1]); got != string(CostFees) {
 		t.Fatalf("parts[1].component = %q, want %q", got, CostFees)
 	}
-	assertDeterminedDecimalStrings(t, parts[1], "fees")
+	assertUndetermined(t, parts[1])
 
 	for _, idx := range []int{2, 3} {
 		p := parts[idx]
