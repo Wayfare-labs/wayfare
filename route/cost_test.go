@@ -271,7 +271,7 @@ func TestCostBlockJSONShape(t *testing.T) {
 	if got := componentOf(t, parts[1]); got != string(CostFees) {
 		t.Fatalf("parts[1].component = %q, want %q", got, CostFees)
 	}
-	assertDeterminedDecimalStrings(t, parts[1], "fees")
+	assertUndetermined(t, parts[1])
 
 	for _, idx := range []int{2, 3} {
 		p := parts[idx]
