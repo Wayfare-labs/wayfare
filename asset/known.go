@@ -153,6 +153,9 @@ func init() {
 			panic(fmt.Sprintf("asset: invalid registry entry %q: %v", e.Code, err))
 		}
 		a := Stellar(e.Code, e.Issuer)
+		if existing, dup := known[e.Code]; dup && existing.Issuer != e.Issuer {
+			panic(fmt.Sprintf("asset: code %q registered with issuer %q and %q — two assets sharing a code with different issuers must not be conflated", e.Code, existing.Issuer, e.Issuer))
+		}
 		known[e.Code] = a
 		if e.Peg != "" {
 			fiatPegs[e.Code+":"+e.Issuer] = e.Peg

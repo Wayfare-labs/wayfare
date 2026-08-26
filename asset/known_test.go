@@ -228,6 +228,57 @@ func TestHalfRegisteredEntryFails(t *testing.T) {
 	}
 }
 
+// TestLookupNeverConflatesDifferentIssuers asserts that no two registry entries
+// share a code with a different issuer. This is the property issue #137 exists
+// to enforce: asset.Lookup resolves by code, so two assets sharing a code but
+// differing by issuer must never be silently conflated.
+func TestLookupNeverConflatesDifferentIssuers(t *testing.T) {
+	registry := Registry()
+	seen := make(map[string]string) // code → first issuer
+	for _, e := range registry {
+		if prev, ok := seen[e.Code]; ok && prev != e.Issuer {
+			t.Errorf("code %q registered with issuer %q and %q — two assets sharing a code with different issuers must not be conflated", e.Code, prev, e.Issuer)
+		}
+		seen[e.Code] = e.Issuer
+	}
+}
+
+// TestLookupReturnsCorrectIssuerForCode verifies that Lookup resolves each
+// known code to the asset whose issuer matches the registry. If the known
+// map were keyed by code alone and a second entry overwrote the first,
+// this test would fail.
+func TestLookupReturnsCorrectIssuerForCode(t *testing.T) {
+	for _, want := range []Asset{USDC(), NGNC(), GHSC(), KESC()} {
+		got, ok := Lookup(want.Code)
+		if !ok {
+			t.Fatalf("Lookup(%q) returned not found", want.Code)
+		}
+		if got.Issuer != want.Issuer {
+			t.Errorf("Lookup(%q).Issuer = %q, want %q", want.Code, got.Issuer, want.Issuer)
+		}
+	}
+}
+
+// TestImpostorSameCodeDifferentIssuerNotFound verifies that Lookup does not
+// return an asset when the code matches but the issuer does not. An
+// unregistered issuer masquerading as a known code must not be found.
+func TestImpostorSameCodeDifferentIssuerNotFound(t *testing.T) {
+	// Every registered code, with an obviously-wrong issuer.
+	for _, code := range KnownCodes() {
+		impostor := Stellar(code, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF5")
+		got, ok := Lookup(code)
+		if !ok {
+			t.Fatalf("Lookup(%q) returned not found — code must exist", code)
+		}
+		if got.Equal(impostor) {
+			t.Errorf("Lookup(%q) returned an asset equal to an impostor with a different issuer", code)
+		}
+		if got.Issuer == impostor.Issuer {
+			t.Errorf("Lookup(%q) returned the impostor issuer %q instead of the registered one", code, impostor.Issuer)
+		}
+	}
+}
+
 // TestLookupEntry verifies looking up full registration metadata by Asset and by Code.
 func TestLookupEntry(t *testing.T) {
 	entry, ok := LookupEntry(NGNC())
