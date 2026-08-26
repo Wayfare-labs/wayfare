@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/Wayfare-labs/wayfare/checks"
@@ -455,5 +456,119 @@ func TestNopStoreIsSafe(t *testing.T) {
 	}
 	if err := s.Verify(ctx(), "USDC-NGNC"); err != nil {
 		t.Errorf("Nop.Verify: %v", err)
+	}
+}
+
+// TestPartialWriteTruncatedFinalLineRefused covers NDJSON appended by a process
+// killed mid-write: a file with valid records followed by an incomplete,
+// truncated final line (no trailing newline, invalid JSON) must be refused by
+// Open and OpenFS rather than silently truncating or loading a broken chain.
+func TestPartialWriteTruncatedFinalLineRefused(t *testing.T) {
+	validLine := `{"version":2,"seq":1,"recorded_at":"2026-08-21T22:30:40Z","corridor":"USDC-NGNC",` +
+		`"integrity":"DIRECT","depends_on":[],"reference":{"mid":"1350.2568",` +
+		`"source":"currency-api","as_of":"2026-08-21T00:00:00Z",` +
+		`"scored_against":"currency-api"},"floor_loss_pct":"25.02",` +
+		`"floor_size":"0.1","worst_loss_pct":"97.68","worst_size":"5000",` +
+		`"recommended":null,"finding":"No usable size.","rungs":[{"send_amount":"0.1",` +
+		`"priced":true,"integrity":"DIRECT","receive_amount":"102.78",` +
+		`"effective_rate":"1027.84","loss_pct":"24.65","verdict":"UNUSABLE",` +
+		`"path":"USDC -> NGNC"}],"prev_hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000",` +
+		`"hash":"sha256:ebc429fff786de9cb43abbc16b6859efa62a6be06ca25692dc91c233d05e5fb0"}`
+
+	truncatedLine := `{"version":2,"seq":2,"recorded_at":"2026-08-21T23:00:00Z","corridor":"USDC-NGNC"`
+
+	content := validLine + "\n" + truncatedLine
+
+	// 1. FileStore.Open path
+	dir := t.TempDir()
+	path := filepath.Join(dir, "USDC-NGNC"+FileExt)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Open(dir)
+	if err == nil {
+		t.Fatal("Open accepted a store with a truncated final line from a partial write")
+	}
+	if !strings.Contains(err.Error(), "USDC-NGNC line 2") {
+		t.Errorf("error should cite corridor and line 2, got: %v", err)
+	}
+
+	// 2. ReadOnly.OpenFS path
+	mapFS := fstest.MapFS{
+		"data/USDC-NGNC.ndjson": &fstest.MapFile{Data: []byte(content)},
+	}
+	_, err = OpenFS(mapFS, "data")
+	if err == nil {
+		t.Fatal("OpenFS accepted an embedded store with a truncated final line")
+	}
+	if !strings.Contains(err.Error(), "USDC-NGNC line 2") {
+		t.Errorf("OpenFS error should cite corridor and line 2, got: %v", err)
+	}
+}
+
+// TestPartialWriteSingleTruncatedLineRefused covers a process killed mid-write
+// on the very first record append, leaving only a partial, unparseable line.
+func TestPartialWriteSingleTruncatedLineRefused(t *testing.T) {
+	truncatedContent := `{"version":2,"seq":1,"recorded_at":"2026-08-21T22:30:40Z","corridor":"USDC-NGNC"`
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "USDC-NGNC"+FileExt)
+	if err := os.WriteFile(path, []byte(truncatedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Open(dir)
+	if err == nil {
+		t.Fatal("Open accepted a store with a single truncated line from a partial write")
+	}
+	if !strings.Contains(err.Error(), "USDC-NGNC line 1") {
+		t.Errorf("error should cite corridor and line 1, got: %v", err)
+	}
+
+	mapFS := fstest.MapFS{
+		"data/USDC-NGNC.ndjson": &fstest.MapFile{Data: []byte(truncatedContent)},
+	}
+	_, err = OpenFS(mapFS, "data")
+	if err == nil {
+		t.Fatal("OpenFS accepted a store with a single truncated line")
+	}
+	if !strings.Contains(err.Error(), "USDC-NGNC line 1") {
+		t.Errorf("OpenFS error should cite corridor and line 1, got: %v", err)
+	}
+}
+
+// TestPartialWriteSyntacticallyValidTruncatedLineRefused covers a truncated line
+// that happens to parse as valid JSON (e.g. truncated mid-object but closing
+// braces remained valid) but lacks required record fields and hash integrity.
+func TestPartialWriteSyntacticallyValidTruncatedLineRefused(t *testing.T) {
+	validLine := `{"version":2,"seq":1,"recorded_at":"2026-08-21T22:30:40Z","corridor":"USDC-NGNC",` +
+		`"integrity":"DIRECT","depends_on":[],"reference":{"mid":"1350.2568",` +
+		`"source":"currency-api","as_of":"2026-08-21T00:00:00Z",` +
+		`"scored_against":"currency-api"},"floor_loss_pct":"25.02",` +
+		`"floor_size":"0.1","worst_loss_pct":"97.68","worst_size":"5000",` +
+		`"recommended":null,"finding":"No usable size.","rungs":[{"send_amount":"0.1",` +
+		`"priced":true,"integrity":"DIRECT","receive_amount":"102.78",` +
+		`"effective_rate":"1027.84","loss_pct":"24.65","verdict":"UNUSABLE",` +
+		`"path":"USDC -> NGNC"}],"prev_hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000",` +
+		`"hash":"sha256:ebc429fff786de9cb43abbc16b6859efa62a6be06ca25692dc91c233d05e5fb0"}`
+
+	// Syntactically valid JSON object with matching prev_hash, but incomplete record (missing hash)
+	partialValidJSON := `{"version":2,"seq":2,"corridor":"USDC-NGNC","prev_hash":"sha256:ebc429fff786de9cb43abbc16b6859efa62a6be06ca25692dc91c233d05e5fb0"}`
+
+	content := validLine + "\n" + partialValidJSON + "\n"
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "USDC-NGNC"+FileExt)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Open(dir)
+	if err == nil {
+		t.Fatal("Open accepted a store with a truncated line that was syntactically valid JSON but missing hash verification")
+	}
+	if !strings.Contains(err.Error(), "seq 2") && !strings.Contains(err.Error(), "hash") {
+		t.Errorf("error should cite record seq 2 or hash failure, got: %v", err)
 	}
 }
