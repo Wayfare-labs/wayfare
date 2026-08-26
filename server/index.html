@@ -63,14 +63,26 @@
     background: var(--panel); border: 1px solid var(--border);
     border-radius: 10px; padding: 1.15rem 1.25rem; margin-bottom: 1.25rem;
   }
+  .integrity-card { display: grid; grid-template-columns: auto 1fr; gap: .75rem 1rem; align-items: start; margin-bottom: .35rem; }
   .badge {
-    display: inline-block; font: 600 .72rem/1 var(--mono); letter-spacing: .06em;
-    padding: .4rem .6rem; border-radius: 5px; border: 1px solid currentColor;
-    text-transform: uppercase;
+    display: inline-flex; align-items: center; gap: .45rem; width: fit-content;
+    font: 700 .78rem/1 var(--mono); letter-spacing: .06em;
+    padding: .55rem .7rem; border-radius: 7px; border: 2px solid currentColor;
+    text-transform: uppercase; white-space: nowrap;
   }
-  .b-direct { color: var(--muted); }
-  .b-derivative { color: var(--warn); }
-  .b-nomarket { color: var(--bad); }
+  .badge::before { font-size: 1rem; line-height: 1; }
+  .b-direct { color: var(--ok); background: var(--ok-soft); }
+  .b-direct::before { content: "◆"; }
+  .b-derivative { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--panel)); }
+  .b-derivative::before { content: "↪"; }
+  .b-nomarket { color: var(--bad); background: var(--bad-soft); }
+  .b-nomarket::before { content: "∅"; }
+  .integrity-copy { min-width: 0; }
+  .integrity-title { font-weight: 700; margin: 0; }
+  .integrity-help { color: var(--muted); font-size: .88rem; margin: .15rem 0 0; }
+  .integrity-dependency { font-family: var(--mono); font-size: .8rem; margin: .35rem 0 0; color: var(--warn); }
+  .integrity-card .badge[title] { cursor: help; }
+  @media (max-width: 520px) { .integrity-card { grid-template-columns: 1fr; gap: .45rem; } }
   .finding { font-size: 1.02rem; margin: .85rem 0 0; }
   .rec-none {
     margin-top: .9rem; padding: .7rem .85rem; border-radius: 6px;
@@ -136,6 +148,9 @@
   .legend-item { display: flex; align-items: center; gap: .45rem; min-width: 0; }
   .legend-item span:last-child { font-size: .8rem; }
   .case { font-size: .88rem; color: var(--muted); }
+  .integrity-cell { white-space: nowrap; }
+  .integrity-cell .badge { font-size: .65rem; padding: .3rem .45rem; border-width: 1px; }
+  .integrity-cell .badge::before { font-size: .8rem; }
   .case strong { color: var(--ink); font-weight: 600; }
   svg { width: 100%; height: auto; display: block; }
   .axis { fill: var(--muted); font: 10px var(--mono); }
@@ -234,6 +249,37 @@ const formatPct = (s) => {
 const badgeClass = (i) =>
   i === 'NO-MARKET' ? 'b-nomarket' : i === 'DERIVATIVE' ? 'b-derivative' : 'b-direct';
 
+const integrityInfo = (state, dependsOn = []) => {
+  if (state === 'NO-MARKET') return {
+    title: 'No market exists',
+    help: 'No path exists at the tested size. This is the absence of a price — not a bad price.',
+    tooltip: 'NO-MARKET means no path exists at all: there is no loss percentage to compute.'
+  };
+  if (state === 'DERIVATIVE') {
+    const via = dependsOn.length ? dependsOn.map(a => a.code || a).join(' and ') : 'another fiat token';
+    return {
+      title: 'Depends on an upstream corridor',
+      help: `Every path routes through ${via}; there is no independent market.`,
+      dependency: `depends on ${via}`,
+      tooltip: `DERIVATIVE means every available path traverses another fiat-pegged token, so this corridor inherits its liquidity and failure modes.`
+    };
+  }
+  return {
+    title: 'Independent market found',
+    help: 'At least one path reaches the destination without another fiat token in between.',
+    tooltip: 'DIRECT means an independent market exists: at least one path reaches the destination without routing through another fiat token.'
+  };
+};
+
+function integrityElement(state, dependsOn = '') {
+  const info = integrityInfo(state, Array.isArray(dependsOn) ? dependsOn : []);
+  const dependency = info.dependency ? `<p class="integrity-dependency">${esc(info.dependency)}</p>` : '';
+  return `<div class="integrity-card">
+    <span class="badge ${badgeClass(state)}" title="${esc(info.tooltip)}" aria-label="${esc(state)}: ${esc(info.tooltip)}">${esc(state)}</span>
+    <div class="integrity-copy"><p class="integrity-title">${esc(info.title)}</p><p class="integrity-help">${esc(info.help)}</p>${dependency}</div>
+  </div>`;
+}
+
 const verdictClass = (v) => 'v-' + String(v).toLowerCase();
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -269,7 +315,7 @@ function render(d) {
 
   // Headline: integrity state and the finding, before any numbers.
   parts.push(`${provenance}<div class="panel">
-    <span class="badge ${badgeClass(d.integrity)}">${esc(d.integrity)}</span>
+    ${integrityElement(d.integrity, d.depends_on || [])}
     <p class="finding">${esc(d.finding)}</p>
     ${d.scored ? recommendationBlock(d) : unscoredBlock(d)}
     <p class="meta">Reference ${esc(d.reference_pair)} mid
@@ -372,11 +418,11 @@ function table(rungs, scored) {
       if (scored) {
         return `<tr><td class="num">${esc(r.send_amount)}</td>
           <td colspan="4" class="err">${why}</td>
-          <td>${esc(r.integrity)}</td></tr>`;
+          <td class="integrity-cell">${integrityElement(r.integrity)}</td></tr>`;
       }
       return `<tr><td class="num">${esc(r.send_amount)}</td>
         <td colspan="2" class="err">${why}</td>
-        <td>${esc(r.integrity)}</td></tr>`;
+        <td class="integrity-cell">${integrityElement(r.integrity)}</td></tr>`;
     }
     const q = r.quote;
     if (scored) {
@@ -623,7 +669,7 @@ function renderTrend() {
   const latest = runs[runs.length - 1];
   parts.push(`<div class="panel">
     <h2>Trend &mdash; ${esc(d.corridor)}</h2>
-    <span class="badge ${badgeClass(latest.integrity)}">${esc(latest.integrity)}</span>
+    ${integrityElement(latest.integrity, latest.depends_on || [])}
     <span class="case">&nbsp; latest of ${runs.length} stored run(s) &middot;
     ${esc(fmtRunTime(runs[0].recorded_at))} &rarr; ${esc(fmtRunTime(latest.recorded_at))} UTC</span>
     <p class="meta">${referenceSummary(runs)}${integritySummary(runs)}</p>
@@ -837,9 +883,9 @@ function runsTable(runs) {
     return `<tr>
       <td class="num">${esc(r.recorded_at)}</td>
       <td class="num">${r.seq}</td>
-      <td><span class="badge ${badgeClass(r.integrity)}">${esc(r.integrity)}</span>${via}</td>
       <td class="num">${esc(r.floor_loss_pct)}%</td>
       <td class="num">${esc(r.worst_loss_pct)}%</td>
+      <td class="integrity-cell">${integrityElement(r.integrity, (r.depends_on || []).map(a => ({code: a})))}${via}</td>
       <td>${esc(src)}${div}</td>
     </tr>`;
   }).join('');
