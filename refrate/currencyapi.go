@@ -170,12 +170,12 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 		return Rate{}, &ErrNoRate{Base: base, Quote: quote, Source: c.Name()}
 	}
 
-	asOf := time.Now().UTC()
+	var asOf time.Time
 	if d, ok := envelope["date"]; ok {
 		var day string
 		if json.Unmarshal(d, &day) == nil {
 			if parsed, err := time.Parse("2006-01-02", day); err == nil {
-				asOf = parsed
+				asOf = parsed.UTC()
 			}
 		}
 	}

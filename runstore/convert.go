@@ -36,8 +36,10 @@ func FromCorridorJSON(c route.CorridorJSON) *Record {
 		Reference: Reference{
 			Mid:             c.ReferenceMid,
 			Source:          c.ReferenceSource,
+			AsOf:            c.ReferenceAsOf,
 			SecondaryMid:    c.ReferenceSecondaryMid,
 			SecondarySource: c.ReferenceSecondarySource,
+			SecondaryAsOf:   c.ReferenceSecondaryAsOf,
 			DivergencePct:   c.ReferenceDivergencePct,
 			ScoredAgainst:   scoredAgainst(c),
 		},

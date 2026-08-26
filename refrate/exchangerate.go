@@ -154,9 +154,9 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 		return Rate{}, &ErrNoRate{Base: base, Quote: quote, Source: e.Name()}
 	}
 
-	asOf := time.Now()
+	var asOf time.Time
 	if body.TimeLastUpdateUnix > 0 {
-		asOf = time.Unix(body.TimeLastUpdateUnix, 0)
+		asOf = time.Unix(body.TimeLastUpdateUnix, 0).UTC()
 	}
 
 	log().Debug("exchangerate-api rate fetched",

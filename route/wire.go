@@ -85,6 +85,14 @@ type CorridorJSON struct {
 	ReferenceNote            string `json:"reference_note,omitempty"`
 	Scored                   bool   `json:"scored"`
 
+	// ReferenceAsOf is the upstream provider's rate timestamp. Omitted if
+	// the provider provided no timestamp.
+	ReferenceAsOf string `json:"reference_as_of,omitempty"`
+
+	// ReferenceSecondaryAsOf is the second provider's rate timestamp.
+	// Omitted if absent.
+	ReferenceSecondaryAsOf string `json:"reference_secondary_as_of,omitempty"`
+
 	// ReferenceFetchedAt is when the rate was last obtained from the
 	// provider, which differs from reference_as_of: as-of is the upstream's
 	// own stamp, fetched-at is when we asked. A cached rate has an older
@@ -233,9 +241,15 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 		Rungs:              make([]RungJSON, 0, len(l.Rungs)),
 		MeasuredAt:         time.Now().UTC().Format(time.RFC3339),
 	}
+	if !l.Reference.AsOf.IsZero() {
+		out.ReferenceAsOf = l.Reference.AsOf.UTC().Format(time.RFC3339)
+	}
 	if !l.Reference.SecondaryMid.IsZero() {
 		out.ReferenceSecondaryMid = l.Reference.SecondaryMid.String()
 		out.ReferenceSecondarySource = l.Reference.SecondarySource
+	}
+	if !l.Reference.SecondaryAsOf.IsZero() {
+		out.ReferenceSecondaryAsOf = l.Reference.SecondaryAsOf.UTC().Format(time.RFC3339)
 	}
 	if !l.Reference.FetchedAt.IsZero() {
 		out.ReferenceFetchedAt = l.Reference.FetchedAt.UTC().Format(time.RFC3339)

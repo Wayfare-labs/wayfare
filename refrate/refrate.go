@@ -149,9 +149,6 @@ func (s *Static) Rate(_ context.Context, base, quote string) (Rate, error) {
 		return Rate{}, &ErrNoRate{Base: base, Quote: quote, Source: s.Name()}
 	}
 	stamp := s.Stamp
-	if stamp.IsZero() {
-		stamp = time.Now()
-	}
 	return Rate{
 		Base:   base,
 		Quote:  quote,
