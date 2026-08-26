@@ -156,34 +156,51 @@ func TestNoMarketIsReportedAsItsOwnState(t *testing.T) {
 	}
 }
 
-// TestMoneyCrossesTheWireAsStrings guards the float64 invariant at the
-// boundary. A JSON number invites the client to parse a rate into a float,
-// reintroducing exactly the rounding error the engine avoids internally.
+// getCorridor fetches a corridor document from an API server and decodes it
+// into the shared wire type, so boundary tests walk exactly what a client
+// receives: the same JSON, parsed the same way. A money field that crossed
+// the wire as a JSON number would fail this decode with a type error.
+func getCorridor(t *testing.T, url string) route.CorridorJSON {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	var doc route.CorridorJSON
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		t.Fatalf("decoding %s as a corridor document: %v", url, err)
+	}
+	return doc
+}
+
+// assertMoneyFieldsParse is the assertion half of the boundary test: every
+// money-valued string a corridor document carries must parse as a decimal.
+// The walk is route.MoneyStrings, the single source of truth for which wire
+// fields carry money, so one walk guards all three producers of the shape —
+// live, stale and cmd/ladder -json.
+func assertMoneyFieldsParse(t *testing.T, doc route.CorridorJSON) {
+	t.Helper()
+	for _, s := range route.MoneyStrings(doc) {
+		if _, err := decimal.NewFromString(s); err != nil {
+			t.Errorf("money field %q is not a parseable decimal: %v", s, err)
+		}
+	}
+}
+
+// TestMoneyCrossesTheWireAsStrings is the boundary test the README refers
+// to: every amount, rate and percentage in a corridor document is a decimal
+// string, never a JSON number. It walks the live document (backlog #6); the
+// stale and CLI documents are walked by TestStaleDocumentMoneyFieldsParse
+// and cmd/ladder's TestLadderDocumentMoneyFieldsParse, using the same
+// route.MoneyStrings walk.
 func TestMoneyCrossesTheWireAsStrings(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
 
-	resp, err := http.Get(srv.URL + "/api/corridor?to=NGNC&sizes=100")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var body map[string]json.RawMessage
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-
-	for _, field := range []string{"reference_mid", "floor_loss_pct", "worst_loss_pct"} {
-		raw, ok := body[field]
-		if !ok {
-			t.Errorf("%s missing from the response", field)
-			continue
-		}
-		if !strings.HasPrefix(string(raw), `"`) {
-			t.Errorf("%s = %s, want a quoted string so clients cannot parse it as a float",
-				field, raw)
-		}
-	}
+	// A real ladder run against the recorded Horizon fixture, so the walk
+	// sees the per-rung quotes and the cost blocks the engine attaches.
+	doc := getCorridor(t, srv.URL+"/api/corridor?to=NGNC&sizes=100")
+	assertMoneyFieldsParse(t, doc)
 }
 
 // TestUnknownAssetIsRejected checks that an unverified asset code is an error

@@ -198,6 +198,14 @@ The README says there is a test at the boundary; extend it to walk the stale
 document and the CLI document, not only the live one.
 `V1` `area:tests` `good first issue` `difficulty:easy` `ready`
 
+> **Implemented.** `route.MoneyStrings` is now the single walk over the wire
+> shape — mirroring its omitempty semantics so an empty field that would
+> reach the wire still fails parsing — and the boundary tests feed it for all
+> three producers: `TestMoneyCrossesTheWireAsStrings` (live),
+> `TestStaleDocumentMoneyFieldsParse` (stale) and
+> `TestLadderDocumentMoneyFieldsParse` (cmd/ladder -json). Each fails if a
+> producer renders money as a JSON number or a non-parseable string.
+
 **#7 — reference_fetched_at is dropped on the stale path** *(filed: [#115](https://github.com/Wayfare-labs/wayfare/issues/115))*
 `staleJSON` never sets it, so a reader cannot tell how old the benchmark behind
 a stored reading was when it was taken.

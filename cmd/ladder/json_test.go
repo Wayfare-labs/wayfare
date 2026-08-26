@@ -62,6 +62,25 @@ func sampleLadderResult() *route.LadderResult {
 					Quotes:    []route.Quote{recommended},
 					Integrity: route.IntegrityDirect,
 				},
+				// A cost decomposition with one determined part (carrying
+				// amount and pct) and one undetermined part (carrying
+				// neither), so the money walk exercises both shapes.
+				Decomposition: route.CostDecomposition{
+					Parts: []route.CostPart{
+						{
+							Component:  route.CostFXLoss,
+							Amount:     decimal.RequireFromString("6025.68"),
+							Pct:        decimal.RequireFromString("4.46"),
+							Determined: true,
+						},
+						{
+							Component:  route.CostFees,
+							Determined: false,
+							Reason:     "network fee not measured",
+						},
+					},
+					TotalLossPct: decimal.RequireFromString("4.46"),
+				},
 			},
 		},
 		Integrity: route.IntegrityDirect,
@@ -156,6 +175,32 @@ func TestLadderJSONFieldSetIsNotHandRolled(t *testing.T) {
 			t.Errorf("-json output has field %q, which is not a JSON tag on "+
 				"route.CorridorJSON; cmd/ladder must never emit a field the shared "+
 				"wire type does not declare", k)
+		}
+	}
+}
+
+// TestLadderDocumentMoneyFieldsParse walks the CLI document (backlog #6):
+// cmd/ladder's -json mode must carry the same money discipline as the HTTP
+// API — every amount, rate and percentage parses as a decimal string, never
+// a JSON number. It feeds route.MoneyStrings, the same shared walk the
+// server-side tests use for the live and stale documents, so one walk guards
+// all three producers of the shape.
+func TestLadderDocumentMoneyFieldsParse(t *testing.T) {
+	result := sampleLadderResult()
+	pair := "USD/NGN"
+
+	var buf bytes.Buffer
+	if err := encodeCorridorJSON(&buf, result, pair); err != nil {
+		t.Fatalf("encodeCorridorJSON: %v", err)
+	}
+	var doc route.CorridorJSON
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatalf("decoding -json output as a corridor document: %v", err)
+	}
+
+	for _, s := range route.MoneyStrings(doc) {
+		if _, err := decimal.NewFromString(s); err != nil {
+			t.Errorf("money field %q is not a parseable decimal: %v", s, err)
 		}
 	}
 }

@@ -178,6 +178,19 @@ func TestStaleServesReferenceFetchedAt(t *testing.T) {
 	}
 }
 
+// TestStaleDocumentMoneyFieldsParse walks the stale document (backlog #6): a
+// reading served from history must carry the same money discipline as a live
+// one — every amount, rate and percentage on the wire parses as a decimal
+// string, never a JSON number. It uses the same route.MoneyStrings walk as
+// the live and CLI tests, so one walk guards all three producers of the
+// shape.
+func TestStaleDocumentMoneyFieldsParse(t *testing.T) {
+	srv := deadServer(t, storedRun(t, t.TempDir(), time.Now().UTC().Add(-time.Hour)))
+
+	doc := getCorridor(t, srv.URL+"/api/corridor?to=NGNC&sizes=100")
+	assertMoneyFieldsParse(t, doc)
+}
+
 // TestNoHistoryIsAnErrorNotANumber is the other half, and the more important
 // one. With nothing stored, a failed measurement must error rather than return
 // a plausible figure.
