@@ -53,6 +53,14 @@ permissions:
   pull-requests: write
   checks: read
 
+  # Closing a linked issue on merge is performed as the merging token. When
+  # this workflow merges a pull request, that token is GITHUB_TOKEN, so a body
+  # saying "Closes #94" silently fails to close anything without this scope —
+  # the merge succeeds and the issue stays open, with no error anywhere.
+  # #370 merged that way and left #94 open; every human-merged PR closed its
+  # issue normally.
+  issues: write
+
 # No concurrency group: the script deduplicates comments via the
 # <!-- auto-merge-gate --> marker, and the workflow_run re-evaluation
 # after CI finishes must not be cancelled by the earlier pull_request_target
