@@ -119,6 +119,13 @@
   .legend-item span:last-child { font-size: .8rem; }
   .case { font-size: .88rem; color: var(--muted); }
   .case strong { color: var(--ink); font-weight: 600; }
+  .cs-info { font-size: .8rem; color: var(--muted); margin-left: .3rem; }
+  .cs-info .cs-state { font: 600 .72rem/1 var(--mono); letter-spacing: .04em;
+    padding: .15rem .4rem; border-radius: 3px; border: 1px solid currentColor;
+    vertical-align: middle; }
+  .cs-info .cs-state.cs-direct { color: var(--muted); }
+  .cs-info .cs-state.cs-derivative { color: var(--warn); }
+  .cs-info .cs-state.cs-nomarket { color: var(--bad); }
   svg { width: 100%; height: auto; display: block; }
   .axis { fill: var(--muted); font: 10px var(--mono); }
   .trend-legend { display: flex; gap: 1.1rem; margin-top: .4rem;
@@ -140,11 +147,10 @@
 
   <div class="controls">
     <label for="to">Corridor</label>
-    <select id="to">
-      <option value="NGNC">USDC &rarr; NGNC (naira)</option>
-      <option value="GHSC">USDC &rarr; GHSC (cedi)</option>
-      <option value="KESC">USDC &rarr; KESC (shilling)</option>
+    <select id="to" aria-label="Select a corridor to measure">
+      <option value="" disabled selected>Loading corridors…</option>
     </select>
+    <span id="cs-detail" class="cs-info"></span>
     <button id="run">Measure live</button>
     <button id="trend">Show trend</button>
     <span id="status" class="sub"></span>
@@ -172,6 +178,80 @@ const verdictClass = (v) => 'v-' + String(v).toLowerCase();
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// --- Asset / corridor selector -----------------------------------------------
+
+const CORRIDOR_NAMES = {
+  NGNC: 'NGNC (naira)', GHSC: 'GHSC (cedi)', KESC: 'KESC (shilling)',
+};
+
+let assetData = null; // cached /api/assets response
+
+async function loadAssets() {
+  try {
+    const r = await fetch('/api/assets');
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    assetData = data;
+    buildSelector(data);
+  } catch (e) {
+    // Fallback: keep the loading placeholder so the user sees the
+    // corridor is unavailable rather than silently defaulting.
+    const sel = $('to');
+    sel.innerHTML = '<option value="" disabled selected>Could not load corridors</option>';
+  }
+}
+
+function buildSelector(data) {
+  const sel = $('to');
+  const assets = (data.assets || []).filter(a => a.can_be_destination);
+  // Sort: corridors with history first, then alphabetically.
+  assets.sort((a, b) => {
+    const ah = a.state && a.state.has_history ? 0 : 1;
+    const bh = b.state && b.state.has_history ? 0 : 1;
+    if (ah !== bh) return ah - bh;
+    return a.code.localeCompare(b.code);
+  });
+
+  sel.innerHTML = assets.map((a, i) => {
+    const label = CORRIDOR_NAMES[a.code] || a.code;
+    const note = a.state && a.state.has_history
+      ? ` [${a.state.last_integrity}]` : '';
+    return `<option value="${esc(a.code)}"${i === 0 ? ' selected' : ''}>` +
+      `USDC \u2192 ${esc(label)}${esc(note)}</option>`;
+  }).join('');
+
+  // Show the detail line for the initially selected corridor.
+  updateCorridorDetail(sel.value);
+  sel.addEventListener('change', () => updateCorridorDetail(sel.value));
+}
+
+function updateCorridorDetail(code) {
+  const el = $('cs-detail');
+  if (!assetData || !code) { el.innerHTML = ''; return; }
+  const asset = assetData.assets.find(a => a.code === code);
+  if (!asset || !asset.state) { el.innerHTML = ''; return; }
+  const st = asset.state;
+  if (!st.has_history) {
+    el.innerHTML = '<span class="case">No measurements yet</span>';
+    return;
+  }
+  const stateClass = {
+    'DIRECT': 'cs-direct', 'DERIVATIVE': 'cs-derivative', 'NO-MARKET': 'cs-nomarket',
+  }[st.last_integrity] || '';
+  const when = st.last_measured ? fmtISOTime(st.last_measured) : '';
+  el.innerHTML = `<span class="cs-state ${stateClass}">${esc(st.last_integrity)}</span>` +
+    (when ? ` <span class="case">measured ${esc(when)}</span>` : '');
+}
+
+function fmtISOTime(v) {
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return String(v);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${MONTHS[d.getUTCMonth()]} ${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`;
+}
+
+// --- Measurement -------------------------------------------------------------
 
 async function measure() {
   const to = $('to').value;
@@ -731,6 +811,7 @@ function runsTable(runs) {
 
 $('run').addEventListener('click', measure);
 $('trend').addEventListener('click', loadTrend);
+loadAssets();
 </script>
 <script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a30a05c3d811663d',t:'MTc4NzY1NDg4Nw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>

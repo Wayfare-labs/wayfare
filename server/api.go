@@ -228,15 +228,54 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
+	// corridorState is the pricing history for a receive asset. The UI needs
+	// this to build a corridor selector that reflects what has actually been
+	// measured rather than what is theoretically possible.
+	type corridorState struct {
+		HasHistory    bool   `json:"has_history"`
+		LastIntegrity string `json:"last_integrity,omitempty"`
+		LastMeasured  string `json:"last_measured,omitempty"`
+	}
 	type entry struct {
 		route.AssetJSON
-		Corridor bool `json:"can_be_destination"`
+		Corridor bool           `json:"can_be_destination"`
+		State    *corridorState `json:"state,omitempty"`
 	}
+
+	// Build a set of corridor keys that have stored history, so we can
+	// annotate each asset in O(1) per lookup.
+	historySet := make(map[string]bool)
+	if s.Store != nil {
+		corridors, err := s.Store.Corridors(r.Context())
+		if err == nil {
+			for _, c := range corridors {
+				historySet[c] = true
+			}
+		}
+	}
+
 	out := make([]entry, 0)
 	for _, code := range asset.KnownCodes() {
 		a, _ := asset.Lookup(code)
 		_, hasPeg := asset.FiatPeg(a)
-		out = append(out, entry{AssetJSON: route.ToAssetJSON(a), Corridor: hasPeg})
+		e := entry{AssetJSON: route.ToAssetJSON(a), Corridor: hasPeg}
+
+		// For corridor destinations, check whether USDC → CODE has been
+		// priced before. The store key uses the same CorridorKey format
+		// as the monitor and the measurement workflow.
+		if hasPeg {
+			key := runstore.CorridorKey("USDC", code)
+			st := &corridorState{HasHistory: historySet[key]}
+			if st.HasHistory && s.Store != nil {
+				if rec, err := s.Store.Latest(r.Context(), key); err == nil && rec != nil {
+					st.LastIntegrity = rec.Integrity
+					st.LastMeasured = rec.RecordedAt.UTC().Format(time.RFC3339)
+				}
+			}
+			e.State = st
+		}
+
+		out = append(out, e)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"assets": out})
 }
