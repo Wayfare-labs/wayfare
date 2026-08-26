@@ -243,15 +243,23 @@ func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build a set of corridor keys that have stored history, so we can
-	// annotate each asset in O(1) per lookup.
-	historySet := make(map[string]bool)
+	// annotate each asset in O(1) per lookup. When the store is not
+	// configured, historySet stays nil and state is omitted from every
+	// entry — the UI renders "No measurements yet" rather than a
+	// fabricated false.
+	historySet, storeAvail := (map[string]bool)(nil), false
 	if s.Store != nil {
 		corridors, err := s.Store.Corridors(r.Context())
-		if err == nil {
-			for _, c := range corridors {
-				historySet[c] = true
-			}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError,
+				"listing stored corridors: "+err.Error())
+			return
 		}
+		historySet = make(map[string]bool, len(corridors))
+		for _, c := range corridors {
+			historySet[c] = true
+		}
+		storeAvail = true
 	}
 
 	out := make([]entry, 0)
@@ -263,11 +271,17 @@ func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
 		// For corridor destinations, check whether USDC → CODE has been
 		// priced before. The store key uses the same CorridorKey format
 		// as the monitor and the measurement workflow.
-		if hasPeg {
+		if hasPeg && storeAvail {
 			key := runstore.CorridorKey("USDC", code)
 			st := &corridorState{HasHistory: historySet[key]}
-			if st.HasHistory && s.Store != nil {
-				if rec, err := s.Store.Latest(r.Context(), key); err == nil && rec != nil {
+			if st.HasHistory {
+				rec, err := s.Store.Latest(r.Context(), key)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError,
+						fmt.Sprintf("loading history for %s: %v", code, err))
+					return
+				}
+				if rec != nil {
 					st.LastIntegrity = rec.Integrity
 					st.LastMeasured = rec.RecordedAt.UTC().Format(time.RFC3339)
 				}
