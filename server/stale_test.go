@@ -257,3 +257,52 @@ func TestUIRendersAllThreeFindingStates(t *testing.T) {
 		t.Error("the UI does not explain that undetermined is not a failure")
 	}
 }
+
+// TestUIRendersMetrics guards the metric surface the way the finding states
+// are guarded. Metrics are a different shape from checks — a value with a
+// unit, not a verdict — and an undetermined metric must not look like a
+// failed check.
+func TestUIRendersMetrics(t *testing.T) {
+	raw, err := uiFS.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+
+	// The renderer must read f.metrics at all, and every metric must reach
+	// the page as a value with its unit.
+	for _, want := range []string{
+		"function metrics", "f.metrics",
+		"m-value", "m-unit", "m-state", "m-unknown", "UNDETERMINED",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the UI has no %q; metrics would render incompletely", want)
+		}
+	}
+
+	// An undetermined metric shows its reason in place of the value, so the
+	// undetermined branch must come first — a metric that did not produce a
+	// value must never fall through into the value renderer.
+	undeterminedAt := strings.Index(page, "!m.determined")
+	valueAt := strings.Index(page, "m.value")
+	if undeterminedAt == -1 || valueAt == -1 || undeterminedAt > valueAt {
+		t.Error("the UI renders a metric value before testing m.determined; " +
+			"an undetermined metric would render as though it had a value")
+	}
+
+	// The panel is absent, not empty, when no metrics were run.
+	if !strings.Contains(page, "f.metrics.length") {
+		t.Error("the metrics panel is not gated on metrics existing; it would render empty")
+	}
+
+	// Evidence source and timestamp must be reachable for each metric.
+	if !strings.Contains(page, "m.observed_at") || !strings.Contains(page, "e.observed_at") {
+		t.Error("the UI does not surface a metric's evidence source and timestamp")
+	}
+
+	// No metric is graded. No threshold exists for any of them, and the panel
+	// must say so rather than let a colour imply a verdict.
+	if !strings.Contains(page, "No threshold") {
+		t.Error("the UI does not say that metrics carry no threshold")
+	}
+}
