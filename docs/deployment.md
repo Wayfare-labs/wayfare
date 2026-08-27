@@ -246,6 +246,7 @@ and one asserting a missing one is an error rather than a plausible number.
 
 ## Related
 
+- [embedded-history.md](embedded-history.md) — the deployed instance serves history embedded at build time; freshness depends on redeploys, not the scheduler
 - [upstream-failures.md](upstream-failures.md) — what each upstream failure shape means
 - [run-store.md](run-store.md) — the chain, and what verification proves
 - [verify-store.md](verify-store.md) — running `-verify-store`, exit codes, and what broken chains look like

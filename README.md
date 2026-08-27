@@ -34,7 +34,9 @@ embedded in the binary at build time. Every response carries `live: false` and a
 records are written by `.github/workflows/measure.yml` and committed to `data/`.
 That workflow is currently unable to push ([#63](https://github.com/Wayfare-labs/wayfare/issues/63)),
 so the served history is older than its six-hour cadence implies. Read
-`stale.age_human` rather than assuming.
+`stale.age_human` rather than assuming. The mechanism — history embedded at
+build time, so freshness advances by redeploy rather than by scheduler — is
+[documented in full](docs/embedded-history.md).
 
 **It sleeps.** The free instance sleeps after fifteen minutes without traffic,
 so the first request after a quiet period may take several seconds or fail
@@ -46,6 +48,8 @@ roadmap below is deployed there.
 To reproduce it locally, `go run ./cmd/wayfared` and open
 `http://127.0.0.1:8080/` — that measures live against mainnet rather than
 serving history. Deployment details: **[docs/deployment.md](docs/deployment.md)**.
+How the deployed instance serves its embedded history:
+**[docs/embedded-history.md](docs/embedded-history.md)**.
 
 ---
 
