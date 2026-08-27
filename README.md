@@ -314,6 +314,8 @@ rounding error the engine avoids internally. There is a test at the boundary.
 Recorded upstream bytes, verified by hash on load. A replayer **must refuse a
 version it does not know.** Full spec: **[docs/snapshot-format.md](docs/snapshot-format.md)**
 
+End-to-end walkthrough of recording and replaying: **[docs/snapshot-workflow.md](docs/snapshot-workflow.md)**
+
 ### Run record — version 1
 
 ```
