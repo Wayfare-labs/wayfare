@@ -51,13 +51,16 @@ type CostBlockJSON struct {
 }
 
 type RungJSON struct {
-	SendAmount string         `json:"send_amount"`
-	Priced     bool           `json:"priced"`
-	Integrity  string         `json:"integrity"`
-	Quote      *QuoteJSON     `json:"quote"`
-	Cost       *CostBlockJSON `json:"cost,omitempty"`
-	Notes      []string       `json:"notes"`
-	Error      string         `json:"error,omitempty"`
+	SendAmount   string         `json:"send_amount"`
+	MarginalCost string         `json:"marginal_cost,omitempty"`
+	MarginalFrom string         `json:"marginal_from,omitempty"`
+	MarginalTo   string         `json:"marginal_to,omitempty"`
+	Priced       bool           `json:"priced"`
+	Integrity    string         `json:"integrity"`
+	Quote        *QuoteJSON     `json:"quote"`
+	Cost         *CostBlockJSON `json:"cost,omitempty"`
+	Notes        []string       `json:"notes"`
+	Error        string         `json:"error,omitempty"`
 }
 
 type CorridorJSON struct {
@@ -285,6 +288,11 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 			Priced:     r.Priced(),
 			Integrity:  IntegrityUnknown.String(),
 			Notes:      []string{},
+		}
+		if r.MarginalCost != nil {
+			rj.MarginalCost = r.MarginalCost.Cost.String()
+			rj.MarginalFrom = r.MarginalCost.From.String()
+			rj.MarginalTo = r.MarginalCost.To.String()
 		}
 		if r.Err != nil {
 			rj.Error = r.Err.Error()
