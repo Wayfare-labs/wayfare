@@ -2,6 +2,7 @@ package runstore
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,14 +17,15 @@ func ctx() context.Context { return context.Background() }
 // fixedRecord is a record with every field pinned to a constant, used by the
 // hash-pinning test. Nothing here may change without a Version bump.
 //
-// It is a Version 2 record and deliberately carries a checks block and a
-// metrics block: those fields are part of the pinned preimage, so a change to
-// either their shape or their order is caught exactly like a change to any
-// other field. (How a Version 1 record still verifies under Version 2 is
-// exercised separately — see TestVersion1RecordStillVerifies.)
+// It is a Version 3 record and deliberately carries a checks block, a
+// metrics block and a reference fetch timestamp: those fields are part of the
+// pinned preimage, so a change to either their shape or their order is caught
+// exactly like a change to any other field. (How Version 1 and Version 2
+// records still verify under Version 3 is exercised separately — see
+// TestVersion1RecordStillVerifies and TestVersion2RecordStillVerifies.)
 func fixedRecord() *Record {
 	return &Record{
-		Version:    2,
+		Version:    3,
 		Seq:        1,
 		RecordedAt: time.Date(2026, 8, 21, 22, 30, 40, 0, time.UTC),
 		Corridor:   "USDC-NGNC",
@@ -34,6 +36,7 @@ func fixedRecord() *Record {
 			Source:        "currency-api",
 			AsOf:          "2026-08-21T00:00:00Z",
 			ScoredAgainst: "currency-api",
+			FetchedAt:     "2026-08-21T22:31:00Z",
 		},
 		FloorLossPct:    "25.02",
 		FloorSize:       "0.1",
@@ -100,12 +103,12 @@ func fixedRecord() *Record {
 // is a Version bump and a migration, and updating the constant below is the
 // last step of that work rather than the fix for a red build.
 func TestRecordHashIsPinned(t *testing.T) {
-	// Re-established 2026-08-25 when Version 2 added the checks and metrics
-	// blocks, by computing it from fixedRecord above. Every value in that
-	// fixture is part of it, including the checks block and the metrics
-	// block: they are fields like any other, and a change to their shape or
-	// order must fail here rather than pass review.
-	const want = "sha256:ebc429fff786de9cb43abbc16b6859efa62a6be06ca25692dc91c233d05e5fb0"
+	// Re-established 2026-08-26 when Version 3 added reference.fetched_at,
+	// by computing it from fixedRecord above. Every value in that fixture is
+	// part of it, including the checks block, the metrics block and the
+	// fetched_at stamp: they are fields like any other, and a change to
+	// their shape or order must fail here rather than pass review.
+	const want = "sha256:1be7a5513495a4cafd349e7ee67eca8297701425c95ab176c6aac5b072910f60"
 
 	got, err := fixedRecord().ComputeHash()
 	if err != nil {
@@ -124,22 +127,23 @@ func TestRecordHashIsPinned(t *testing.T) {
 // TestVersion1RecordStillVerifies is the migration's proof.
 //
 // A Version 1 record — no checks block, no metrics block — must load and
-// verify under this (Version 2) build, because history is evidence and a
-// schema change must not invalidate it. This works because the Version 2
-// fields are omitempty and declared after every Version 1 field, so a record
-// without findings encodes to byte-for-byte the same JSON — and therefore the
-// same hash — it did under the old struct. The hash pinned here is exactly the
-// one the original TestRecordHashIsPinned froze when the format was Version 1,
-// and it must never change.
+// verify under this (Version 3) build, because history is evidence and a
+// schema change must not invalidate it. This works because every later
+// migration added its fields with omitempty after every earlier field, so a
+// record without them encodes to byte-for-byte the same JSON — and therefore
+// the same hash — it did under the old struct. The hash pinned here is exactly
+// the one the original TestRecordHashIsPinned froze when the format was
+// Version 1, and it must never change.
 func TestVersion1RecordStillVerifies(t *testing.T) {
 	const legacyV1Hash = "sha256:1872c8f154123508633ecb2ffdc0c6918539b744f2d1be0c7edc61173d4edca2"
 
 	r := fixedRecord()
 	// Shape it back into the Version 1 record the legacy constant was
-	// computed from: version 1 and no findings.
+	// computed from: version 1, no findings, no fetched_at.
 	r.Version = 1
 	r.Checks = nil
 	r.Metrics = nil
+	r.Reference.FetchedAt = ""
 
 	if h, err := r.ComputeHash(); err != nil {
 		t.Fatal(err)
@@ -150,7 +154,7 @@ func TestVersion1RecordStillVerifies(t *testing.T) {
 
 	// And the full write/open/verify path: a chain whose records were
 	// written as Version 1 must load and verify, and new appends continue
-	// it as Version 2.
+	// it as the current version.
 	dir := t.TempDir()
 	s, err := Open(dir)
 	if err != nil {
@@ -160,16 +164,87 @@ func TestVersion1RecordStillVerifies(t *testing.T) {
 	v1.Version = 1
 	v1.Checks = nil
 	v1.Metrics = nil
+	v1.Reference.FetchedAt = ""
 	if err := s.Append(ctx(), v1); err != nil {
 		t.Fatalf("append v1-shaped record: %v", err)
 	}
-	if v1.Version != 2 {
-		t.Errorf("Append rewrote a v1-shaped record to version %d; a rewriter must "+
-			"not relabel legacy records", v1.Version)
+	if v1.Version != Version {
+		t.Errorf("Append wrote a v1-shaped record as version %d, want the current "+
+			"version %d; legacy records must not be relabelled", v1.Version, Version)
 	}
 	if err := s.Verify(ctx(), "USDC-NGNC"); err != nil {
 		t.Errorf("chain with a freshly-written v1-shaped record: %v", err)
 	}
+}
+
+// TestVersion2RecordStillVerifies is the Version 3 migration's proof, the
+// mirror of TestVersion1RecordStillVerifies for the immediately-previous
+// schema.
+//
+// A Version 2 record — checks and metrics blocks, but no fetched_at — must
+// load and verify under this (Version 3) build. It works because FetchedAt is
+// omitempty and declared after every Version 2 field, so a Version 2 record
+// encodes to byte-for-byte the same JSON — and therefore the same hash — it
+// did under Version 2. The hash pinned here is exactly the one
+// TestRecordHashIsPinned froze when the format was Version 2, and it must
+// never change.
+func TestVersion2RecordStillVerifies(t *testing.T) {
+	const legacyV2Hash = "sha256:ebc429fff786de9cb43abbc16b6859efa62a6be06ca25692dc91c233d05e5fb0"
+
+	r := fixedRecord()
+	// Shape it back into the Version 2 record the legacy constant was
+	// computed from: version 2, no fetched_at.
+	r.Version = 2
+	r.Reference.FetchedAt = ""
+
+	if h, err := r.ComputeHash(); err != nil {
+		t.Fatal(err)
+	} else if h != legacyV2Hash {
+		t.Errorf("Version 2 record hash = %s, want %s; a stored Version 2 "+
+			"chain would no longer verify against this build", h, legacyV2Hash)
+	}
+
+	// The on-disk path: a Version 2 line must load and verify unchanged,
+	// and its JSON must not carry the Version 3 field — the migration is
+	// byte-for-byte invisible to existing chains.
+	dir := t.TempDir()
+	line := mustMarshalV2Line(t, r)
+	if strings.Contains(line, "fetched_at") {
+		t.Error("a Version 2 record must encode without fetched_at; adding it would " +
+			"change the preimage of every existing chain")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "USDC-NGNC"+FileExt), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open with a Version 2 chain: %v", err)
+	}
+	if err := s.Verify(ctx(), "USDC-NGNC"); err != nil {
+		t.Errorf("Verify on a Version 2 chain: %v", err)
+	}
+	latest, err := s.Latest(ctx(), "USDC-NGNC")
+	if err != nil || latest == nil {
+		t.Fatalf("Latest on a Version 2 chain = %v, %v", latest, err)
+	}
+	if latest.Version != 2 {
+		t.Errorf("loaded record version = %d, want 2 (kept as written)", latest.Version)
+	}
+}
+
+// mustMarshalV2Line seals and encodes a record the way the Version 2 build
+// wrote it: hash stamped, one JSON line, trailing newline.
+func mustMarshalV2Line(t *testing.T, r *Record) string {
+	t.Helper()
+	if err := r.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	line, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(line) + "\n"
 }
 
 // TestVersion1ChainOnDiskStillLoads proves the on-disk path, not just the
@@ -207,18 +282,18 @@ func TestVersion1ChainOnDiskStillLoads(t *testing.T) {
 		t.Errorf("loaded record version = %d, want 1 (kept as written)", latest.Version)
 	}
 
-	// Appending a Version 2 record to that Version 1 chain must produce a
-	// single verifying chain covering both versions.
-	v2 := fixedRecord()
-	if err := s.Append(ctx(), v2); err != nil {
-		t.Fatalf("append v2 to v1 chain: %v", err)
+	// Appending a new (Version 3) record to that Version 1 chain must
+	// produce a single verifying chain covering both versions.
+	next := fixedRecord()
+	if err := s.Append(ctx(), next); err != nil {
+		t.Fatalf("append to v1 chain: %v", err)
 	}
-	if v2.Seq != 2 || v2.PrevHash != latest.Hash {
-		t.Errorf("appended v2 seq %d prev %s, want seq 2 chained to the v1 tip %s",
-			v2.Seq, short(v2.PrevHash), short(latest.Hash))
+	if next.Seq != 2 || next.PrevHash != latest.Hash {
+		t.Errorf("appended seq %d prev %s, want seq 2 chained to the v1 tip %s",
+			next.Seq, short(next.PrevHash), short(latest.Hash))
 	}
 	if err := s.Verify(ctx(), "USDC-NGNC"); err != nil {
-		t.Errorf("mixed v1+v2 chain failed to verify: %v", err)
+		t.Errorf("mixed v1+v3 chain failed to verify: %v", err)
 	}
 }
 
