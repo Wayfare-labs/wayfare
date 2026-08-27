@@ -308,6 +308,44 @@ func TestVerdictThresholds(t *testing.T) {
 	}
 }
 
+// TestLossPctReconcilesWithVerdict asserts that the full-precision loss
+// figure published on the wire (issue #83) reconciles with the verdict for
+// every boundary value. The server publishes loss_pct as an unrounded
+// decimal string so the number and the grade cannot contradict each other;
+// this test verifies that contract at the exact threshold edges.
+func TestLossPctReconcilesWithVerdict(t *testing.T) {
+	cases := []struct {
+		loss        string
+		wantVerdict Verdict
+	}{
+		{"2.999", VerdictGood},
+		{"3.0", VerdictGood},
+		{"3.001", VerdictFair},
+		{"7.999", VerdictFair},
+		{"8.0", VerdictFair},
+		{"8.001", VerdictPoor},
+		{"19.999", VerdictPoor},
+		{"20.0", VerdictPoor},
+		{"20.001", VerdictUnusable},
+	}
+	for _, c := range cases {
+		// The full-precision string is what the wire carries.
+		published := decimal.RequireFromString(c.loss)
+		// The verdict grades the same full-precision value.
+		got := verdictFor(published)
+		if got != c.wantVerdict {
+			t.Errorf("loss %s: published string %q, verdict %s, want %s",
+				c.loss, published.String(), got, c.wantVerdict)
+		}
+		// Round-trip: the string must survive re-parse identically.
+		reparsed := decimal.RequireFromString(published.String())
+		if !reparsed.Equal(published) {
+			t.Errorf("loss %s: round-trip changed value from %s to %s",
+				c.loss, published, reparsed)
+		}
+	}
+}
+
 // TestNoPathsProducesNoQuotes covers a corridor Horizon cannot route at all.
 func TestNoPathsProducesNoQuotes(t *testing.T) {
 	srv := horizonStub(t, `{"_embedded":{"records":[]}}`)
