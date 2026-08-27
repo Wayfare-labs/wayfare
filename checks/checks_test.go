@@ -421,6 +421,42 @@ func TestIssuerAuthFlagsNeedsAnIssuer(t *testing.T) {
 	}
 }
 
+func TestIssuerFlagImmutabilityCombinations(t *testing.T) {
+	issuer := asset.LinkIOIssuer
+	cases := []struct {
+		name, body, wantSummary string
+		passed                  bool
+	}{
+		{"clean immutable", `{"flags":{"auth_immutable":true}}`, "clean and immutable", true},
+		{"clean mutable", `{"flags":{"auth_immutable":false}}`, "clean and mutable", false},
+		{"restrictive immutable", `{"flags":{"auth_immutable":true,"auth_revocable":true}}`, "restrictive and immutable", true},
+		{"restrictive mutable", `{"flags":{"auth_immutable":false,"auth_clawback_enabled":true}}`, "restrictive and mutable", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := flagServer(t, http.StatusOK, tc.body)
+			r := IssuerFlagImmutability{HorizonURL: srv.URL, HTTPClient: srv.Client()}.Run(ctx(), Subject{Asset: asset.Stellar("USDC", issuer)})
+			if !r.Determined || r.Passed != tc.passed || !strings.Contains(r.Summary, tc.wantSummary) {
+				t.Fatalf("result = %+v, want determined=%v passed=%v summary containing %q", r, true, tc.passed, tc.wantSummary)
+			}
+			if len(r.Evidence) != 1 {
+				t.Fatal("determined result must include the observed flags as evidence")
+			}
+		})
+	}
+}
+
+func TestIssuerFlagImmutabilityUnavailableAndMissingIssuer(t *testing.T) {
+	unknown := IssuerFlagImmutability{HorizonURL: "http://127.0.0.1:1"}.Run(ctx(), Subject{Asset: asset.Stellar("USDC", asset.LinkIOIssuer)})
+	if unknown.Determined || unknown.Failed() {
+		t.Fatalf("network failure must be undetermined, got %+v", unknown)
+	}
+	missing := IssuerFlagImmutability{}.Run(ctx(), Subject{Asset: asset.Native()})
+	if missing.Determined || missing.Failed() {
+		t.Fatalf("missing issuer must be undetermined, got %+v", missing)
+	}
+}
+
 // sep10.endpoint-responds ------------------------------------------------------
 
 func sep10Profile(endpoint string) *anchor.Profile {
