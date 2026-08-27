@@ -546,3 +546,481 @@ func TestUnknownIssuerIsNotTreatedAsFiat(t *testing.T) {
 		t.Error("the registered NGNC issuer must be recognised")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Dependency chain tests
+// ---------------------------------------------------------------------------
+
+// chainHorizonStub returns a server that dispatches based on the
+// destination_assets query parameter, allowing multi-asset chain tests.
+// Keys in the routes map should be asset codes (e.g. "NGNC"); the
+// handler matches on the code portion of "CODE:ISSUER" or plain "CODE".
+func chainHorizonStub(t *testing.T, routes map[string]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dest := r.URL.Query().Get("destination_assets")
+		// Horizon sends "CODE:ISSUER" — extract just the code.
+		code := dest
+		if idx := strings.Index(dest, ":"); idx != -1 {
+			code = dest[:idx]
+		}
+		body, ok := routes[code]
+		if !ok {
+			body = `{"_embedded":{"records":[]}}`
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+}
+
+// ghscDirectNGNCResponse is a modified fixture where NGNC is measured as
+// having an independent market (XLM path avoids fiat intermediaries).
+// This is the same as liveStrictSendResponse but for the USDC→NGNC pair,
+// meaning NGNC's integrity is DIRECT when measured.
+const ngncDirectResponse = liveStrictSendResponse
+
+// TestChainMeasuredDirect verifies that when a derivative corridor's
+// dependency is measured, the chain carries the measured integrity.
+// USDC→GHSC depends on NGNC; USDC→NGNC has an XLM path (bridge asset),
+// so NGNC is DIRECT. The chain should be depth 1 with NGNC measured as DIRECT.
+func TestChainMeasuredDirect(t *testing.T) {
+	srv := chainHorizonStub(t, map[string]string{
+		"GHSC": ghscViaNGNCResponse,
+		"NGNC": ngncDirectResponse,
+	})
+	defer srv.Close()
+
+	e := &Engine{
+		DEX: &dex.Client{HorizonURL: srv.URL},
+		RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+			"USD/GHS": decimal.RequireFromString("11.7625"),
+		}),
+	}
+	res, err := e.Quote(context.Background(), ghsRequest("100"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+
+	if res.Integrity != IntegrityDerivative {
+		t.Fatalf("Integrity = %s, want DERIVATIVE", res.Integrity)
+	}
+
+	if len(res.Chain) != 1 || res.Chain[0].Asset.Code != "NGNC" {
+		t.Fatalf("Chain = %v, want exactly NGNC", res.Chain)
+	}
+	node := res.Chain[0]
+	if !node.Measured {
+		t.Error("NGNC should be measured")
+	}
+	if node.Integrity != IntegrityDirect {
+		t.Errorf("NGNC integrity = %s, want DIRECT", node.Integrity)
+	}
+	if len(node.Dependencies) != 0 {
+		t.Errorf("NGNC should have no sub-dependencies, got %v", node.Dependencies)
+	}
+
+	// The warning should use the measured variant.
+	warnings := strings.Join(res.Quotes[0].Warnings, " ")
+	if !strings.Contains(warnings, "DIRECT, independent market exists") {
+		t.Errorf("expected measured warning with market status, got: %v",
+			res.Quotes[0].Warnings)
+	}
+}
+
+// TestChainDepthTwo verifies recursive chain measurement through two levels.
+// USDC→TOKEN_C depends on TOKEN_B, TOKEN_B depends on TOKEN_A, TOKEN_A is
+// DIRECT (reached via XLM, a bridge asset).
+func TestChainDepthTwo(t *testing.T) {
+	// USDC→GHSC depends on KESC, KESC depends on NGNC, NGNC is DIRECT.
+
+	ghscViaKescResponse := `{
+  "_embedded": {
+    "records": [
+      {
+        "source_asset_type": "credit_alphanum4", "source_asset_code": "USDC",
+        "source_amount": "100.0000000",
+        "destination_asset_type": "credit_alphanum4", "destination_asset_code": "GHSC",
+        "destination_amount": "100.0000000",
+        "path": [
+          { "asset_type": "credit_alphanum4", "asset_code": "KESC",
+            "asset_issuer": "` + asset.LinkIOIssuer + `" }
+        ]
+      }
+    ]
+  }
+}`
+
+	kescViaNGNCResponse := `{
+  "_embedded": {
+    "records": [
+      {
+        "source_asset_type": "credit_alphanum4", "source_asset_code": "USDC",
+        "source_amount": "100.0000000",
+        "destination_asset_type": "credit_alphanum4", "destination_asset_code": "KESC",
+        "destination_amount": "100.0000000",
+        "path": [
+          { "asset_type": "credit_alphanum4", "asset_code": "NGNC",
+            "asset_issuer": "` + asset.LinkIOIssuer + `" }
+        ]
+      }
+    ]
+  }
+}`
+
+	srv := chainHorizonStub(t, map[string]string{
+		"GHSC": ghscViaKescResponse,
+		"KESC": kescViaNGNCResponse,
+		"NGNC": ngncDirectResponse,
+	})
+	defer srv.Close()
+
+	e := &Engine{
+		DEX: &dex.Client{HorizonURL: srv.URL},
+		RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+			"USD/GHS": decimal.RequireFromString("11.7625"),
+		}),
+	}
+	res, err := e.Quote(context.Background(), ghsRequest("100"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+
+	if res.Integrity != IntegrityDerivative {
+		t.Fatalf("Integrity = %s, want DERIVATIVE", res.Integrity)
+	}
+
+	// Chain: GHSC depends on KESC (depth 2), KESC depends on NGNC (depth 1),
+	// NGNC is DIRECT (depth 0).
+	if len(res.Chain) != 1 || res.Chain[0].Asset.Code != "KESC" {
+		t.Fatalf("Chain top level = %v, want KESC", res.Chain)
+	}
+	kescNode := res.Chain[0]
+	if !kescNode.Measured {
+		t.Error("KESC should be measured")
+	}
+	if kescNode.Integrity != IntegrityDerivative {
+		t.Errorf("KESC integrity = %s, want DERIVATIVE", kescNode.Integrity)
+	}
+	if len(kescNode.Dependencies) != 1 || kescNode.Dependencies[0].Asset.Code != "NGNC" {
+		t.Fatalf("KESC dependencies = %v, want NGNC", kescNode.Dependencies)
+	}
+	ngncNode := kescNode.Dependencies[0]
+	if !ngncNode.Measured {
+		t.Error("NGNC should be measured")
+	}
+	if ngncNode.Integrity != IntegrityDirect {
+		t.Errorf("NGNC integrity = %s, want DIRECT", ngncNode.Integrity)
+	}
+
+	// All measured.
+	if !allMeasured(res.Chain) {
+		t.Error("all nodes should be measured in this chain")
+	}
+}
+
+// TestChainCycleTerminates verifies that a circular dependency does not
+// cause infinite recursion. When USDC→A routes through B and USDC→B
+// routes through A, the second encounter is detected as a cycle and
+// reported as unmeasured.
+func TestChainCycleTerminates(t *testing.T) {
+	// We can't easily create new fiat tokens, so we simulate the cycle
+	// by using the actual fiat tokens in a way that creates mutual
+	// dependency. But the registry is fixed. Instead, we test the
+	// measureChain logic directly with a mock that creates a cycle
+	// between NGNC and GHSC by returning GHSC paths through NGNC and
+	// NGNC paths through GHSC.
+	//
+	// Note: in reality, USDC→NGNC does NOT go through GHSC (NGNC is
+	// direct). But we can force the cycle by returning a custom response
+	// for NGNC that routes through GHSC.
+
+	ngncViaGHSCResponse := `{
+  "_embedded": {
+    "records": [
+      {
+        "source_asset_type": "credit_alphanum4", "source_asset_code": "USDC",
+        "source_amount": "100.0000000",
+        "destination_asset_type": "credit_alphanum4", "destination_asset_code": "NGNC",
+        "destination_amount": "100.0000000",
+        "path": [
+          { "asset_type": "credit_alphanum4", "asset_code": "GHSC",
+            "asset_issuer": "` + asset.LinkIOIssuer + `" }
+        ]
+      }
+    ]
+  }
+}`
+
+	srv := chainHorizonStub(t, map[string]string{
+		"GHSC": ghscViaNGNCResponse,
+		"NGNC": ngncViaGHSCResponse,
+	})
+	defer srv.Close()
+
+	e := &Engine{
+		DEX: &dex.Client{HorizonURL: srv.URL},
+		RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+			"USD/GHS": decimal.RequireFromString("11.7625"),
+		}),
+	}
+	res, err := e.Quote(context.Background(), ghsRequest("100"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+
+	if res.Integrity != IntegrityDerivative {
+		t.Fatalf("Integrity = %s, want DERIVATIVE", res.Integrity)
+	}
+
+	// The chain should have NGNC as the top-level dependency.
+	if len(res.Chain) != 1 || res.Chain[0].Asset.Code != "NGNC" {
+		t.Fatalf("Chain top level = %v, want NGNC", res.Chain)
+	}
+	ngncNode := res.Chain[0]
+	if !ngncNode.Measured {
+		t.Error("NGNC should be measured (first encounter)")
+	}
+	if ngncNode.Integrity != IntegrityDerivative {
+		t.Errorf("NGNC integrity = %s, want DERIVATIVE", ngncNode.Integrity)
+	}
+
+	// NGNC depends on GHSC, but GHSC is already visited (it's the
+	// destination), so it should be reported as unmeasured with cycle reason.
+	if len(ngncNode.Dependencies) != 1 || ngncNode.Dependencies[0].Asset.Code != "GHSC" {
+		t.Fatalf("NGNC dependencies = %v, want GHSC", ngncNode.Dependencies)
+	}
+	ghscNode := ngncNode.Dependencies[0]
+	if ghscNode.Measured {
+		t.Error("GHSC should NOT be measured (cycle detected)")
+	}
+	if ghscNode.Reason != "cycle detected" {
+		t.Errorf("GHSC reason = %q, want 'cycle detected'", ghscNode.Reason)
+	}
+}
+
+// TestChainDependencyHasNoMarket verifies that a dependency whose own
+// market is NO-MARKET is reported honestly in the chain.
+func TestChainDependencyHasNoMarket(t *testing.T) {
+	// USDC→GHSC depends on KESC, and USDC→KESC has no paths.
+	ghscViaKescResponse := `{
+  "_embedded": {
+    "records": [
+      {
+        "source_asset_type": "credit_alphanum4", "source_asset_code": "USDC",
+        "source_amount": "100.0000000",
+        "destination_asset_type": "credit_alphanum4", "destination_asset_code": "GHSC",
+        "destination_amount": "100.0000000",
+        "path": [
+          { "asset_type": "credit_alphanum4", "asset_code": "KESC",
+            "asset_issuer": "` + asset.LinkIOIssuer + `" }
+        ]
+      }
+    ]
+  }
+}`
+
+	srv := chainHorizonStub(t, map[string]string{
+		"GHSC": ghscViaKescResponse,
+		"KESC": kescEmptyResponse,
+	})
+	defer srv.Close()
+
+	e := &Engine{
+		DEX: &dex.Client{HorizonURL: srv.URL},
+		RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+			"USD/GHS": decimal.RequireFromString("11.7625"),
+		}),
+	}
+	res, err := e.Quote(context.Background(), ghsRequest("100"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+
+	if res.Integrity != IntegrityDerivative {
+		t.Fatalf("Integrity = %s, want DERIVATIVE", res.Integrity)
+	}
+
+	if len(res.Chain) != 1 || res.Chain[0].Asset.Code != "KESC" {
+		t.Fatalf("Chain = %v, want KESC", res.Chain)
+	}
+	kescNode := res.Chain[0]
+	if !kescNode.Measured {
+		t.Error("KESC should be measured")
+	}
+	if kescNode.Integrity != IntegrityNoMarket {
+		t.Errorf("KESC integrity = %s, want NO-MARKET", kescNode.Integrity)
+	}
+
+	// Since not all nodes are measured cleanly (NO-MARKET is measured but
+	// the warning text differs), check the warning uses the unmeasured path.
+	// Actually NO-MARKET is measured — the node is Measured=true. The
+	// allMeasured check passes. The describeChainStatus renders it as
+	// "KESC (NO-MARKET)".
+	if !allMeasured(res.Chain) {
+		t.Error("all nodes should be measured (NO-MARKET is still a measurement)")
+	}
+}
+
+// TestChainWireShape verifies the JSON wire shape of the dependency chain.
+func TestChainWireShape(t *testing.T) {
+	srv := chainHorizonStub(t, map[string]string{
+		"GHSC": ghscViaNGNCResponse,
+		"NGNC": ngncDirectResponse,
+	})
+	defer srv.Close()
+
+	e := &Engine{
+		DEX: &dex.Client{HorizonURL: srv.URL},
+		RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+			"USD/GHS": decimal.RequireFromString("11.7625"),
+		}),
+	}
+	res, err := e.Quote(context.Background(), ghsRequest("100"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+
+	chain := ToDependencyChainJSON(res.Chain)
+	if chain == nil {
+		t.Fatal("chain should not be nil for a derivative corridor")
+	}
+	if chain.Depth != 1 {
+		t.Errorf("depth = %d, want 1", chain.Depth)
+	}
+	if len(chain.DependsOn) != 1 {
+		t.Fatalf("depends_on = %d nodes, want 1", len(chain.DependsOn))
+	}
+	node := chain.DependsOn[0]
+	if node.Code != "NGNC" {
+		t.Errorf("code = %s, want NGNC", node.Code)
+	}
+	if !node.Measured {
+		t.Error("measured should be true")
+	}
+	if node.Integrity != "DIRECT" {
+		t.Errorf("integrity = %s, want DIRECT", node.Integrity)
+	}
+	if node.Peg != "NGN" {
+		t.Errorf("peg = %s, want NGN", node.Peg)
+	}
+	if len(node.Dependencies) != 0 {
+		t.Errorf("sub-dependencies = %d, want 0", len(node.Dependencies))
+	}
+}
+
+// TestChainBackwardCompatible verifies that the flat depends_on array is
+// still present alongside the new dependency_chain on the wire.
+func TestChainBackwardCompatible(t *testing.T) {
+	srv := chainHorizonStub(t, map[string]string{
+		"GHSC": ghscViaNGNCResponse,
+		"NGNC": ngncDirectResponse,
+	})
+	defer srv.Close()
+
+	e := &Engine{
+		DEX: &dex.Client{HorizonURL: srv.URL},
+		RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+			"USD/GHS": decimal.RequireFromString("11.7625"),
+		}),
+	}
+	res, err := e.Quote(context.Background(), ghsRequest("100"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+
+	// Simulate what a consumer sees: the JSON must have both depends_on
+	// and dependency_chain.
+	if len(res.DependsOn) != 1 || res.DependsOn[0].Code != "NGNC" {
+		t.Errorf("DependsOn = %v, want NGNC", res.DependsOn)
+	}
+	if len(res.Chain) != 1 || res.Chain[0].Asset.Code != "NGNC" {
+		t.Errorf("Chain = %v, want NGNC", res.Chain)
+	}
+}
+
+// TestDirectCorridorHasNoChain verifies that a direct corridor does not
+// produce a dependency chain.
+func TestDirectCorridorHasNoChain(t *testing.T) {
+	srv := horizonStub(t, liveStrictSendResponse)
+	defer srv.Close()
+
+	e := &Engine{DEX: &dex.Client{HorizonURL: srv.URL}, RefRate: usdToNGN("1500")}
+	res, err := e.Quote(context.Background(), ngnRequest("100"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+
+	if res.Integrity != IntegrityDirect {
+		t.Errorf("Integrity = %s, want DIRECT", res.Integrity)
+	}
+	if res.Chain != nil {
+		t.Errorf("Chain = %v, want nil for direct corridor", res.Chain)
+	}
+}
+
+// TestAllMeasuredAndChainDepth are unit tests for the helper functions.
+func TestAllMeasuredAndChainDepth(t *testing.T) {
+	t.Run("all measured", func(t *testing.T) {
+		nodes := []DependencyNode{
+			{Asset: asset.NGNC(), Measured: true, Integrity: IntegrityDirect},
+		}
+		if !allMeasured(nodes) {
+			t.Error("expected all measured")
+		}
+		if chainDepth(nodes) != 1 {
+			t.Errorf("depth = %d, want 1", chainDepth(nodes))
+		}
+	})
+
+	t.Run("unmeasured node", func(t *testing.T) {
+		nodes := []DependencyNode{
+			{Asset: asset.NGNC(), Measured: false, Reason: "cycle detected"},
+		}
+		if allMeasured(nodes) {
+			t.Error("should not be all measured")
+		}
+	})
+
+	t.Run("nested depth", func(t *testing.T) {
+		nodes := []DependencyNode{
+			{
+				Asset:     asset.GHSC(),
+				Measured:  true,
+				Integrity: IntegrityDerivative,
+				Dependencies: []DependencyNode{
+					{Asset: asset.NGNC(), Measured: true, Integrity: IntegrityDirect},
+				},
+			},
+		}
+		if !allMeasured(nodes) {
+			t.Error("expected all measured")
+		}
+		if chainDepth(nodes) != 2 {
+			t.Errorf("depth = %d, want 2", chainDepth(nodes))
+		}
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		if !allMeasured(nil) {
+			t.Error("nil should be all measured")
+		}
+		if chainDepth(nil) != 0 {
+			t.Errorf("depth = %d, want 0", chainDepth(nil))
+		}
+	})
+}
+
+// TestDescribeChainStatus verifies the human-readable chain status rendering.
+func TestDescribeChainStatus(t *testing.T) {
+	nodes := []DependencyNode{
+		{Asset: asset.NGNC(), Measured: true, Integrity: IntegrityDirect},
+		{Asset: asset.KESC(), Measured: false, Reason: "Horizon error: timeout"},
+	}
+	got := describeChainStatus(nodes)
+	if !strings.Contains(got, "NGNC (DIRECT, independent market exists)") {
+		t.Errorf("expected NGNC DIRECT status, got: %s", got)
+	}
+	if !strings.Contains(got, "KESC (not measured: Horizon error: timeout)") {
+		t.Errorf("expected KESC unmeasured status, got: %s", got)
+	}
+}
