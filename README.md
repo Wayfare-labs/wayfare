@@ -384,6 +384,13 @@ GET /healthz
 GET /                            single-file UI, no build step
 ```
 
+**`/healthz`** answers liveness and data age. `status` is process liveness;
+`data` reports each corridor's newest stored record and its age
+(`recorded_at`, `age_seconds`, `age_human`) — the thing actually at risk on a
+`-history-first` deployment, whose served history is only as fresh as its last
+deploy. `data` is `null` when no history exists to describe: unknown, never a
+fabricated age.
+
 Beyond the contracts above, one field to know: **`live`** is on every response.
 `false` means the reading came from history because a live measurement failed,
 and `stale` then carries its age. With no stored run, the request errors —
