@@ -303,6 +303,7 @@ pass/fail discards the number that carries the meaning. Thresholding a metric
 into a verdict is maintainer-owned.
 
 Full spec: **[docs/checks.md](docs/checks.md)**
+Methodology: **[docs/metrics.md](docs/metrics.md)**
 
 ### Asset identity — breaking if altered
 
