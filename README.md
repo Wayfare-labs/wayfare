@@ -191,6 +191,9 @@ history exactly where nobody was looking.
 corridor depends on and are attached to the result; nothing they report can
 alter an integrity state or a verdict. See the composition rule below.
 
+Significant architectural decisions are recorded as ADRs in
+**[docs/adr/](docs/adr/)**.
+
 ---
 
 ## Shared contracts
