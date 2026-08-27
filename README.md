@@ -256,6 +256,8 @@ identical zero-valued figures.
 
 ### Reference agreement — breaking if altered
 
+The architectural decision behind this contract is documented in **[ADR: reference mids are never averaged](docs/adr-reference-mids.md)**.
+
 Two providers are queried per measurement. Rates are **never averaged**: a
 blended mid names no provider, and every figure has to be traceable to a source
 a reader can check.
