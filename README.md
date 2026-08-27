@@ -404,6 +404,8 @@ Deployment, cost and backup: **[docs/deployment.md](docs/deployment.md)**
 
 ### HTTP API
 
+The complete field-by-field reference is in **[docs/api.md](docs/api.md)**.
+
 ```
 GET /api/corridor?to=NGNC[&from=USDC][&sizes=1,10,100]
 GET /api/corridor/trend?to=NGNC[&from=USDC][&limit=100]
