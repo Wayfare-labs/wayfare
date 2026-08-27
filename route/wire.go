@@ -67,6 +67,12 @@ type CorridorJSON struct {
 	Integrity string      `json:"integrity"`
 	DependsOn []AssetJSON `json:"depends_on"`
 
+	// DependencyChain is the full tree of dependencies when the corridor
+	// is derivative. Nil when Integrity is not DERIVATIVE. Each node
+	// carries the dependency's measured integrity or an explicit "not
+	// measured" state with a reason.
+	DependencyChain *DependencyChainJSON `json:"dependency_chain,omitempty"`
+
 	ReferenceMid    string `json:"reference_mid"`
 	ReferenceSource string `json:"reference_source"`
 	ReferencePair   string `json:"reference_pair"`
@@ -155,10 +161,76 @@ type AssetJSON struct {
 	Peg    string `json:"peg,omitempty"`
 }
 
+// DependencyChainJSON is the wire representation of a dependency tree.
+// It is present only when the corridor is derivative (integrity = "DERIVATIVE").
+// Nil on the wire means the corridor is direct or has no market — never an
+// empty object.
+type DependencyChainJSON struct {
+	Depth     int                  `json:"depth"`
+	DependsOn []DependencyNodeJSON `json:"depends_on"`
+}
+
+// DependencyNodeJSON is one link in a dependency chain on the wire.
+//
+// Measured is always present. When false, Integrity carries no meaningful
+// value (it will be "UNKNOWN") and Reason explains why: cycle detected,
+// depth cap exceeded, Horizon error, or context cancelled. A consumer
+// rendering this node must not present it as though its integrity were a
+// finding — an unmeasured link has no finding to present.
+type DependencyNodeJSON struct {
+	Code         string               `json:"code"`
+	Issuer       string               `json:"issuer,omitempty"`
+	Peg          string               `json:"peg,omitempty"`
+	Integrity    string               `json:"integrity"`
+	Measured     bool                 `json:"measured"`
+	Reason       string               `json:"reason,omitempty"`
+	Dependencies []DependencyNodeJSON `json:"dependencies,omitempty"`
+}
+
 func ToAssetJSON(a asset.Asset) AssetJSON {
 	j := AssetJSON{Code: a.Code, Issuer: a.Issuer}
 	if peg, ok := asset.FiatPeg(a); ok {
 		j.Peg = peg
+	}
+	return j
+}
+
+// ToDependencyChainJSON renders a dependency tree for the wire.
+//
+// Nil input produces nil output (omitted from JSON via omitempty). An empty
+// slice produces a chain with depth 0 and an empty depends_on array, which
+// is structurally valid but semantically should not occur — a derivative
+// corridor always has at least one dependency.
+func ToDependencyChainJSON(nodes []DependencyNode) *DependencyChainJSON {
+	if len(nodes) == 0 {
+		return nil
+	}
+	out := &DependencyChainJSON{
+		Depth:     chainDepth(nodes),
+		DependsOn: make([]DependencyNodeJSON, 0, len(nodes)),
+	}
+	for _, n := range nodes {
+		out.DependsOn = append(out.DependsOn, toDependencyNodeJSON(n))
+	}
+	return out
+}
+
+func toDependencyNodeJSON(n DependencyNode) DependencyNodeJSON {
+	j := DependencyNodeJSON{
+		Code:      n.Asset.Code,
+		Issuer:    n.Asset.Issuer,
+		Integrity: n.Integrity.String(),
+		Measured:  n.Measured,
+		Reason:    n.Reason,
+	}
+	if peg, ok := asset.FiatPeg(n.Asset); ok {
+		j.Peg = peg
+	}
+	if len(n.Dependencies) > 0 {
+		j.Dependencies = make([]DependencyNodeJSON, 0, len(n.Dependencies))
+		for _, d := range n.Dependencies {
+			j.Dependencies = append(j.Dependencies, toDependencyNodeJSON(d))
+		}
 	}
 	return j
 }
@@ -259,6 +331,7 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 	for _, d := range l.DependsOn {
 		out.DependsOn = append(out.DependsOn, ToAssetJSON(d))
 	}
+	out.DependencyChain = ToDependencyChainJSON(l.Chain)
 
 	for _, r := range l.Rungs {
 		rj := RungJSON{
