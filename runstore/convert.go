@@ -28,14 +28,20 @@ func FromCorridorJSON(c route.CorridorJSON) *Record {
 		// scorable at all: an unscorable rate never produced a verdict, so
 		// naming a source here would claim one did.
 		//
-		// SecondaryAsOf and the parallel/street-market block have no home in
-		// this record shape yet — see the note on Record's field-addition
+		// FetchedAt is carried because the wire publishes reference_fetched_at
+		// and a stale replay must reproduce it: a reader needs to know how
+		// old the benchmark was when the reading was taken. It lives on the
+		// record as the Version 3 field (see Reference and docs/run-store.md).
+		//
+		// SecondaryAsOf and the parallel/street-market block still have no
+		// home in this record shape — see the note on Record's field-addition
 		// rule. Adding them is a Record layout change with its own migration
 		// and review bar, so it is flagged here rather than done as part of
 		// this fix.
 		Reference: Reference{
 			Mid:             c.ReferenceMid,
 			Source:          c.ReferenceSource,
+			FetchedAt:       c.ReferenceFetchedAt,
 			SecondaryMid:    c.ReferenceSecondaryMid,
 			SecondarySource: c.ReferenceSecondarySource,
 			DivergencePct:   c.ReferenceDivergencePct,

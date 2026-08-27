@@ -44,6 +44,44 @@ func TestFromCorridorJSONCarriesReferenceCrossCheck(t *testing.T) {
 	}
 }
 
+// TestFromCorridorJSONCarriesReferenceFetchedAt pins that the benchmark's
+// fetch timestamp survives into storage (backlog #7): the wire publishes
+// reference_fetched_at, and a stale replay must be able to reproduce it so a
+// reader can tell how old the benchmark was when the reading was taken. A
+// record that dropped it would serve history that looked current no matter
+// how reused the rate behind it was.
+func TestFromCorridorJSONCarriesReferenceFetchedAt(t *testing.T) {
+	c := route.CorridorJSON{
+		SendAsset:          route.AssetJSON{Code: "USDC"},
+		ReceiveAsset:       route.AssetJSON{Code: "NGNC"},
+		ReferenceMid:       "1350.2568",
+		ReferenceSource:    "exchangerate-api",
+		ReferenceFetchedAt: "2026-08-21T22:31:00Z",
+	}
+
+	r := FromCorridorJSON(c)
+
+	if r.Reference.FetchedAt != c.ReferenceFetchedAt {
+		t.Errorf("Reference.FetchedAt = %q, want %q", r.Reference.FetchedAt, c.ReferenceFetchedAt)
+	}
+}
+
+// TestFromCorridorJSONFetchedAtAbsentStaysAbsent keeps absence honest: a
+// CorridorJSON without reference_fetched_at must produce a record without it,
+// never a fabricated timestamp that would make an old rate look freshly
+// fetched.
+func TestFromCorridorJSONFetchedAtAbsentStaysAbsent(t *testing.T) {
+	c := route.CorridorJSON{
+		SendAsset:    route.AssetJSON{Code: "USDC"},
+		ReceiveAsset: route.AssetJSON{Code: "NGNC"},
+		ReferenceMid: "1350.2568",
+	}
+	r := FromCorridorJSON(c)
+	if r.Reference.FetchedAt != "" {
+		t.Errorf("Reference.FetchedAt = %q, want empty when the wire carried none", r.Reference.FetchedAt)
+	}
+}
+
 // TestFromCorridorJSONCarriesFindings pins that check and metric results
 // ride into storage with the measurement. This is what lets the stale path
 // serve stored findings (issue #93): without it a history-served corridor
