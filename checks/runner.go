@@ -46,6 +46,7 @@ func (r *Runner) Default() []Check {
 		SEP10EndpointResponds{HTTPClient: r.client()},
 		SEP24InfoListsAsset{HTTPClient: r.client()},
 		IssuerAuthFlags{HorizonURL: r.HorizonURL, HTTPClient: r.client()},
+		IssuerFlagImmutability{HorizonURL: r.HorizonURL, HTTPClient: r.client()},
 		HomeDomainRoundTrip{HorizonURL: r.HorizonURL, HTTPClient: r.client(), Resolver: r.resolver()},
 	}
 }

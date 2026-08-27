@@ -335,14 +335,19 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 		ReferenceSecondaryMid:    rec.Reference.SecondaryMid,
 		ReferenceSecondarySource: rec.Reference.SecondarySource,
 		ReferenceDivergencePct:   rec.Reference.DivergencePct,
-		Floor:                    rec.FloorLossPct,
-		FloorSize:                rec.FloorSize,
-		WorstLoss:                rec.WorstLossPct,
-		WorstSize:                rec.WorstSize,
-		RecommendedSize:          rec.RecommendedSize,
-		Finding:                  rec.Finding,
-		Rungs:                    make([]route.RungJSON, 0, len(rec.Rungs)),
-		MeasuredAt:               rec.RecordedAt.UTC().Format(time.RFC3339),
+		// ReferenceFetchedAt is carried from the record so a reader can tell
+		// how old the benchmark was when the reading was taken — recorded
+		// from the live path since Version 3, and absent on an older record
+		// that predates it, which is the honest "unknown" rather than a guess.
+		ReferenceFetchedAt: rec.Reference.FetchedAt,
+		Floor:              rec.FloorLossPct,
+		FloorSize:          rec.FloorSize,
+		WorstLoss:          rec.WorstLossPct,
+		WorstSize:          rec.WorstSize,
+		RecommendedSize:    rec.RecommendedSize,
+		Finding:            rec.Finding,
+		Rungs:              make([]route.RungJSON, 0, len(rec.Rungs)),
+		MeasuredAt:         rec.RecordedAt.UTC().Format(time.RFC3339),
 
 		Live: false,
 		Stale: &route.StaleJSON{

@@ -120,6 +120,64 @@ func TestStaleReadingIsLabelled(t *testing.T) {
 	}
 }
 
+// TestStaleServesReferenceFetchedAt covers backlog #7: a stored reading must
+// carry reference_fetched_at so a reader can tell how old the benchmark was
+// when the reading was taken — a rate reused from the cache is older than the
+// measurement itself, and hiding that would make stored history look current.
+func TestStaleServesReferenceFetchedAt(t *testing.T) {
+	fetchedAt := time.Date(2026, 8, 21, 21, 0, 0, 0, time.UTC)
+	recorded := fetchedAt.Add(2 * time.Hour)
+
+	// A record that carries the fetch timestamp: the field must round-trip.
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &runstore.Record{
+		RecordedAt: recorded,
+		Corridor:   "USDC-NGNC",
+		Integrity:  "DIRECT",
+		Reference: runstore.Reference{
+			Mid: "1350.2568", Source: "currency-api",
+			AsOf:      "2026-08-21T00:00:00Z",
+			FetchedAt: fetchedAt.UTC().Format(time.RFC3339),
+		},
+		FloorLossPct: "25.02", FloorSize: "0.1",
+		WorstLossPct: "97.68", WorstSize: "5000",
+		Finding: "No usable size.",
+		Rungs:   []runstore.Rung{},
+	}
+	if err := st.Append(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	srv := deadServer(t, st)
+	_, body := getJSON(t, srv.URL+"/api/corridor?to=NGNC&sizes=100")
+
+	want := fetchedAt.UTC().Format(time.RFC3339)
+	if got, _ := body["reference_fetched_at"].(string); got != want {
+		t.Errorf("reference_fetched_at = %q, want %q", got, want)
+	}
+
+	// A record without it (a pre-Version-3 chain) must omit the field, not
+	// invent a timestamp — an absent benchmark age is unknown, and claiming
+	// one would be the default-to-current failure in a new place.
+	st2, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	recNoFetch := *rec
+	recNoFetch.Reference.FetchedAt = ""
+	if err := st2.Append(context.Background(), &recNoFetch); err != nil {
+		t.Fatal(err)
+	}
+	srv2 := deadServer(t, st2)
+	_, body2 := getJSON(t, srv2.URL+"/api/corridor?to=NGNC&sizes=100")
+	if _, present := body2["reference_fetched_at"]; present {
+		t.Error("reference_fetched_at present on a record that never stored one; " +
+			"an unknown benchmark age must stay absent")
+	}
+}
+
 // TestNoHistoryIsAnErrorNotANumber is the other half, and the more important
 // one. With nothing stored, a failed measurement must error rather than return
 // a plausible figure.
@@ -255,5 +313,54 @@ func TestUIRendersAllThreeFindingStates(t *testing.T) {
 	// least intuitive part of the model.
 	if !strings.Contains(page, "Undetermined is not a failure") {
 		t.Error("the UI does not explain that undetermined is not a failure")
+	}
+}
+
+// TestUIRendersMetrics guards the metric surface the way the finding states
+// are guarded. Metrics are a different shape from checks — a value with a
+// unit, not a verdict — and an undetermined metric must not look like a
+// failed check.
+func TestUIRendersMetrics(t *testing.T) {
+	raw, err := uiFS.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+
+	// The renderer must read f.metrics at all, and every metric must reach
+	// the page as a value with its unit.
+	for _, want := range []string{
+		"function metrics", "f.metrics",
+		"m-value", "m-unit", "m-state", "m-unknown", "UNDETERMINED",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the UI has no %q; metrics would render incompletely", want)
+		}
+	}
+
+	// An undetermined metric shows its reason in place of the value, so the
+	// undetermined branch must come first — a metric that did not produce a
+	// value must never fall through into the value renderer.
+	undeterminedAt := strings.Index(page, "!m.determined")
+	valueAt := strings.Index(page, "m.value")
+	if undeterminedAt == -1 || valueAt == -1 || undeterminedAt > valueAt {
+		t.Error("the UI renders a metric value before testing m.determined; " +
+			"an undetermined metric would render as though it had a value")
+	}
+
+	// The panel is absent, not empty, when no metrics were run.
+	if !strings.Contains(page, "f.metrics.length") {
+		t.Error("the metrics panel is not gated on metrics existing; it would render empty")
+	}
+
+	// Evidence source and timestamp must be reachable for each metric.
+	if !strings.Contains(page, "m.observed_at") || !strings.Contains(page, "e.observed_at") {
+		t.Error("the UI does not surface a metric's evidence source and timestamp")
+	}
+
+	// No metric is graded. No threshold exists for any of them, and the panel
+	// must say so rather than let a colour imply a verdict.
+	if !strings.Contains(page, "No threshold") {
+		t.Error("the UI does not say that metrics carry no threshold")
 	}
 }
