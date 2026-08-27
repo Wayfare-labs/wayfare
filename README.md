@@ -354,6 +354,9 @@ Full spec: **[docs/run-store.md](docs/run-store.md)**
 | `cmd/ladder` | Measurement CLI |
 | `cmd/wayfared` | Server and scheduler |
 
+The fee-denomination identity that `sep38` relies on is documented in
+**[docs/sep38-fee-identity.md](docs/sep38-fee-identity.md)**.
+
 ---
 
 ## Running it
