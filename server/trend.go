@@ -167,6 +167,10 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "only GET is supported")
 		return
 	}
+	if err := checkParams(r, "from", "to", "limit"); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	from := param(r, "from", "USDC")
 	to := param(r, "to", "NGNC")

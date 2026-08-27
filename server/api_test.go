@@ -186,6 +186,77 @@ func TestMoneyCrossesTheWireAsStrings(t *testing.T) {
 	}
 }
 
+// TestUnknownQueryParamsAreRejected pins the A5 strictness contract: a typo
+// like ?tp=NGNC must be an explicit 400, never a silent measurement of the
+// default corridor. Each case is rejected before any asset or size parsing,
+// so the error names the parameter, not the value it was meant to carry.
+func TestUnknownQueryParamsAreRejected(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	cases := map[string]struct {
+		path    string
+		wantMsg string
+	}{
+		"corridor typo": {
+			path:    "/api/corridor?tp=NGNC",
+			wantMsg: `"tp"`,
+		},
+		"corridor extra param": {
+			path:    "/api/corridor?to=NGNC&pretty=1",
+			wantMsg: `"pretty"`,
+		},
+		"corridor multiple unknown": {
+			path:    "/api/corridor?to=NGNC&tp=NGNC&fmt=json",
+			wantMsg: `"fmt", "tp"`,
+		},
+		"assets unknown": {
+			path:    "/api/assets?foo=bar",
+			wantMsg: `"foo"`,
+		},
+		"healthz unknown": {
+			path:    "/healthz?foo=bar",
+			wantMsg: `"foo"`,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			status, body := getJSON(t, srv.URL+tc.path)
+			if status != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", status)
+			}
+			msg, _ := body["error"].(string)
+			if !strings.Contains(msg, "unknown query parameter") {
+				t.Errorf("error = %q, want it to say unknown query parameter", msg)
+			}
+			if !strings.Contains(msg, tc.wantMsg) {
+				t.Errorf("error = %q, want it to name the unknown parameter(s) %s", msg, tc.wantMsg)
+			}
+		})
+	}
+}
+
+// TestKnownQueryParamsAreAccepted is the control for the strictness test: the
+// documented parameters on each endpoint must still pass. Without it, a
+// server that rejected everything would pass the test above.
+func TestKnownQueryParamsAreAccepted(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	cases := map[string]string{
+		"corridor all params": "/api/corridor?from=USDC&to=NGNC&sizes=100&live=1",
+		"corridor default":    "/api/corridor",
+		"assets":              "/api/assets",
+		"healthz":             "/healthz",
+	}
+	for name, path := range cases {
+		t.Run(name, func(t *testing.T) {
+			status, body := getJSON(t, srv.URL+path)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %v", status, body)
+			}
+		})
+	}
+}
+
 // TestUnknownAssetIsRejected checks that an unverified asset code is an error
 // rather than a guess at an issuer.
 func TestUnknownAssetIsRejected(t *testing.T) {
