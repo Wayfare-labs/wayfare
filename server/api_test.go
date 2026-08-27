@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -54,6 +55,20 @@ func testServer(t *testing.T, horizonBody, mid string) *httptest.Server {
 	api := httptest.NewServer(s.Handler())
 	t.Cleanup(api.Close)
 	return api
+}
+
+func rawGet(t *testing.T, url string) (int, []byte) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading %s: %v", url, err)
+	}
+	return resp.StatusCode, raw
 }
 
 func getJSON(t *testing.T, url string) (int, map[string]any) {
@@ -283,6 +298,101 @@ func TestHealthz(t *testing.T) {
 	status, body := getJSON(t, srv.URL+"/healthz")
 	if status != http.StatusOK || body["status"] != "ok" {
 		t.Errorf("healthz = %d %v", status, body)
+	}
+}
+
+// isIndented reports whether a JSON body was emitted with SetIndent.
+// json.Encoder always appends a terminal newline, so a compact body is one
+// line plus that newline; an indented body has interior newlines too.
+func isIndented(raw []byte) bool {
+	return strings.Count(string(raw), "\n") > 1
+}
+
+// TestJSONIsCompactByDefault pins the payload-size contract behind backlog
+// #39: writeJSON emits a single line unless the caller opts into ?pretty. An
+// indented body roughly doubles the bytes every programmatic consumer pays.
+func TestJSONIsCompactByDefault(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	for _, path := range []string{"/healthz", "/api/corridor?to=NGNC&sizes=100"} {
+		status, raw := rawGet(t, srv.URL+path)
+		if status != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", path, status)
+		}
+		if isIndented(raw) {
+			t.Errorf("%s: default response is multi-line; the body must be compact", path)
+		}
+	}
+}
+
+// TestPrettyOptInIndents covers the flip side of the same contract: ?pretty
+// (bare, =1, or =true) indents the body for a human reader, while ?pretty=0
+// and ?pretty=false stay compact. The indented form must decode to the same
+// document as the plain one — pretty changes the bytes, never the meaning.
+func TestPrettyOptInIndents(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	// The corridor URL already carries a query, so the pretty parameter is
+	// appended with & rather than ?.
+	cases := []struct {
+		name       string
+		query      string
+		wantIndent bool
+	}{
+		{"absent", "", false},
+		{"zero", "&pretty=0", false},
+		{"false", "&pretty=false", false},
+		{"bare", "&pretty", true},
+		{"one", "&pretty=1", true},
+		{"true", "&pretty=true", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := srv.URL + "/api/corridor?to=NGNC&sizes=100"
+			status, raw := rawGet(t, base+tc.query)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200", status)
+			}
+			if got := isIndented(raw); got != tc.wantIndent {
+				t.Errorf("body indented = %v, want %v", got, tc.wantIndent)
+			}
+
+			// Formatting must never change the document.
+			var prettyDoc, plainDoc any
+			if err := json.Unmarshal(raw, &prettyDoc); err != nil {
+				t.Fatalf("parsing body: %v", err)
+			}
+			_, plain := rawGet(t, base)
+			if err := json.Unmarshal(plain, &plainDoc); err != nil {
+				t.Fatalf("parsing plain body: %v", err)
+			}
+			if !reflect.DeepEqual(prettyDoc, plainDoc) {
+				t.Error("?pretty changed the document, not just the formatting")
+			}
+		})
+	}
+}
+
+// TestPrettyAppliesToErrors pins that the opt-in is honoured on error
+// responses too: a human debugging with ?pretty=1 gets a readable 400, and
+// a programmatic caller still gets the compact form by default.
+func TestPrettyAppliesToErrors(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	status, raw := rawGet(t, srv.URL+"/api/corridor?to=SCAMC")
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", status)
+	}
+	if isIndented(raw) {
+		t.Error("default error body is multi-line; it should be compact")
+	}
+
+	status, raw = rawGet(t, srv.URL+"/api/corridor?to=SCAMC&pretty=1")
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", status)
+	}
+	if !isIndented(raw) {
+		t.Error("?pretty=1 error body is compact; the opt-in must apply to errors too")
 	}
 }
 

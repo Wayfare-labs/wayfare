@@ -91,7 +91,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "only GET is supported")
+		writeError(w, r, http.StatusMethodNotAllowed, "only GET is supported")
 		return
 	}
 
@@ -100,14 +100,14 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 
 	sendAsset, ok := asset.Lookup(from)
 	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
 			"unknown send asset %q; verified assets are %s",
 			from, strings.Join(asset.KnownCodes(), ", ")))
 		return
 	}
 	recvAsset, ok := asset.Lookup(to)
 	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
 			"unknown receive asset %q; verified assets are %s",
 			to, strings.Join(asset.KnownCodes(), ", ")))
 		return
@@ -115,7 +115,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 
 	pegQuote, ok := asset.FiatPeg(recvAsset)
 	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
 			"no verified fiat peg for %s, so there is no independent rate to score it against",
 			recvAsset.Code))
 		return
@@ -127,7 +127,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 
 	sizes, err := parseSizes(r.URL.Query().Get("sizes"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -137,7 +137,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	if s.HistoryFirst && r.URL.Query().Get("live") == "" {
 		if stale, ok := s.staleFor(r.Context(), sendAsset.Code, recvAsset.Code,
 			pegBase+"/"+pegQuote); ok {
-			writeJSON(w, http.StatusOK, stale)
+			writeJSON(w, r, http.StatusOK, stale)
 			log().Info("corridor measured",
 				"method", r.Method,
 				"path", r.URL.Path,
@@ -178,7 +178,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		// project, by returning a plausible number instead of admitting
 		// it does not currently know.
 		if stale, ok := s.staleFor(ctx, sendAsset.Code, recvAsset.Code, pegBase+"/"+pegQuote); ok {
-			writeJSON(w, http.StatusOK, stale)
+			writeJSON(w, r, http.StatusOK, stale)
 			log().Info("corridor measured",
 				"method", r.Method,
 				"path", r.URL.Path,
@@ -194,7 +194,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, context.DeadlineExceeded) {
 			status = http.StatusGatewayTimeout
 		}
-		writeError(w, status, "measuring corridor: "+err.Error())
+		writeError(w, r, status, "measuring corridor: "+err.Error())
 		return
 	}
 
@@ -207,7 +207,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		out = route.WithFindings(out, s.Checks.ForAsset(ctx, recvAsset))
 	}
 
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, r, http.StatusOK, out)
 
 	// Request log: corridor, sizes, duration, and status. Upstream attribution
 	// happens inside the engine; this boundary log attributes the overall
@@ -238,11 +238,11 @@ func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
 		_, hasPeg := asset.FiatPeg(a)
 		out = append(out, entry{AssetJSON: route.ToAssetJSON(a), Corridor: hasPeg})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"assets": out})
+	writeJSON(w, r, http.StatusOK, map[string]any{"assets": out})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, r, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // helpers --------------------------------------------------------------------
@@ -286,16 +286,40 @@ func parseSizes(raw string) ([]decimal.Decimal, error) {
 	return out, nil
 }
 
-func writeJSON(w http.ResponseWriter, status int, body any) {
+// wantsPretty reports whether the request asked for an indented JSON body
+// via ?pretty=1 (or ?pretty=true, or a bare ?pretty). The default is
+// compact: an indented body roughly doubles the payload for consumers that
+// only parse it, so the readable form is opt-in rather than the price every
+// programmatic caller pays.
+//
+// Presence and value are read separately because a bare ?pretty is a
+// request and an absent parameter is not, and url.Values.Get collapses the
+// two into the same empty string.
+func wantsPretty(r *http.Request) bool {
+	raw, ok := r.URL.Query()["pretty"]
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(raw[0])) {
+	case "", "1", "true":
+		return true
+	default:
+		return false
+	}
+}
+
+func writeJSON(w http.ResponseWriter, r *http.Request, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
+	if wantsPretty(r) {
+		enc.SetIndent("", "  ")
+	}
 	_ = enc.Encode(body)
 }
 
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+func writeError(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	writeJSON(w, r, status, map[string]string{"error": msg})
 }
 
 // staleFor returns the most recent stored run for a corridor, labelled as

@@ -378,6 +378,10 @@ GET /healthz
 GET /                            single-file UI, no build step
 ```
 
+Bodies are compact by default; append `&pretty=1` (or `?pretty` on an
+endpoint with no other parameters) to any of the JSON endpoints to get an
+indented body for a human reader.
+
 Beyond the contracts above, one field to know: **`live`** is on every response.
 `false` means the reading came from history because a live measurement failed,
 and `stale` then carries its age. With no stored run, the request errors —
