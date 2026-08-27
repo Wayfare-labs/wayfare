@@ -104,7 +104,13 @@ func (s *FileStore) readAll(corridor string) ([]*Record, error) {
 		if err := json.Unmarshal([]byte(raw), &r); err != nil {
 			return nil, fmt.Errorf("runstore: %s line %d: %w", corridor, line, err)
 		}
-		if r.Version != 1 && r.Version != Version {
+		// Versions 1, 2 and 3 are all loadable: each migration added its
+		// fields with omitempty after every earlier field, so older records
+		// encode byte-for-byte as they did when they were written and
+		// verify unchanged (see Record and docs/run-store.md). Any other
+		// version is a schema this build does not understand and must be
+		// refused, never guessed at.
+		if r.Version != 1 && r.Version != 2 && r.Version != Version {
 			return nil, fmt.Errorf(
 				"runstore: %s line %d has record version %d, this build understands %d; "+
 					"refusing to guess at a schema it does not know",
