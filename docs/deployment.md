@@ -248,5 +248,6 @@ and one asserting a missing one is an error rather than a plausible number.
 
 - [upstream-failures.md](upstream-failures.md) — what each upstream failure shape means
 - [run-store.md](run-store.md) — the chain, and what verification proves
+- [verify-store.md](verify-store.md) — running `-verify-store`, exit codes, and what broken chains look like
 - [snapshot-format.md](snapshot-format.md) — recorded upstream bytes
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — project invariants

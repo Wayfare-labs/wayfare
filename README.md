@@ -328,6 +328,8 @@ commit that would have broken it.
 
 Full spec: **[docs/run-store.md](docs/run-store.md)**
 
+What verification looks like — including broken-chain output: **[docs/verify-store.md](docs/verify-store.md)**
+
 ---
 
 ## Packages
