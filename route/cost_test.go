@@ -261,8 +261,16 @@ func TestCostBlockJSONShape(t *testing.T) {
 		}
 	}
 
-	// The two determined components carry amount and pct as strings; the
-	// two undetermined ones carry none, only a reason.
+	// Only fx_loss is determined — it is computed from the observed effective
+	// rate against mid. The other three components have no observation or
+	// computation behind them, so each must carry a reason and no number:
+	// fees, slippage and expected failure are unknown, never zero. Fees in
+	// particular used to be reported as a determined zero; #96 was filed
+	// against exactly that, and Decompose now reports it undetermined.
+	// Only fx_loss is determined and carries amount and pct as strings. The
+	// other three carry none, only a reason: fees is unmeasured (#96),
+	// slippage needs a comparison across sizes, and expected failure cost
+	// needs failure history that does not exist yet.
 	if got := componentOf(t, parts[0]); got != string(CostFXLoss) {
 		t.Fatalf("parts[0].component = %q, want %q", got, CostFXLoss)
 	}
@@ -271,10 +279,11 @@ func TestCostBlockJSONShape(t *testing.T) {
 	if got := componentOf(t, parts[1]); got != string(CostFees) {
 		t.Fatalf("parts[1].component = %q, want %q", got, CostFees)
 	}
-	assertDeterminedDecimalStrings(t, parts[1], "fees")
-
-	for _, idx := range []int{2, 3} {
+	for _, idx := range []int{1, 2, 3} {
 		p := parts[idx]
+		if got := componentOf(t, p); got == string(CostFXLoss) {
+			t.Fatalf("parts[%d].component = %q, want a non-fx component", idx, got)
+		}
 		assertUndetermined(t, p)
 	}
 }
