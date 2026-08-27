@@ -356,6 +356,7 @@ Full spec: **[docs/run-store.md](docs/run-store.md)**
 make run                        # measure USDC -> NGNC against live mainnet
 go run ./cmd/ladder -to GHSC    # any verified corridor
 go run ./cmd/ladder -to GHSC -json | jq
+go run ./cmd/ladder -to NGNC -ref currency-api -record testdata/snapshots  # capture a snapshot
 
 go run ./cmd/wayfared                       # serve + measure every 6h
 go run ./cmd/wayfared -serve=false          # scheduler only, no HTTP
