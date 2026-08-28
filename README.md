@@ -586,7 +586,7 @@ These keep the project shippable and legal for a small team:
 | Recorded snapshots | Hash-verified on load; provenance refuses a dirty tree |
 | SEP-38 fee identity | Verified against SEP-0038 spec text, pinned in golden files |
 | USDC issuer is Circle's | **Not yet verified** against circle.com stellar.toml |
-| Live SEP-38 round-trip | **Not done** — no anchor on this corridor publishes a quote server |
+| Live SEP-38 round-trip | **Verified** — recorded fixture from testanchor.stellar.org in `sep38/testdata/live/` |
 | Public deployment | Running at [wayfare-cdb9.onrender.com](https://wayfare-cdb9.onrender.com/); `/healthz` verified 200 on 2026-08-24 |
 | Continuous measurement | **Not currently running** — the measure workflow cannot push ([#63](https://github.com/Wayfare-labs/wayfare/issues/63)), so the served history is frozen at its last successful sweep |
 
