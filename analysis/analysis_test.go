@@ -495,14 +495,15 @@ func TestAnalyzeDecimalFullPipeline(t *testing.T) {
 	values := make([]decimal.Decimal, 60)
 	for i := range values {
 		// Base loss of 25% with a slight upward drift and noise.
-	base := 25.0
-	drift := float64(i) * 0.15 // gradual worsening (above dead zone of 0.1)
-	noise := float64(0)
-	if i%3 == 0 {
-		noise = 0.3
-	} else if i%3 == 1 {
-		noise = -0.3
-	}
+		base := 25.0
+		drift := float64(i) * 0.15 // gradual worsening (above dead zone of 0.1)
+		var noise float64
+		switch i % 3 {
+		case 0:
+			noise = 0.3
+		case 1:
+			noise = -0.3
+		}
 		values[i] = dec(base + drift + noise)
 	}
 
