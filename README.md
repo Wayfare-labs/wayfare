@@ -38,7 +38,9 @@ so the served history is older than its six-hour cadence implies. Read
 
 **It sleeps.** The free instance sleeps after fifteen minutes without traffic,
 so the first request after a quiet period may take several seconds or fail
-outright before the instance wakes. Retry once.
+outright before the instance wakes. Retry once. The checked observation and
+the boundary between manual retry and built behavior are recorded in
+**[docs/cold-start-reliability.md](docs/cold-start-reliability.md)**.
 
 It runs the current system, and only the current system. Nothing in the v2–v6
 roadmap below is deployed there.
