@@ -37,41 +37,41 @@ import (
 // finding needs: whether it uses XLM, the classes of every hop, and the
 // destination amount for comparison.
 type PathSummary struct {
-	Description  string             `json:"description"`
-	HopClasses   []asset.Class      `json:"-"`
-	HopClassStrs []string           `json:"hop_classes"`
-	UsesXLM      bool               `json:"uses_xlm"`
-	DestAmount   decimal.Decimal    `json:"-"`
-	DestAmountS  string             `json:"dest_amount"`
-	SourceAmount decimal.Decimal    `json:"-"`
-	Rate         decimal.Decimal    `json:"-"`
-	RateS        string             `json:"rate"`
-	_            struct{} // keep struct extensible without breaking positional JSON
+	Description  string          `json:"description"`
+	HopClasses   []asset.Class   `json:"-"`
+	HopClassStrs []string        `json:"hop_classes"`
+	UsesXLM      bool            `json:"uses_xlm"`
+	DestAmount   decimal.Decimal `json:"-"`
+	DestAmountS  string          `json:"dest_amount"`
+	SourceAmount decimal.Decimal `json:"-"`
+	Rate         decimal.Decimal `json:"-"`
+	RateS        string          `json:"rate"`
+	_            struct{}        // keep struct extensible without breaking positional JSON
 }
 
 // SizeBreakdown holds every path Horizon returned for one send amount on one
 // corridor, plus which is best overall and which is best without XLM.
 type SizeBreakdown struct {
-	SendAmount     string       `json:"send_amount"`
-	NumPaths       int          `json:"num_paths"`
-	Best           *PathSummary `json:"best,omitempty"`
-	BestNonXLM     *PathSummary `json:"best_non_xlm,omitempty"`
-	XLMAdvantagePc string       `json:"xlm_advantage_pct,omitempty"`
+	SendAmount     string        `json:"send_amount"`
+	NumPaths       int           `json:"num_paths"`
+	Best           *PathSummary  `json:"best,omitempty"`
+	BestNonXLM     *PathSummary  `json:"best_non_xlm,omitempty"`
+	XLMAdvantagePc string        `json:"xlm_advantage_pct,omitempty"`
 	Paths          []PathSummary `json:"paths"`
 }
 
 // CorridorReport is the per-corridor rollup: hop-composition counts across
 // every size, and one SizeBreakdown per size for reproducibility.
 type CorridorReport struct {
-	Snapshot          string           `json:"snapshot"`
-	SendCode          string           `json:"send"`
-	ReceiveCode       string           `json:"receive"`
-	SizesMeasured     int              `json:"sizes_measured"`
-	SizesWithAnyPath  int              `json:"sizes_with_any_path"`
-	SizesBestUsesXLM  int              `json:"sizes_best_uses_xlm"`
-	SizesWithNonXLM   int              `json:"sizes_with_non_xlm_alt"`
-	SummaryLine       string           `json:"summary"`
-	Sizes             []SizeBreakdown  `json:"sizes"`
+	Snapshot         string          `json:"snapshot"`
+	SendCode         string          `json:"send"`
+	ReceiveCode      string          `json:"receive"`
+	SizesMeasured    int             `json:"sizes_measured"`
+	SizesWithAnyPath int             `json:"sizes_with_any_path"`
+	SizesBestUsesXLM int             `json:"sizes_best_uses_xlm"`
+	SizesWithNonXLM  int             `json:"sizes_with_non_xlm_alt"`
+	SummaryLine      string          `json:"summary"`
+	Sizes            []SizeBreakdown `json:"sizes"`
 }
 
 // Report is the whole document — one entry per corridor snapshot.
