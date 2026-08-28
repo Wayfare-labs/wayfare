@@ -190,6 +190,7 @@ const (
 type Quote struct {
 	Kind        Kind
 	Description string // e.g. "USDC -> XLM -> NGNC"
+	Path        *dex.Path
 	Source      string // anchor domain, or "stellar-dex"
 
 	SendAsset     asset.Asset
@@ -554,6 +555,7 @@ func (e *Engine) quoteDEX(ctx context.Context, req Request, ref refrate.Rate) (*
 	q := &Quote{
 		Kind:          KindDEX,
 		Description:   best.Describe(),
+		Path:          &best,
 		Source:        "stellar-dex",
 		SendAsset:     req.SendAsset,
 		SendAmount:    req.SendAmount,

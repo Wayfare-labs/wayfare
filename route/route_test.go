@@ -136,6 +136,38 @@ func TestDualMid(t *testing.T) {
 // engine must decline to recommend anything. The best route pays 651 NGN per
 // USD against a mid of 1,500 — a 56.6% loss. Ranking alone would have
 // happily crowned it the winner.
+func TestHopsArePublishedAsStructuredAssets(t *testing.T) {
+	srv := horizonStub(t, liveStrictSendResponse)
+	defer srv.Close()
+
+	e := &Engine{DEX: &dex.Client{HorizonURL: srv.URL}, RefRate: usdToNGN("1500")}
+	res, err := e.Quote(context.Background(), ngnRequest("100"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+	if len(res.Quotes) != 1 {
+		t.Fatalf("expected one quote, got %d", len(res.Quotes))
+	}
+	wire := ToQuoteJSON(&res.Quotes[0])
+	if wire.Description != "USDC -> XLM -> NGNC" {
+		t.Fatalf("description = %q, want unchanged route description", wire.Description)
+	}
+	if len(wire.Hops) != 3 {
+		t.Fatalf("hops = %#v, want source, XLM, and destination", wire.Hops)
+	}
+	for i, want := range []string{"USDC", "XLM", "NGNC"} {
+		if wire.Hops[i].Code != want {
+			t.Errorf("hops[%d].code = %q, want %q", i, wire.Hops[i].Code, want)
+		}
+	}
+	if wire.Hops[0].Issuer == "" || wire.Hops[2].Issuer == "" {
+		t.Error("issued endpoint hops must publish their issuers")
+	}
+	if wire.Hops[1].Issuer != "" {
+		t.Errorf("native XLM issuer = %q, want empty", wire.Hops[1].Issuer)
+	}
+}
+
 func TestLiveCorridorIsRefused(t *testing.T) {
 	srv := horizonStub(t, liveStrictSendResponse)
 	defer srv.Close()
