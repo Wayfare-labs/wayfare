@@ -38,16 +38,28 @@ var defaultDepthSizes = []decimal.Decimal{
 
 // Describe implements Metric.
 func (DepthMetric) Describe() Descriptor {
+	// This composite descriptor is only used for scheduling and cost
+	// reporting; the two halves (RunObserved, RunExecutable) declare their
+	// own venues because they read different endpoints. Reporting a single
+	// venue here would suggest the two figures are comparable, which is the
+	// specific misuse the machine-readable venue exists to prevent.
 	return Descriptor{
 		ID:    "depth.observed-executable",
 		Scope: ScopeCorridor,
 		Cost:  CostExpensive,
+		// The composite descriptor is scheduled and validated as a corridor
+		// metric, but Run delegates to RunObserved — an order-book fetch —
+		// so the venue declared here matches what an implicit Run() would
+		// actually observe. RunExecutable declares VenuePathfinding on its
+		// own descriptor; the two never share a MetricResult.
+		Venue: VenueOrderBook,
 		Title: "Observed depth vs executable depth",
 		CanDetermine: "Observed depth from the order book (number of levels " +
 			"on each side), and executable depth from pathfinding across " +
 			"multiple sizes (the maximum destination amount reachable).",
 		CannotDetermine: "Whether those levels represent executable liquidity " +
-			"or stale offers.",
+			"or stale offers. The two halves observe different venues " +
+			"(order-book and pathfinding); see docs/liquidity-venues.md.",
 	}
 }
 
@@ -57,10 +69,12 @@ func (m DepthMetric) RunObserved(ctx context.Context, s Subject) MetricResult {
 		ID:           "depth.observed",
 		Scope:        ScopeCorridor,
 		Cost:         CostOneRequest,
+		Venue:        VenueOrderBook,
 		Title:        "Observed order book depth",
 		CanDetermine: "The number of bid and ask levels on the direct order book.",
 		CannotDetermine: "Whether those levels represent executable liquidity " +
-			"or stale offers.",
+			"or stale offers, and any AMM depth that would settle alongside them. " +
+			"The venue is order-book; see docs/liquidity-venues.md.",
 	}
 	at := time.Now().UTC()
 
@@ -108,11 +122,14 @@ func (m DepthMetric) RunExecutable(ctx context.Context, s Subject) MetricResult 
 		ID:    "depth.executable",
 		Scope: ScopeCorridor,
 		Cost:  CostExpensive,
+		Venue: VenuePathfinding,
 		Title: "Executable depth from pathfinding",
 		CanDetermine: "The maximum destination amount reachable via Horizon " +
 			"pathfinding, and the size at which the receive amount stops growing.",
 		CannotDetermine: "Whether the executable amount reflects a sustainable " +
-			"market or a one-time fill.",
+			"market or a one-time fill. The venue is pathfinding (order book " +
+			"plus AMM liquidity pools), so this figure is not comparable with " +
+			"the order-book depth on the same corridor — see docs/liquidity-venues.md.",
 	}
 	at := time.Now().UTC()
 
