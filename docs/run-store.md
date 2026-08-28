@@ -2,8 +2,9 @@
 
 A tamper-evident history of corridor measurements.
 
-**Schema version 2.** Implemented by `runstore/`. Version 1 chains still load
-and still verify — see [Migration to version 2](#migration-to-version-2).
+**Schema version 3.** Implemented by `runstore/`. Version 1 and Version 2
+chains still load and still verify — see [Migration to version 2](#migration-to-version-2)
+and [Migration to version 3](#migration-to-version-3).
 
 ---
 
@@ -36,7 +37,7 @@ This is not a blockchain and makes no distributed-consensus claim.
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "seq": 42,
   "recorded_at": "2026-08-21T22:30:40Z",
   "corridor": "USDC-NGNC",
@@ -46,6 +47,7 @@ This is not a blockchain and makes no distributed-consensus claim.
     "mid": "1350.2568",
     "source": "currency-api",
     "as_of": "2026-08-21T00:00:00Z",
+    "fetched_at": "2026-08-21T22:28:00Z",
     "secondary_mid": "1348.0585",
     "secondary_source": "exchangerate-api",
     "divergence_pct": "0.16",
@@ -97,7 +99,10 @@ recommendation it refused to make.
 corridor's numbers moving because the benchmark changed is a completely
 different event from the corridor moving, and a history recording only the mid
 it scored against cannot distinguish them afterwards. `scored_against` names
-which mid produced the verdicts in that record.
+which mid produced the verdicts in that record. Since Version 3 it also
+carries `fetched_at` — when this project last obtained the rate, which can be
+older than `recorded_at` when a cached rate was reused — so a reader can tell
+how old the benchmark was when the reading was taken.
 
 **`checks` and `metrics` carry the findings taken with the measurement.** A
 check result preserves its tri-state — `determined: false` is *not* a failure —
@@ -148,6 +153,45 @@ of a fixed record; a purely cosmetic field reorder fails it. The test's own
 comment says what to do when it goes red, because the tempting response —
 updating the constant — is exactly the mistake it exists to prevent.
 
+### Migration to version 3
+
+Version 2 records had no `fetched_at` on the reference block. Version 3 adds
+it, so a stored reading can tell a reader how old the benchmark was when the
+reading was taken — the live wire already publishes `reference_fetched_at`,
+and a replay that dropped it made stored history look current no matter how
+reused the rate behind it was.
+
+This is still a Version bump — the field set and the field order are part of
+every hash — **but the migration is byte-for-byte invisible to existing
+chains**, exactly like the Version 2 migration:
+
+- The new field is declared `omitempty` and placed **after every Version 2
+  field** of `runstore.Reference`.
+- `encoding/json` emits struct fields in declaration order, so a record with
+  an empty `fetched_at` encodes to exactly the same JSON — same field order,
+  same contents — it did as a Version 2 record.
+- Therefore a Version 2 record's hash is *unchanged* under Version 3, and a
+  stored Version 2 chain still loads and still verifies with no rewriting.
+
+Concretely:
+
+- A record written as Version 1 or Version 2 stays that version on disk
+  forever. Nothing is relabelled or rewritten — the store is append-only.
+- New records are written `version: 3`, carrying `fetched_at` when the
+  measurement knew when its rate was fetched and omitting it when it did not
+  (an older build's record, or a provider that left the stamp unset — the
+  honest "unknown", never a fabricated time).
+- A corridor's file can therefore become a **mixed-version chain** (older
+  Version 1 or Version 2 records, newer Version 3 records). `Open` and
+  `Verify` walk all three; each record verifies against its own `version`
+  field, and the chain links across every boundary because each record
+  carries the full hash of the one before it regardless of who wrote it.
+
+Verification, not rewriting, is what makes a mixed chain safe: the new build
+*understands* Version 1 and Version 2 records rather than silently upgrading
+them, so it can tell a genuine legacy record from a tampered one — and it
+refuses any other version (see [the version-mismatch rule](#the-version-mismatch-rule)).
+
 ### Migration to version 2
 
 Version 1 records had no `checks` or `metrics` block. Version 2 adds both.
@@ -184,9 +228,9 @@ version (see [the version-mismatch rule](#the-version-mismatch-rule)).
 ### The version-mismatch rule
 
 A record version this build does not recognise is an error, never a best-effort
-parse: `runstore` accepts exactly `1` and `2`. Relabelling a record to make it
-parse is falsification, not migration — a record that says `version: 9` is a
-schema the build cannot speak, and guessing at it would hide the mismatch.
+parse: `runstore` accepts exactly `1`, `2` and `3`. Relabelling a record to
+make it parse is falsification, not migration — a record that says `version: 9`
+is a schema the build cannot speak, and guessing at it would hide the mismatch.
 
 ---
 
