@@ -25,6 +25,9 @@ type BookHealth struct {
 
 	BestBid decimal.Decimal
 	BestAsk decimal.Decimal
+	// Mid is the average of BestBid and BestAsk when both sides are present.
+	// It remains zero when the book cannot provide a two-sided mid.
+	Mid     decimal.Decimal
 
 	// SpreadPct is (ask - bid) / mid, as a percentage. On a healthy market
 	// this is a fraction of one percent. The live USDC/NGNC book measured
@@ -147,10 +150,10 @@ func (c *Client) OrderBook(ctx context.Context, selling, buying asset.Asset) (*B
 	}
 
 	if h.BidLevels > 0 && h.AskLevels > 0 {
-		mid := h.BestBid.Add(h.BestAsk).Div(decimal.NewFromInt(2))
-		if !mid.IsZero() {
+		h.Mid = h.BestBid.Add(h.BestAsk).Div(decimal.NewFromInt(2))
+		if !h.Mid.IsZero() {
 			h.SpreadPct = h.BestAsk.Sub(h.BestBid).
-				Div(mid).
+				Div(h.Mid).
 				Mul(decimal.NewFromInt(100))
 		}
 	}
