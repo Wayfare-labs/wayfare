@@ -17,14 +17,15 @@ import (
 // rounding bug this project refuses internally.
 
 type QuoteJSON struct {
-	Description   string   `json:"description"`
-	Source        string   `json:"source"`
-	ReceiveAmount string   `json:"receive_amount"`
-	EffectiveRate string   `json:"effective_rate"`
-	LossPct       string   `json:"loss_pct"`
-	LossAmount    string   `json:"loss_amount,omitempty"`
-	Verdict       string   `json:"verdict"`
-	Warnings      []string `json:"warnings"`
+	Description   string      `json:"description"`
+	Hops          []AssetJSON `json:"hops"`
+	Source        string      `json:"source"`
+	ReceiveAmount string      `json:"receive_amount"`
+	EffectiveRate string      `json:"effective_rate"`
+	LossPct       string      `json:"loss_pct"`
+	LossAmount    string      `json:"loss_amount,omitempty"`
+	Verdict       string      `json:"verdict"`
+	Warnings      []string    `json:"warnings"`
 }
 
 // CostPartJSON is one component of a rung's effective transfer cost.
@@ -171,8 +172,23 @@ func ToQuoteJSON(q *Quote) *QuoteJSON {
 	if w == nil {
 		w = []string{}
 	}
+	hops := []AssetJSON{}
+	// Keep both endpoints in the published shape. Anchor quotes may not carry
+	// a DEX path, but still publish their known endpoint assets.
+	if q.SendAsset.Code != "" {
+		hops = append(hops, ToAssetJSON(q.SendAsset))
+	}
+	if q.Path != nil {
+		for _, h := range q.Path.Hops {
+			hops = append(hops, ToAssetJSON(h))
+		}
+	}
+	if q.ReceiveAsset.Code != "" {
+		hops = append(hops, ToAssetJSON(q.ReceiveAsset))
+	}
 	return &QuoteJSON{
 		Description:   q.Description,
+		Hops:          hops,
 		Source:        q.Source,
 		ReceiveAmount: q.ReceiveAmount.String(),
 		EffectiveRate: q.EffectiveRate.String(),
