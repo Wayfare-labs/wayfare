@@ -198,6 +198,8 @@ alter an integrity state or a verdict. See the composition rule below.
 These are the agreements other code and other people depend on. **Changing any
 of them is a breaking change**, not a refactor.
 
+A glossary of every state a reader can meet: **[docs/glossary.md](docs/glossary.md)**
+
 ### Verdict thresholds — breaking if altered
 
 Loss is how far the achieved rate falls below the reference mid.
@@ -314,7 +316,7 @@ rounding error the engine avoids internally. There is a test at the boundary.
 Recorded upstream bytes, verified by hash on load. A replayer **must refuse a
 version it does not know.** Full spec: **[docs/snapshot-format.md](docs/snapshot-format.md)**
 
-### Run record — version 1
+### Run record — version 3
 
 ```
 hash = sha256(record JSON with the hash field omitted)
@@ -325,6 +327,12 @@ chain rather than a pile. **The field set and their declaration order are part
 of every hash**, so adding, removing or reordering a field is a version bump
 plus a migration, never a tidy-up. `TestRecordHashIsPinned` fails in CI on the
 commit that would have broken it.
+
+Version 1 and Version 2 chains still load and still verify under this build:
+each migration added its fields with `omitempty` after every earlier field, so
+a legacy record encodes byte-for-byte as it did when it was written.
+Version 3 added `reference.fetched_at`, which lets a stored reading say how
+old its benchmark was when the reading was taken.
 
 Full spec: **[docs/run-store.md](docs/run-store.md)**
 
