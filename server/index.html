@@ -111,8 +111,26 @@
   .f-limit { font-size: .8rem; color: var(--muted); margin-top: .2rem; }
   .f-evidence { font-family: var(--mono); font-size: .74rem; color: var(--muted);
                 margin-top: .3rem; word-break: break-all; }
+  .m-value {
+    font: 700 1.2rem/1.15 var(--mono); font-variant-numeric: tabular-nums;
+    margin-top: .3rem; color: var(--ink);
+  }
+  .m-unit {
+    color: var(--muted); font: 600 .72rem/1 var(--mono);
+    text-transform: uppercase; letter-spacing: .05em; margin-left: .45rem;
+  }
+  .m-state {
+    display: inline-block; font: 600 .68rem/1.5 var(--mono); letter-spacing: .05em;
+    padding: .1rem .45rem; border-radius: 4px; border: 1px solid currentColor;
+    color: var(--unknown); background: var(--unknown-soft); white-space: nowrap;
+    margin-right: .5rem;
+  }
+  .m-unknown { color: var(--unknown); }
   .meta { color: var(--muted); font-size: .82rem; margin-top: .9rem; }
   .err { color: var(--bad); }
+  .provenance { margin-bottom: .9rem; padding: .7rem .85rem; border-radius: 6px;
+                border: 1px solid var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+  .provenance-live { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
   h2 { font-size: .95rem; margin: 0 0 .8rem; letter-spacing: .01em; }
   .legend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .55rem; margin-top: .9rem; }
   .legend-item { display: flex; align-items: center; gap: .45rem; min-width: 0; }
@@ -127,6 +145,34 @@
                       margin-right: .35rem; vertical-align: -1px; }
   footer { color: var(--muted); font-size: .82rem; border-top: 1px solid var(--border); padding-top: 1.1rem; margin-top: 2rem; }
   code { font-family: var(--mono); font-size: .85em; }
+
+  /* Loading / cold-start state ------------------------------------------- */
+  .loading-panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.5rem 1.25rem; margin-bottom: 1.25rem;
+    display: flex; flex-direction: column; gap: .9rem;
+  }
+  .loading-dots {
+    display: flex; gap: .45rem; align-items: center;
+  }
+  .loading-dots span {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); opacity: .25;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  .loading-dots span:nth-child(2) { animation-delay: .22s; }
+  .loading-dots span:nth-child(3) { animation-delay: .44s; }
+  @keyframes pulse {
+    0%, 80%, 100% { opacity: .25; transform: scale(.9); }
+    40%            { opacity: 1;   transform: scale(1); }
+  }
+  .loading-what {
+    font-size: .97rem; color: var(--ink);
+  }
+  .loading-wake {
+    font-size: .85rem; color: var(--muted);
+    border-left: 3px solid var(--border); padding-left: .7rem;
+  }
 </style>
 </head>
 <body>
@@ -150,13 +196,25 @@
     <span id="status" class="sub"></span>
   </div>
 
-  <div id="out"></div>
+  <div id="out">
+    <div class="loading-panel" id="loading">
+      <div class="loading-dots">
+        <span></span><span></span><span></span>
+      </div>
+      <p class="loading-what">
+        Wayfare prices a stablecoin&nbsp;&rarr;&nbsp;fiat-token corridor against
+        an independent reference rate and states plainly when no route is worth taking.
+      </p>
+      <p class="loading-wake">
+        The instance may be waking up from sleep &mdash; Render free-tier pauses
+        after 15&nbsp;minutes of inactivity. This usually takes under a minute.
+      </p>
+    </div>
+  </div>
 
   <footer>
-    Every figure is fetched live from Horizon pathfinding and an independent rate
-    provider at the moment you press Measure. Nothing is cached, estimated, or
-    interpolated. Wayfare is non-custodial and read-only: it never holds funds,
-    issues tokens, or moves money.
+    <span id="footer-provenance">Wayfare is non-custodial and read-only: it never holds funds,
+    issues tokens, or moves money.</span>
   </footer>
 </div>
 
@@ -194,9 +252,15 @@ async function measure() {
 
 function render(d) {
   const parts = [];
+  const provenance = d.live
+    ? `<div class="provenance provenance-live"><strong>LIVE MEASUREMENT</strong> · measured ${esc(d.measured_at)}</div>`
+    : `<div class="provenance"><strong>RECORDED — NOT CURRENT MARKET DATA</strong> · ${esc(d.stale?.age_human || 'historical reading')} · recorded ${esc(d.stale?.recorded_at || d.measured_at)}</div>`;
+  $('footer-provenance').textContent = d.live
+    ? `Every figure below was fetched live from Horizon pathfinding and an independent rate provider at ${d.measured_at}. Nothing is cached, estimated, or interpolated. Wayfare is non-custodial and read-only: it never holds funds, issues tokens, or moves money.`
+    : `The reading below was recorded ${d.stale?.age_human || 'in the past'} at ${d.stale?.recorded_at || d.measured_at}; it is not a live market measurement. Wayfare is non-custodial and read-only: it never holds funds, issues tokens, or moves money.`;
 
   // Headline: integrity state and the finding, before any numbers.
-  parts.push(`<div class="panel">
+  parts.push(`${provenance}<div class="panel">
     <span class="badge ${badgeClass(d.integrity)}">${esc(d.integrity)}</span>
     <p class="finding">${esc(d.finding)}</p>
     ${d.scored ? recommendationBlock(d) : unscoredBlock(d)}
@@ -376,7 +440,12 @@ function findings(f) {
   if (f.undetermined) counts.push(`${f.undetermined} undetermined`);
   if (f.passed) counts.push(`${f.passed} passed`);
 
-  return `<div class="panel">
+  // Metrics are a distinct shape and get a distinct panel: a value with a
+  // unit, never a verdict. The panel is absent — not empty — when no metric
+  // was run, so "no metrics" and "metrics, nothing found" cannot look alike.
+  const metricsBlock = (f.metrics && f.metrics.length) ? metrics(f.metrics) : '';
+
+  return `${metricsBlock}<div class="panel">
     <h2>Counterparty checks &mdash; ${esc(counts.join(', '))}</h2>
     ${rows}
     <p class="meta">These describe the issuer and anchor this corridor depends on.
@@ -384,6 +453,52 @@ function findings(f) {
     verdict are computed from pathfinding and the reference rate alone.
     <strong>Undetermined is not a failure</strong> &mdash; an anchor that publishes
     nothing is a different fact from one that publishes something broken.</p>
+  </div>`;
+}
+
+// Metrics are measured quantities, reported alongside checks. They are not
+// checks: there is no pass or fail to attach to a number, so there is no
+// badge and no colour that implies good or bad. No threshold exists for any
+// metric, and inventing one in CSS would be inventing a verdict. A metric
+// that could not be measured shows why instead, styled as unknown — a number
+// that was not produced is a different fact from a check that failed, and
+// must not look like one.
+function metrics(ms) {
+  const measured = ms.filter(m => m.determined).length;
+  const undetermined = ms.length - measured;
+
+  const rows = ms.map(m => {
+    // The undetermined branch comes first: a metric that did not produce a
+    // value shows its reason in the value's place, never an empty value.
+    const value = !m.determined
+      ? `<div class="m-value m-unknown"><span class="m-state">UNDETERMINED</span>${esc(m.reason || m.summary)}</div>`
+      : `<div class="m-value">${esc(m.value)}<span class="m-unit">${esc(m.unit)}</span></div>`;
+
+    const evidence = (m.evidence || []).map(e =>
+      `<div class="f-evidence">${esc(e.source)} &rarr; ${esc(e.observed)} &middot; ${esc(e.observed_at)}</div>`).join('');
+
+    return `<div class="finding-row">
+      <div class="f-body">
+        ${m.determined ? `<div class="f-summary">${esc(m.summary)}</div>` : ''}
+        ${value}
+        <div class="f-id">${esc(m.id)} &middot; ${esc(m.subject)} &middot; observed ${esc(m.observed_at)}</div>
+        ${evidence}
+      </div>
+    </div>`;
+  }).join('');
+
+  const count = undetermined
+    ? `${measured} measured, ${undetermined} undetermined`
+    : `${measured} measured`;
+
+  return `<div class="panel">
+    <h2>Metrics &mdash; ${count}</h2>
+    ${rows}
+    <p class="meta">These are measured quantities, not verdicts: each is a
+    number with its unit, and a metric that could not be measured says why
+    instead of reporting a number. No threshold exists for any of them, so
+    none is graded good or bad, and <strong>undetermined is not a
+    failure</strong>.</p>
   </div>`;
 }
 
@@ -731,6 +846,25 @@ function runsTable(runs) {
 
 $('run').addEventListener('click', measure);
 $('trend').addEventListener('click', loadTrend);
+
+// On page load, fetch the default corridor from recorded history (no &live=1)
+// so the loading state disappears as soon as the server responds, regardless
+// of whether this is a cold start or a warm one.  A cold start on Render's
+// free tier can take ~60 s; the loading panel explains this to the reader.
+(async function boot() {
+  const to = $('to').value; // NGNC by default
+  try {
+    const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    render(data);
+  } catch (e) {
+    $('out').innerHTML =
+      `<div class="panel err">Could not load corridor data: ${esc(e.message)}.
+       If the instance is still waking up, wait a moment and
+       <a href="" style="color:inherit">reload</a>.</div>`;
+  }
+})();
 </script>
 <script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a30a05c3d811663d',t:'MTc4NzY1NDg4Nw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
