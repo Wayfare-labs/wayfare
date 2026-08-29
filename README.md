@@ -198,6 +198,8 @@ alter an integrity state or a verdict. See the composition rule below.
 These are the agreements other code and other people depend on. **Changing any
 of them is a breaking change**, not a refactor.
 
+A glossary of every state a reader can meet: **[docs/glossary.md](docs/glossary.md)**
+
 ### Verdict thresholds — breaking if altered
 
 Loss is how far the achieved rate falls below the reference mid.
@@ -333,6 +335,8 @@ Version 3 added `reference.fetched_at`, which lets a stored reading say how
 old its benchmark was when the reading was taken.
 
 Full spec: **[docs/run-store.md](docs/run-store.md)**
+
+What verification looks like — including broken-chain output: **[docs/verify-store.md](docs/verify-store.md)**
 
 ---
 
