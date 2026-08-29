@@ -223,6 +223,10 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 	// can tell a corridor change from a benchmark change.
 	ref := result.Reference
 	record.Reference.AsOf = formatTime(ref.AsOf)
+	// FetchedAt is when we last obtained the rate, which can be older than
+	// the run when a cached rate was reused; a later reader needs it to
+	// judge how current the benchmark was when this reading was taken.
+	record.Reference.FetchedAt = formatTime(ref.FetchedAt)
 	if !ref.SecondaryMid.IsZero() {
 		record.Reference.SecondaryMid = ref.SecondaryMid.String()
 		record.Reference.SecondarySource = ref.SecondarySource

@@ -203,6 +203,14 @@ document and the CLI document, not only the live one.
 a stored reading was when it was taken.
 `V1` `area:pricing` `difficulty:easy` `ready`
 
+> **Implemented.** This entry's fix required a run-record layout change — the
+> record had nowhere to store the fetch timestamp — so it was done as the
+> Version 3 migration it names as its own review bar: `runstore.Reference`
+> gained `fetched_at` (omitempty, after every Version 2 field), Version 2
+> chains still load and verify unchanged, and `staleJSON` now publishes
+> `reference_fetched_at` from the record. See `docs/run-store.md`,
+> "Migration to version 3".
+
 **#8 — depends_on loses issuer identity on the stale path** *(filed: [#116](https://github.com/Wayfare-labs/wayfare/issues/116))*
 `staleJSON` builds `route.AssetJSON{Code: code}` from stored codes alone; an
 asset code identifies nothing, and the issuer is the identity.
