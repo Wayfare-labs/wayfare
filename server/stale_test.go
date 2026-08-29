@@ -193,9 +193,9 @@ func TestStaleReconstructsReferenceRoundTrip(t *testing.T) {
 	// agreement state, through FromCorridorJSON into a stored record.
 	base := func() runstore.Record {
 		return runstore.Record{
-			RecordedAt: asOf.Add(time.Hour),
-			Corridor:   "USDC-NGNC",
-			Integrity:  "DIRECT",
+			RecordedAt:   asOf.Add(time.Hour),
+			Corridor:     "USDC-NGNC",
+			Integrity:    "DIRECT",
 			FloorLossPct: "25.02", FloorSize: "0.1",
 			WorstLossPct: "97.68", WorstSize: "5000",
 			Finding: "No usable size.",
@@ -204,10 +204,10 @@ func TestStaleReconstructsReferenceRoundTrip(t *testing.T) {
 	}
 
 	cases := []struct {
-		name        string
-		ref         runstore.Reference
-		wantAgree   string
-		wantScored  bool
+		name       string
+		ref        runstore.Reference
+		wantAgree  string
+		wantScored bool
 	}{
 		{
 			name: "AGREE",
