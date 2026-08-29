@@ -178,6 +178,129 @@ func TestStaleServesReferenceFetchedAt(t *testing.T) {
 	}
 }
 
+// TestStaleReconstructsReferenceRoundTrip covers the reason for the
+// reference_agreement/scored gap on the stale path: staleJSON was leaving
+// ReferenceAgreement at "" and Scored at its zero value, so every
+// history-served corridor read as unscored even when the providers agreed.
+// The record carries everything needed to reconstruct the state — ScoredAgainst
+// records whether verdicts were derived at all, and DivergencePct plus the
+// as-of stamps decide the band — so the round trip must reproduce AGREE,
+// DISAGREE, SINGLE and MALFUNCTION as they were measured.
+func TestStaleReconstructsReferenceRoundTrip(t *testing.T) {
+	asOf := time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC)
+
+	// Each case is the reference that reconcile would have persisted for that
+	// agreement state, through FromCorridorJSON into a stored record.
+	base := func() runstore.Record {
+		return runstore.Record{
+			RecordedAt: asOf.Add(time.Hour),
+			Corridor:   "USDC-NGNC",
+			Integrity:  "DIRECT",
+			FloorLossPct: "25.02", FloorSize: "0.1",
+			WorstLossPct: "97.68", WorstSize: "5000",
+			Finding: "No usable size.",
+			Rungs:   []runstore.Rung{},
+		}
+	}
+
+	cases := []struct {
+		name        string
+		ref         runstore.Reference
+		wantAgree   string
+		wantScored  bool
+	}{
+		{
+			name: "AGREE",
+			// Providers agreed within tolerance: divergence below the agree
+			// ceiling, scored against the primary.
+			ref: runstore.Reference{
+				Mid: "1350.2568", Source: "currency-api", AsOf: asOf.Format(time.RFC3339),
+				SecondaryMid: "1348.0585", SecondarySource: "exchangerate-api",
+				SecondaryAsOf: asOf.Format(time.RFC3339),
+				DivergencePct: "0.16", ScoredAgainst: "currency-api",
+			},
+			wantAgree:  "AGREE",
+			wantScored: true,
+		},
+		{
+			name: "DISAGREE",
+			// Providers differ beyond the agree ceiling but below malfunction,
+			// scored conservatively against one of them.
+			ref: runstore.Reference{
+				Mid: "1350.2568", Source: "currency-api", AsOf: asOf.Format(time.RFC3339),
+				SecondaryMid: "1417.7696", SecondarySource: "exchangerate-api",
+				SecondaryAsOf: asOf.Format(time.RFC3339),
+				DivergencePct: "5.00", ScoredAgainst: "currency-api",
+			},
+			wantAgree:  "DISAGREE",
+			wantScored: true,
+		},
+		{
+			name: "SINGLE",
+			// Only one provider answered: usable and uncorroborated, scored
+			// against it.
+			ref: runstore.Reference{
+				Mid: "1350.2568", Source: "currency-api", AsOf: asOf.Format(time.RFC3339),
+				ScoredAgainst: "currency-api",
+			},
+			wantAgree:  "SINGLE",
+			wantScored: true,
+		},
+		{
+			name: "MALFUNCTION",
+			// Providers diverge beyond the malfunction threshold: a broken
+			// feed, nothing scored against either.
+			ref: runstore.Reference{
+				Mid: "1350.2568", Source: "currency-api", AsOf: asOf.Format(time.RFC3339),
+				SecondaryMid: "1620.3081", SecondarySource: "exchangerate-api",
+				SecondaryAsOf: asOf.Format(time.RFC3339),
+				DivergencePct: "20.00",
+			},
+			wantAgree:  "MALFUNCTION",
+			wantScored: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := base()
+			rec.Reference = tc.ref
+			out := staleJSON(&rec, "USD/NGN", time.Now().UTC())
+			if out.ReferenceAgreement != tc.wantAgree {
+				t.Errorf("reference_agreement = %q, want %q", out.ReferenceAgreement, tc.wantAgree)
+			}
+			if out.Scored != tc.wantScored {
+				t.Errorf("scored = %v, want %v for %s", out.Scored, tc.wantScored, tc.name)
+			}
+		})
+	}
+}
+
+// TestStaleReferenceHasExplicitUnknownWhenUnrecordable pins the other half of
+// the contract: a record that genuinely cannot answer (no divergence recorded)
+// must report an explicit UNKNOWN, never "" and never a guessed band.
+func TestStaleReferenceHasExplicitUnknownWhenUnrecordable(t *testing.T) {
+	// A secondary exists but no divergence was recorded — an older record
+	// predating the cross-check, or a corrupted one. The record cannot say
+	// whether the providers agreed, so it says so.
+	rec := runstore.Record{
+		RecordedAt: time.Date(2026, 8, 21, 1, 0, 0, 0, time.UTC),
+		Corridor:   "USDC-NGNC", Integrity: "DIRECT",
+		FloorLossPct: "25.02", FloorSize: "0.1",
+		WorstLossPct: "97.68", WorstSize: "5000",
+		Finding: "No usable size.", Rungs: []runstore.Rung{},
+		Reference: runstore.Reference{
+			Mid: "1350.2568", Source: "currency-api", AsOf: "2026-08-21T00:00:00Z",
+			SecondaryMid: "1348.0585", SecondarySource: "exchangerate-api",
+		},
+	}
+
+	out := staleJSON(&rec, "USD/NGN", time.Now().UTC())
+	if out.ReferenceAgreement != "UNKNOWN" {
+		t.Errorf("reference_agreement = %q, want explicit UNKNOWN for an unrecordable band", out.ReferenceAgreement)
+	}
+}
+
 // TestNoHistoryIsAnErrorNotANumber is the other half, and the more important
 // one. With nothing stored, a failed measurement must error rather than return
 // a plausible figure.
