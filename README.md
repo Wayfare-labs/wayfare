@@ -198,6 +198,8 @@ alter an integrity state or a verdict. See the composition rule below.
 These are the agreements other code and other people depend on. **Changing any
 of them is a breaking change**, not a refactor.
 
+A glossary of every state a reader can meet: **[docs/glossary.md](docs/glossary.md)**
+
 ### Verdict thresholds — breaking if altered
 
 Loss is how far the achieved rate falls below the reference mid.
