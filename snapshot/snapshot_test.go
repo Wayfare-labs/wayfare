@@ -3,6 +3,7 @@ package snapshot
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -270,6 +271,40 @@ func TestUnknownVersionIsRefused(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "version") {
 		t.Errorf("error should name the version mismatch, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("version %d", Version+1)) {
+		t.Errorf("error should name the specific version found (%d), got: %v", Version+1, err)
+	}
+}
+
+// TestSnapshotVersion0IsRefused guards against treating a zero-value version
+// as a default to be filled in. An absent or zero version is unknown.
+func TestSnapshotVersion0IsRefused(t *testing.T) {
+	dir, _ := recordAgainst(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{}`)
+	}, "/paths/strict-send?source_amount=100")
+
+	path := filepath.Join(dir, ManifestFile)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var generic map[string]any
+	if err := json.Unmarshal(raw, &generic); err != nil {
+		t.Fatal(err)
+	}
+	generic["version"] = 0
+	edited, _ := json.Marshal(generic)
+	if err := os.WriteFile(path, edited, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Load(dir)
+	if err == nil {
+		t.Fatal("a snapshot with version 0 loaded; zero is not a known version")
+	}
+	if !strings.Contains(err.Error(), "version 0") {
+		t.Errorf("error should name version 0, got: %v", err)
 	}
 }
 
