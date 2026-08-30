@@ -424,6 +424,16 @@ error: a missing history is the answer, and the first day of a deployment is
 exactly when a monitor is most read. `limit` (default 100, max 500) keeps the
 most recent runs; the store is read, never measured.
 
+The response also carries `divergence_stats`: how far the corridor's two
+reference providers have disagreed across those same runs — a fact about the
+**benchmark**, not the corridor, and it never feeds back into any run's
+verdict or integrity state above. A run scored against a single provider has
+no divergence to report and is excluded from the sample rather than counted
+as zero. Below the documented minimum sample size (30 observations —
+[docs/glossary.md](docs/glossary.md#metric-determination) has the general
+rule), `determined` is `false` and `reason` says why; `mean_pct`, `stddev_pct`
+and the trend fields are then absent rather than a precise-looking number.
+
 ---
 
 ## Roadmap
