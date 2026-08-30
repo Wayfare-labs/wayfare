@@ -65,6 +65,7 @@ func (DeviationMetric) Describe() Descriptor {
 		ID:    "deviation.book-vs-reference",
 		Scope: ScopeCorridor,
 		Cost:  CostOneRequest,
+		Venue: VenueOrderBook,
 		Title: "Deviation of the direct book mid from the reference mid",
 		CanDetermine: "The signed percentage gap between the mid implied by the " +
 			"corridor's direct order book and an independent reference mid, with " +
