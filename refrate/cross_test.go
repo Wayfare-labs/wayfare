@@ -3,6 +3,7 @@ package refrate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -387,7 +388,7 @@ func TestBothFailingIsAnError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when neither provider answered")
 	}
-	for _, want := range []string{"primary", "secondary", "timeout", "connection refused"} {
+	for _, want := range []string{"primary", "secondary", "unavailable", "timeout", "connection refused"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q should mention %q", err, want)
 		}
@@ -421,5 +422,241 @@ func TestNoSecondaryIsSingleSource(t *testing.T) {
 	}
 	if c.Name() != "only" {
 		t.Errorf("Name() = %s, want just the primary's name", c.Name())
+	}
+}
+
+// TestClassifyError verifies the error taxonomy classifier for every typed
+// error the project defines.
+func TestClassifyError(t *testing.T) {
+	cases := []struct {
+		name  string
+		err   error
+		want  errorClass
+		label string
+	}{
+		{
+			name:  "ErrUnavailable",
+			err:   &ErrUnavailable{Source: "test", Err: errors.New("timeout")},
+			want:  errClassUnavailable,
+			label: "unavailable",
+		},
+		{
+			name:  "ErrUnparseable",
+			err:   &ErrUnparseable{Source: "test", Err: errors.New("bad json")},
+			want:  errClassUnparseable,
+			label: "returned an unparseable response",
+		},
+		{
+			name:  "wrapped ErrUnavailable",
+			err:   fmt.Errorf("refrate: %w", &ErrUnavailable{Source: "test", Err: errors.New("timeout")}),
+			want:  errClassUnavailable,
+			label: "unavailable",
+		},
+		{
+			name:  "wrapped ErrUnparseable",
+			err:   fmt.Errorf("refrate: %w", &ErrUnparseable{Source: "test", Err: errors.New("bad json")}),
+			want:  errClassUnparseable,
+			label: "returned an unparseable response",
+		},
+		{
+			name:  "ErrNoRate is unknown",
+			err:   &ErrNoRate{Base: "USD", Quote: "NGN", Source: "test"},
+			want:  errClassUnknown,
+			label: "unavailable",
+		},
+		{
+			name:  "ErrRateLimited is unknown",
+			err:   &ErrRateLimited{Source: "test"},
+			want:  errClassUnknown,
+			label: "unavailable",
+		},
+		{
+			name:  "plain error is unknown",
+			err:   errors.New("something broke"),
+			want:  errClassUnknown,
+			label: "unavailable",
+		},
+		{
+			name:  "nil is unknown",
+			err:   nil,
+			want:  errClassUnknown,
+			label: "unavailable",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := classifyError(tc.err)
+			if got != tc.want {
+				t.Errorf("classifyError = %d, want %d", got, tc.want)
+			}
+			if got := errorDescription(tc.err); got != tc.label {
+				t.Errorf("errorDescription = %q, want %q", got, tc.label)
+			}
+		})
+	}
+}
+
+// TestDegradationNoteNamesUnavailable pins that a single-provider failure
+// using *ErrUnavailable produces a note that says "unavailable".
+func TestDegradationNoteNamesUnavailable(t *testing.T) {
+	c := &Cross{
+		Primary:   &fakeProvider{name: "primary", mid: "1348"},
+		Secondary: &fakeProvider{name: "secondary", err: &ErrUnavailable{Source: "secondary", Err: errors.New("timeout")}},
+	}
+	r := rateOf(t, c)
+
+	if r.Agreement != AgreementSingle {
+		t.Fatalf("Agreement = %s, want SINGLE", r.Agreement)
+	}
+	if !strings.Contains(r.Note, "secondary was unavailable") {
+		t.Errorf("Note = %q, want it to say 'secondary was unavailable'", r.Note)
+	}
+}
+
+// TestDegradationNoteNamesUnparseable pins that a single-provider failure
+// using *ErrUnparseable produces a note that says "unparseable response".
+func TestDegradationNoteNamesUnparseable(t *testing.T) {
+	c := &Cross{
+		Primary:   &fakeProvider{name: "primary", mid: "1348"},
+		Secondary: &fakeProvider{name: "secondary", err: &ErrUnparseable{Source: "secondary", Err: errors.New("bad json")}},
+	}
+	r := rateOf(t, c)
+
+	if r.Agreement != AgreementSingle {
+		t.Fatalf("Agreement = %s, want SINGLE", r.Agreement)
+	}
+	if !strings.Contains(r.Note, "secondary was returned an unparseable response") {
+		t.Errorf("Note = %q, want it to say 'secondary was returned an unparseable response'", r.Note)
+	}
+}
+
+// TestBothUnavailableErrorText confirms the combined error message names
+// "unavailable" when both providers fail with *ErrUnavailable.
+func TestBothUnavailableErrorText(t *testing.T) {
+	c := &Cross{
+		Primary:   &fakeProvider{name: "primary", err: &ErrUnavailable{Source: "primary", Err: errors.New("timeout")}},
+		Secondary: &fakeProvider{name: "secondary", err: &ErrUnavailable{Source: "secondary", Err: errors.New("refused")}},
+	}
+	_, err := c.Rate(context.Background(), "USD", "NGN")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "primary unavailable") {
+		t.Errorf("error %q should say 'primary unavailable'", msg)
+	}
+	if !strings.Contains(msg, "secondary unavailable") {
+		t.Errorf("error %q should say 'secondary unavailable'", msg)
+	}
+}
+
+// TestBothUnparseableErrorText confirms the combined error message names
+// "unparseable response" when both providers fail with *ErrUnparseable.
+func TestBothUnparseableErrorText(t *testing.T) {
+	c := &Cross{
+		Primary:   &fakeProvider{name: "primary", err: &ErrUnparseable{Source: "primary", Err: errors.New("bad json")}},
+		Secondary: &fakeProvider{name: "secondary", err: &ErrUnparseable{Source: "secondary", Err: errors.New("not decimal")}},
+	}
+	_, err := c.Rate(context.Background(), "USD", "NGN")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "primary was returned an unparseable response") {
+		t.Errorf("error %q should say 'primary was returned an unparseable response'", msg)
+	}
+	if !strings.Contains(msg, "secondary was returned an unparseable response") {
+		t.Errorf("error %q should say 'secondary was returned an unparseable response'", msg)
+	}
+}
+
+// TestMixedErrorClassesErrorText confirms the combined error message
+// differentiates when the two providers fail in different ways.
+func TestMixedErrorClassesErrorText(t *testing.T) {
+	c := &Cross{
+		Primary:   &fakeProvider{name: "primary", err: &ErrUnavailable{Source: "primary", Err: errors.New("timeout")}},
+		Secondary: &fakeProvider{name: "secondary", err: &ErrUnparseable{Source: "secondary", Err: errors.New("bad json")}},
+	}
+	_, err := c.Rate(context.Background(), "USD", "NGN")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "primary unavailable") {
+		t.Errorf("error %q should say 'primary unavailable'", msg)
+	}
+	if !strings.Contains(msg, "secondary was returned an unparseable response") {
+		t.Errorf("error %q should say 'secondary was returned an unparseable response'", msg)
+	}
+}
+
+// TestDegradationNoteFallbackToUnavailable covers errors that are not in the
+// taxonomy (ErrNoRate, ErrRateLimited, plain errors). The note must still say
+// "unavailable" as a safe fallback — the taxonomy enriches but never breaks.
+func TestDegradationNoteFallbackToUnavailable(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"ErrNoRate", &ErrNoRate{Base: "USD", Quote: "NGN", Source: "secondary"}},
+		{"ErrRateLimited", &ErrRateLimited{Source: "secondary"}},
+		{"plain error", errors.New("something broke")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Cross{
+				Primary:   &fakeProvider{name: "primary", mid: "1348"},
+				Secondary: &fakeProvider{name: "secondary", err: tc.err},
+			}
+			r := rateOf(t, c)
+
+			if r.Agreement != AgreementSingle {
+				t.Fatalf("Agreement = %s, want SINGLE", r.Agreement)
+			}
+			if !strings.Contains(r.Note, "secondary was unavailable") {
+				t.Errorf("Note = %q, want it to say 'secondary was unavailable' for %T",
+					r.Note, tc.err)
+			}
+		})
+	}
+}
+
+// TestPrimaryUnavailableFallsToSecondary mirrors the taxonomy on the primary
+// side: an unavailable primary degrades to the secondary's rate.
+func TestPrimaryUnavailableFallsToSecondary(t *testing.T) {
+	c := &Cross{
+		Primary:   &fakeProvider{name: "primary", err: &ErrUnavailable{Source: "primary", Err: errors.New("503")}},
+		Secondary: &fakeProvider{name: "secondary", mid: "1350"},
+	}
+	r := rateOf(t, c)
+
+	if r.Agreement != AgreementSingle {
+		t.Fatalf("Agreement = %s, want SINGLE", r.Agreement)
+	}
+	if r.Source != "secondary" || !r.Mid.Equal(decimal.RequireFromString("1350")) {
+		t.Errorf("got %s from %s, want 1350 from secondary", r.Mid, r.Source)
+	}
+	if !strings.Contains(r.Note, "primary was unavailable") {
+		t.Errorf("Note = %q, want it to say 'primary was unavailable'", r.Note)
+	}
+}
+
+// TestPrimaryUnparseableFallsToSecondary confirms an unparseable primary
+// degrades to the secondary with the correct note.
+func TestPrimaryUnparseableFallsToSecondary(t *testing.T) {
+	c := &Cross{
+		Primary:   &fakeProvider{name: "primary", err: &ErrUnparseable{Source: "primary", Err: errors.New("bad json")}},
+		Secondary: &fakeProvider{name: "secondary", mid: "1350"},
+	}
+	r := rateOf(t, c)
+
+	if r.Agreement != AgreementSingle {
+		t.Fatalf("Agreement = %s, want SINGLE", r.Agreement)
+	}
+	if r.Source != "secondary" || !r.Mid.Equal(decimal.RequireFromString("1350")) {
+		t.Errorf("got %s from %s, want 1350 from secondary", r.Mid, r.Source)
+	}
+	if !strings.Contains(r.Note, "primary was returned an unparseable response") {
+		t.Errorf("Note = %q, want it to say 'primary was returned an unparseable response'", r.Note)
 	}
 }
