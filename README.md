@@ -409,6 +409,11 @@ GET /healthz
 GET /                            single-file UI, no build step
 ```
 
+The API is public, keyless and read-only, and answers cross-origin requests
+from any origin (`Access-Control-Allow-Origin: *`), so browser consumers on
+another origin can call it directly. No credentials are ever attached to a
+cross-origin read.
+
 Beyond the contracts above, one field to know: **`live`** is on every response.
 `false` means the reading came from history because a live measurement failed,
 and `stale` then carries its age. With no stored run, the request errors —
