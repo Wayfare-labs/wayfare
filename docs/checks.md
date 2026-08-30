@@ -261,6 +261,8 @@ that is why three exist before the backlog does.
 
 ## Related
 
+- [glossary.md](glossary.md) — every state a reader can meet, including the
+  three-valued check result and severity levels
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — project invariants
 - [snapshot-format.md](snapshot-format.md) — how checks stay replayable
 - [run-store.md](run-store.md) — where results are recorded
