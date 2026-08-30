@@ -83,7 +83,39 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/assets", s.handleAssets)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.Handle("/", uiHandler())
-	return mux
+	return withCORS(mux)
+}
+
+// withCORS makes the API callable from any origin, and records the policy
+// rather than leaving it implicit (backlog #38 / issue #139).
+//
+// The decision is Access-Control-Allow-Origin: * because there is nothing
+// here to protect: the API is public, keyless and read-only, and the
+// corridor figures it serves are data this project exists to publish. A
+// wildcard origin is only unsafe when a response can carry credentials,
+// and this surface carries none — there is deliberately no
+// Access-Control-Allow-Credentials header, so a browser cannot attach
+// cookies or stored auth to a cross-origin request even if one existed.
+// If the API ever grows a write path or credentials, this middleware is
+// the single place that policy must change.
+//
+// Preflight (OPTIONS) is answered here so a client that adds custom
+// headers can still call the API; the methods list is exactly what the
+// mux supports.
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+			if reqHeaders := r.Header.Get("Access-Control-Request-Headers"); reqHeaders != "" {
+				w.Header().Set("Access-Control-Allow-Headers", reqHeaders)
+			}
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handlers -------------------------------------------------------------------
