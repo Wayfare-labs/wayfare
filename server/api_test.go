@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 
+	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
@@ -361,4 +363,222 @@ func TestUIScoredFalseSuppressesVerdicts(t *testing.T) {
 // dexClientAt builds a dex client pointed at a test Horizon.
 func dexClientAt(url string) *dex.Client {
 	return &dex.Client{HorizonURL: url}
+}
+
+// TestFindingsMetricsSchema pins the findings.metrics wire shape — the field
+// checks.FindingsJSON already declares and ToJSON already serialises, but that
+// has never been exercised on the corridor response because nothing yet
+// produces metrics. Until a measurement is on the wire it does not exist for a
+// consumer, and a client that starts rendering metrics against a shape that
+// quietly changed would misread every number; this test makes the shape a
+// contract that fails on drift.
+//
+// It exercises the same composition the live handler uses: a rendered corridor
+// passed through route.WithFindings, exactly as handleCorridor calls it with
+// the checks runner's output. The runner producing metrics is the separate
+// keystone (issue #49); the point here is that when it lands, the wire is
+// already pinned.
+func TestFindingsMetricsSchema(t *testing.T) {
+	t.Run("corridor with metrics returns them under findings.metrics", func(t *testing.T) {
+		corridor := route.WithFindings(
+			route.ToCorridorJSON(wellPopulatedLadderResult(), "USD/NGN"),
+			metricsSchemaFixture())
+
+		metrics := corridorMetrics(t, corridor)
+		if len(metrics) != 2 {
+			t.Fatalf("findings.metrics carries %d entries, want 2", len(metrics))
+		}
+
+		// The determined metric carries every field MetricJSON declares,
+		// value as a decimal string, and no reason — a measured quantity
+		// has nothing to explain.
+		det := metrics[0]
+		assertMetricKeys(t, det, map[string]bool{
+			"id": true, "scope": true, "subject": true, "determined": true,
+			"value": true, "unit": true, "summary": true,
+			"evidence": true, "observed_at": true,
+		})
+		if string(det["determined"]) != "true" {
+			t.Errorf("determined metric: determined = %s, want true", det["determined"])
+		}
+		if got := metricString(t, det, "value"); got != "0.0004" {
+			t.Errorf("determined metric: value = %q, want the decimal string \"0.0004\"", got)
+		}
+		if got := metricString(t, det, "unit"); got != "ratio" {
+			t.Errorf("determined metric: unit = %q, want ratio", got)
+		}
+		if _, ok := det["reason"]; ok {
+			t.Error("determined metric must not carry a reason key")
+		}
+		// Evidence must be present and an array — a measurement without
+		// evidence is an assertion, and the array must survive even when
+		// empty.
+		var evidence []json.RawMessage
+		if err := json.Unmarshal(det["evidence"], &evidence); err != nil {
+			t.Errorf("determined metric: evidence = %s, want a JSON array", det["evidence"])
+		}
+
+		// The undetermined metric is the same field set minus value, plus
+		// reason. Absence of the entry would mean the metric was not run;
+		// presence with no value means it ran and could not determine.
+		// Those are different facts, and the response must keep them
+		// different — the same tri-state the checks carry.
+		und := metrics[1]
+		assertMetricKeys(t, und, map[string]bool{
+			"id": true, "scope": true, "subject": true, "determined": true,
+			"unit": true, "summary": true, "reason": true,
+			"evidence": true, "observed_at": true,
+		})
+		if string(und["determined"]) != "false" {
+			t.Errorf("undetermined metric: determined = %s, want false", und["determined"])
+		}
+		if _, ok := und["value"]; ok {
+			t.Error("undetermined metric must not carry a value key — a missing measurement must not read as zero")
+		}
+		if got := metricString(t, und, "reason"); got == "" {
+			t.Error("undetermined metric: reason is empty")
+		}
+	})
+
+	t.Run("a metric that was not run does not appear at all", func(t *testing.T) {
+		f := &checks.Findings{}
+		f.Add(schemaCheck())
+
+		corridor := route.WithFindings(
+			route.ToCorridorJSON(wellPopulatedLadderResult(), "USD/NGN"),
+			f)
+
+		raw, err := json.Marshal(corridor)
+		if err != nil {
+			t.Fatalf("marshaling the corridor: %v", err)
+		}
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("unmarshaling the corridor: %v", err)
+		}
+		findings, ok := doc["findings"]
+		if !ok {
+			t.Fatal("the findings block must be present when checks ran")
+		}
+		var fblock map[string]json.RawMessage
+		if err := json.Unmarshal(findings, &fblock); err != nil {
+			t.Fatalf("unmarshaling findings: %v", err)
+		}
+		if _, ok := fblock["metrics"]; ok {
+			t.Error("findings.metrics must be absent when no metric ran — presence would read as \"measured, nothing found\"")
+		}
+	})
+}
+
+// metricsSchemaFixture returns findings carrying one determined metric and one
+// undetermined metric — the two shapes findings.metrics can contain — plus one
+// passing check so the block is anchored the way a real sweep's is.
+func metricsSchemaFixture() *checks.Findings {
+	at := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	f := &checks.Findings{}
+	f.Add(schemaCheck())
+
+	f.AddMetric(checks.MetricResult{
+		Observation: checks.Observation{
+			ID: "spread.bid-ask", Scope: checks.ScopeAsset, Subject: "NGNC",
+			At: at, Determined: true,
+			Evidence: []checks.Evidence{{
+				Source:     "https://horizon.stellar.org/order_book",
+				Observed:   "0.0004",
+				ObservedAt: at,
+			}},
+		},
+		Value: decimal.RequireFromString("0.0004"), Unit: checks.UnitRatio,
+		Summary: "bid-ask spread on the USDC/NGNC book",
+	})
+	f.AddMetric(checks.MetricResult{
+		Observation: checks.Observation{
+			ID: "depth.observed-executable", Scope: checks.ScopeAsset, Subject: "NGNC",
+			At: at, Determined: false,
+			Reason: "no executable side at 5000 USDC",
+		},
+		Unit:    checks.UnitAmount,
+		Summary: "could not determine: no executable side at 5000 USDC",
+	})
+	return f
+}
+
+// schemaCheck builds one passing check result, the checks-side anchor every
+// findings fixture here carries.
+func schemaCheck() checks.CheckResult {
+	return checks.Pass(
+		checks.Descriptor{
+			ID: "anchor-asset-iso4217", Scope: checks.ScopeAnchor,
+			Severity: checks.SeverityNotice, Title: "anchor_asset names a fiat currency",
+			CanDetermine:    "the anchor names its fiat currency",
+			CannotDetermine: "when the asset is not a fiat currency",
+		},
+		checks.Subject{Domain: "ngnc.online"},
+		"anchor_asset names the shilling",
+	)
+}
+
+// corridorMetrics decodes a rendered corridor and returns its findings.metrics
+// entries as raw JSON, failing if the findings block or the metrics array is
+// missing.
+func corridorMetrics(t *testing.T, corridor route.CorridorJSON) []map[string]json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(corridor)
+	if err != nil {
+		t.Fatalf("marshaling the corridor: %v", err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshaling the corridor: %v", err)
+	}
+	findings, ok := doc["findings"]
+	if !ok {
+		t.Fatal("the corridor response carries no findings block")
+	}
+	var f map[string]json.RawMessage
+	if err := json.Unmarshal(findings, &f); err != nil {
+		t.Fatalf("unmarshaling findings: %v", err)
+	}
+	metrics, ok := f["metrics"]
+	if !ok {
+		t.Fatal("findings carries no metrics key")
+	}
+	var out []map[string]json.RawMessage
+	if err := json.Unmarshal(metrics, &out); err != nil {
+		t.Fatalf("unmarshaling findings.metrics: %v", err)
+	}
+	return out
+}
+
+// assertMetricKeys fails unless the entry's keys are exactly want — no more,
+// no fewer. That is what makes the test fail on drift: rename a JSON tag, add
+// a field, or drop one, and the set stops matching.
+func assertMetricKeys(t *testing.T, entry map[string]json.RawMessage, want map[string]bool) {
+	t.Helper()
+	for k := range entry {
+		if !want[k] {
+			t.Errorf("metric entry carries unexpected key %q — the wire shape has drifted", k)
+		}
+	}
+	for k := range want {
+		if _, ok := entry[k]; !ok {
+			t.Errorf("metric entry is missing key %q — the wire shape has drifted", k)
+		}
+	}
+}
+
+// metricString decodes a metric entry field as a JSON string, failing if the
+// field is missing or is not a string — a JSON number would slip past a
+// client that expects decimal strings.
+func metricString(t *testing.T, entry map[string]json.RawMessage, field string) string {
+	t.Helper()
+	raw, ok := entry[field]
+	if !ok {
+		t.Fatalf("metric entry is missing %q", field)
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatalf("%s = %s, want a JSON string (decimal strings cross the wire, never numbers)", field, raw)
+	}
+	return s
 }

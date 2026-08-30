@@ -10,31 +10,14 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
 )
 
 // DefaultSizes is the ladder used when a caller does not specify one.
-//
-// It spans four orders of magnitude deliberately. The bottom rung exists to
-// isolate the structural floor: at 0.1 units price impact is negligible, so
-// whatever loss remains is the corridor's spread rather than its depth. The
-// top rung exists to expose exhaustion. A ladder covering only realistic
-// remittance sizes would show a bad number without showing which of the two
-// causes produced it.
-var DefaultSizes = []decimal.Decimal{
-	decimal.RequireFromString("0.1"),
-	decimal.NewFromInt(1),
-	decimal.NewFromInt(5),
-	decimal.NewFromInt(10),
-	decimal.NewFromInt(25),
-	decimal.NewFromInt(50),
-	decimal.NewFromInt(100),
-	decimal.NewFromInt(250),
-	decimal.NewFromInt(500),
-	decimal.NewFromInt(1000),
-	decimal.NewFromInt(2500),
-	decimal.NewFromInt(5000),
-}
+// It is defined in the dex package and shared with the depth metric so
+// both measure the same corridor at the same sizes.
+var DefaultSizes = dex.DefaultSizes
 
 // ladderConcurrency bounds parallel pricing. Horizon is a shared public
 // service and a ladder is a burst of identical queries, so this stays low

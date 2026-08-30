@@ -24,6 +24,7 @@ classifications:
 |:---|:---|:---|
 | [Severity](#severity) | How bad is a check failure? | `checks/checks.go` |
 | [Parallel status](#parallel-status) | Was a street-market rate available? | `refrate/parallel.go` |
+| [Divergence trend](#divergence-trend) | Are the two reference providers agreeing more or less over time? | `analysis/divergence.go` |
 
 ---
 
@@ -278,6 +279,45 @@ and zero is a plausible-looking number for the second.
 **Source:** `checks/metric.go` — `MetricResult`, `RunMetric()`.
 `checks/checks.md` — the two-shape contract.
 Checked 2026-08-25.
+
+---
+
+## Divergence trend
+
+**Question:** Are the two reference providers agreeing more or less over time?
+
+`DivergencePct` is recorded on every run that had two providers to compare —
+see [Reference agreement](#reference-agreement). A single run's divergence is
+a fact about that measurement; whether it is *widening* across many runs is a
+fact about the **benchmark itself**, not about the corridor it happened to be
+scoring. `GET /api/corridor/trend` reports this as `divergence_stats`,
+computed over the same window of runs the trend response carries.
+
+| Field | Meaning |
+|:---|:---|
+| `observation_count` | How many of the runs in this response actually carried a divergence figure |
+| `determined` | Same three-valued discipline as [Metric determination](#metric-determination): `false` below the minimum sample size |
+| `mean_pct` / `stddev_pct` | Present only when `determined` |
+| `trend_direction` | `improving`, `stable`, or `worsening`; present only with enough observations for a trend, a higher bar than `determined` alone |
+
+**A run scored against a single provider (`SINGLE` agreement) is excluded
+from the sample, not counted as zero.** That run had nothing to diverge
+from — folding it into a zero would understate how often, and how far, the
+benchmark has actually disagreed. `observation_count` can therefore be
+smaller than the number of runs in the response.
+
+**Regime is not reported here.** `analysis.DefaultRegimeThresholds` is
+calibrated to loss percentages, an unrelated scale — applying it to a
+divergence series would publish a classification against thresholds nobody
+chose for that purpose.
+
+**Never moves a verdict or an integrity state.** Like every check and metric
+in this project, this is a measurement of the benchmark's own behaviour,
+reported alongside the corridor's history and never fed back into it.
+
+**Source:** `analysis/divergence.go` — `DivergencePctSeries()`,
+`DivergenceHistory()`. `server/trend.go` — `DivergenceStatsJSON`.
+Checked 2026-08-30.
 
 ---
 
