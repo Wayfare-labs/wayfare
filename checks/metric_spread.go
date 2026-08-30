@@ -30,12 +30,15 @@ func (SpreadMetric) Describe() Descriptor {
 		ID:    "spread.bid-ask",
 		Scope: ScopeCorridor,
 		Cost:  CostOneRequest,
+		Venue: VenueOrderBook,
 		Title: "Bid/ask spread on the direct order book",
 		CanDetermine: "The bid/ask spread as a percentage of mid, read from " +
 			"Horizon's /order_book endpoint for the corridor's direct pair.",
 		CannotDetermine: "Whether the spread reflects executable depth or " +
-			"only the top of book. Horizon's order_book endpoint does not " +
-			"expose AMM liquidity, so the spread measures the book alone.",
+			"only the top of book, and whether AMM liquidity would tighten it. " +
+			"The venue is order-book (offers only); the ladder prices through " +
+			"pathfinding, which includes AMMs, so this spread and a route figure " +
+			"observe different markets — see docs/liquidity-venues.md.",
 	}
 }
 
