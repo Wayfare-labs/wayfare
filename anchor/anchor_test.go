@@ -241,6 +241,34 @@ func TestSalvageHandlesTrailingJunkValues(t *testing.T) {
 	}
 }
 
+func TestSalvageIgnoresUnknownSectionsAndKeepsCurrencyBoundaries(t *testing.T) {
+	raw := `
+NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015" trailing
+
+[DOCUMENTATION]
+ORG_NAME="not a currency"
+
+[[CURRENCIES]]
+code="AAA" junk
+issuer="GAAA"
+status="live"
+
+[[CURRENCIES]]
+code="BBB"
+status="pending"
+`
+	got := salvageTOML(raw)
+	if got.NetworkPassphrase == "" {
+		t.Fatal("salvage lost top-level fields after an unknown section")
+	}
+	if len(got.Currencies) != 2 {
+		t.Fatalf("salvaged %d currencies, want 2", len(got.Currencies))
+	}
+	if got.Currencies[0].Code != "AAA" || got.Currencies[1].Code != "BBB" {
+		t.Fatalf("currency boundaries were not preserved: %+v", got.Currencies)
+	}
+}
+
 func TestTOMLURL(t *testing.T) {
 	for _, in := range []string{"ngnc.online", "https://ngnc.online", "ngnc.online/"} {
 		if got, want := TOMLURL(in), "https://ngnc.online/.well-known/stellar.toml"; got != want {
