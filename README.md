@@ -379,11 +379,19 @@ the same list with a short name per SEP, and `Explain()` includes it.
 make run                        # measure USDC -> NGNC against live mainnet
 go run ./cmd/ladder -to GHSC    # any verified corridor
 go run ./cmd/ladder -to GHSC -json | jq
+go run ./cmd/ladder -checks=false    # skip counterparty checks (no findings block)
 
 go run ./cmd/wayfared                       # serve + measure every 6h
 go run ./cmd/wayfared -serve=false          # scheduler only, no HTTP
 go run ./cmd/wayfared -verify-store -data ./data
 ```
+
+Every `cmd/ladder` run also runs the same counterparty checks the server runs
+(anchor toml, SEP-10/SEP-24, issuer flags), so `-json` output and
+`/api/corridor` carry the same `findings` block for the same corridor.
+`-checks=false` skips them when the extra latency is unwanted, and the JSON
+then carries no findings block — the difference is a flag the operator chose,
+not an accident of which binary produced the document.
 
 Go 1.22+. Dependencies: `shopspring/decimal` and `BurntSushi/toml`. Both
 binaries need live network access — there are no cached figures to fall back
