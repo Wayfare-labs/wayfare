@@ -27,11 +27,14 @@ func (PriceImpactMetric) Describe() Descriptor {
 		ID:    "price-impact.size",
 		Scope: ScopeCorridor,
 		Cost:  CostExpensive,
+		Venue: VenuePathfinding,
 		Title: "Price impact as a function of trade size",
 		CanDetermine: "How much the effective rate degrades between a small " +
 			"probe and a full-size trade, as a percentage.",
 		CannotDetermine: "The full curve shape — this reports the single " +
-			"degradation figure between probe and full size.",
+			"degradation figure between probe and full size. The venue is " +
+			"pathfinding (order book plus AMM), so this and a book-only spread " +
+			"observe different markets — see docs/liquidity-venues.md.",
 	}
 }
 

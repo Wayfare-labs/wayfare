@@ -1026,7 +1026,11 @@ func TestDepthExecutableMetric(t *testing.T) {
 	}
 }
 
-func TestDepthNoPathsProducesUndetermined(t *testing.T) {
+// TestDepthExhaustedProducesDeterminedZero pins that a book that runs out
+// at every probed size produces a determined result with zero, not an
+// undetermined one. This is the core distinction of issue #158: a measured
+// absence of liquidity is not the same as an unmeasurable one.
+func TestDepthExhaustedProducesDeterminedZero(t *testing.T) {
 	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend-empty")
 	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
 
@@ -1039,19 +1043,21 @@ func TestDepthNoPathsProducesUndetermined(t *testing.T) {
 		Receive: asset.NGNC(),
 	})
 
-	if r.Determined {
-		t.Error("no paths must produce an undetermined result")
+	if !r.Determined {
+		t.Fatalf("depth exhausted must be determined, got undetermined: %s", r.Reason)
 	}
-	want := "no path found at any of the 1 sizes probed"
-	if r.Reason != want {
-		t.Errorf("Reason = %q, want %q", r.Reason, want)
+	if !r.Value.IsZero() {
+		t.Errorf("depth exhausted value = %s, want zero", r.Value)
+	}
+	if r.Unit != UnitAmount {
+		t.Errorf("unit = %s, want amount", r.Unit)
 	}
 	if len(r.Evidence) == 0 {
-		t.Error("expected at least one evidence entry explaining the failure")
+		t.Error("expected at least one evidence entry explaining the exhaustion")
 	} else {
 		e := r.Evidence[0]
-		if !strings.Contains(e.Observed, "probed 1 sizes, no path found") {
-			t.Errorf("Evidence[0].Observed = %q, want it to contain 'probed 1 sizes, no path found'", e.Observed)
+		if !strings.Contains(e.Observed, "no path found at any size") {
+			t.Errorf("Evidence[0].Observed = %q, want it to note exhaustion", e.Observed)
 		}
 		if e.Source == "" {
 			t.Error("Evidence[0].Source is blank — a metric must name its data source")
@@ -1062,10 +1068,127 @@ func TestDepthNoPathsProducesUndetermined(t *testing.T) {
 	}
 }
 
+// TestDepthExhaustedMultipleSizes pins that exhaustion across multiple sizes
+// is still a determined result — each size was successfully queried, and the
+// answer was consistently "no path".
+func TestDepthExhaustedMultipleSizes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Every size returns an empty path list — the book is exhausted.
+		_, _ = w.Write([]byte(`{"_embedded":{"records":[]}}`))
+	}))
+	defer srv.Close()
+
+	c := &dex.Client{HorizonURL: srv.URL}
+	depth := DepthMetric{
+		DEX:   c,
+		Sizes: []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(100)},
+	}
+	r := depth.RunExecutable(ctx(), Subject{
+		Send:    asset.USDC(),
+		Receive: asset.NGNC(),
+	})
+
+	if !r.Determined {
+		t.Fatalf("depth exhausted across sizes must be determined, got undetermined: %s", r.Reason)
+	}
+	if !r.Value.IsZero() {
+		t.Errorf("depth exhausted value = %s, want zero", r.Value)
+	}
+}
+
+// TestDepthProbeErrorsRemainUndetermined pins that probe failures — the
+// request never reached an upstream — produce undetermined, not exhausted.
+func TestDepthProbeErrorsRemainUndetermined(t *testing.T) {
+	// A client pointed at nothing: every probe will fail before reaching
+	// an upstream. The result must be undetermined, not determined-zero
+	// (which would read as "measured no liquidity" rather than "could not
+	// measure at all").
+	c := &dex.Client{HorizonURL: "http://127.0.0.1:1"}
+
+	depth := DepthMetric{
+		DEX:   c,
+		Sizes: []decimal.Decimal{decimal.NewFromInt(1)},
+	}
+	r := depth.RunExecutable(ctx(), Subject{
+		Send:    asset.USDC(),
+		Receive: asset.NGNC(),
+	})
+
+	if r.Determined {
+		t.Error("probe errors must produce an undetermined result, not a determined one")
+	}
+	if r.Reason == "" {
+		t.Error("undetermined result must carry a reason")
+	}
+}
+
+// TestDepthMixedExhaustedAndErrored covers the case where some sizes priced
+// and others hit probe errors. The measured sizes give real data; the failed
+// sizes are unknown, never zero.
+func TestDepthMixedExhaustedAndErrored(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		amount := r.URL.Query().Get("source_amount")
+		d, err := decimal.NewFromString(amount)
+		if err != nil {
+			http.Error(w, "bad amount", http.StatusBadRequest)
+			return
+		}
+		// Small sizes succeed, large sizes fail
+		if d.GreaterThanOrEqual(decimal.NewFromInt(100)) {
+			http.Error(w, "internal", http.StatusInternalServerError)
+			return
+		}
+		dest := d.Mul(decimal.RequireFromString("1300"))
+		_, _ = w.Write([]byte(`{"_embedded":{"records":[{
+			"source_asset_type":"credit_alphanum4","source_asset_code":"USDC",
+			"source_amount":"` + amount + `",
+			"destination_asset_type":"credit_alphanum4","destination_asset_code":"NGNC",
+			"destination_amount":"` + dest.String() + `","path":[]}]}}`))
+	}))
+	defer srv.Close()
+
+	c := &dex.Client{HorizonURL: srv.URL}
+	depth := DepthMetric{
+		DEX:   c,
+		Sizes: []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(100)},
+	}
+	r := depth.RunExecutable(ctx(), Subject{
+		Send:    asset.USDC(),
+		Receive: asset.NGNC(),
+	})
+
+	if !r.Determined {
+		t.Fatalf("mixed exhausted+errored must be determined with measured sizes, got undetermined: %s", r.Reason)
+	}
+	if !r.Value.IsPositive() {
+		t.Errorf("executable amount = %s, want positive from the measured size", r.Value)
+	}
+	if !strings.Contains(r.Summary, "1 of 2 sizes measured") {
+		t.Errorf("Summary = %q, want it to note partial measurement", r.Summary)
+	}
+}
+
 func TestDepthMetricDescriptorIsValid(t *testing.T) {
 	d := DepthMetric{}.Describe()
 	if err := d.Validate(); err != nil {
 		t.Errorf("depth metric descriptor: %v", err)
+	}
+}
+
+// TestDepthDefaultSizesMatchLadder verifies that the depth metric's default
+// sizes are the same as dex.DefaultSizes (the shared ladder), so both the
+// route ladder and the depth metric measure the same corridor at the same
+// sizes.
+func TestDepthDefaultSizesMatchLadder(t *testing.T) {
+	if len(defaultDepthSizes) != len(dex.DefaultSizes) {
+		t.Fatalf("defaultDepthSizes has %d sizes, dex.DefaultSizes has %d",
+			len(defaultDepthSizes), len(dex.DefaultSizes))
+	}
+	for i := range defaultDepthSizes {
+		if !defaultDepthSizes[i].Equal(dex.DefaultSizes[i]) {
+			t.Errorf("defaultDepthSizes[%d] = %s, dex.DefaultSizes[%d] = %s",
+				i, defaultDepthSizes[i], i, dex.DefaultSizes[i])
+		}
 	}
 }
 
@@ -1125,7 +1248,8 @@ type depthExecutable struct{ DepthMetric }
 
 func (m depthExecutable) Describe() Descriptor {
 	return Descriptor{
-		ID: "depth.executable", Title: "executable depth",
+		ID: "depth.executable", Scope: ScopeCorridor, Venue: VenuePathfinding,
+		Title:        "executable depth",
 		CanDetermine: "see DepthMetric", CannotDetermine: "see DepthMetric",
 	}
 }
