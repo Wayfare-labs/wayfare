@@ -198,6 +198,8 @@ alter an integrity state or a verdict. See the composition rule below.
 These are the agreements other code and other people depend on. **Changing any
 of them is a breaking change**, not a refactor.
 
+A glossary of every state a reader can meet: **[docs/glossary.md](docs/glossary.md)**
+
 ### Verdict thresholds — breaking if altered
 
 Loss is how far the achieved rate falls below the reference mid.
@@ -301,7 +303,13 @@ An asset code identifies nothing; **the issuer account is the identity.**
 Anyone can issue a token called `USDC`. Every issuer is read from the issuer's
 own `stellar.toml` per SEP-1, with the verification date recorded, because
 issuers rotate. Wire form is `stellar:CODE:ISSUER`, `stellar:native`, or
-`iso4217:CODE`.
+`iso4217:CODE` — the same SEP-38 asset identification format used everywhere
+else in this project. Every asset object on the wire (`send_asset`,
+`receive_asset`, `depends_on` entries) carries this form in its `asset`
+field, alongside the separate `code` and `issuer` fields for a reader who
+wants one or the other. `asset` is omitted when the producer has only a bare
+code to work from and cannot verify the asset's kind or issuer — never
+guessed at.
 
 ### Money on the wire — breaking if altered
 
@@ -334,6 +342,8 @@ old its benchmark was when the reading was taken.
 
 Full spec: **[docs/run-store.md](docs/run-store.md)**
 
+What verification looks like — including broken-chain output: **[docs/verify-store.md](docs/verify-store.md)**
+
 ---
 
 ## Packages
@@ -342,7 +352,7 @@ Full spec: **[docs/run-store.md](docs/run-store.md)**
 |:---|:---|
 | `asset` | Corridor endpoints, verified issuers, the fiat-peg registry |
 | `refrate` | Reference mid-market rates: two providers, cached, cross-checked |
-| `anchor` | SEP-1 discovery — can this anchor be priced at all? |
+| `anchor` | SEP-1 discovery — can this anchor be priced at all, and which SEPs does it advertise? |
 | `sep38` | Anchor RFQ client, with the fee-denomination identity |
 | `dex` | On-chain pricing via Horizon pathfinding, plus market health |
 | `route` | Ladder sweep, verdicts, integrity, and the shared wire shape |
@@ -353,6 +363,13 @@ Full spec: **[docs/run-store.md](docs/run-store.md)**
 | `server` | HTTP surface and the embedded single-file UI |
 | `cmd/ladder` | Measurement CLI |
 | `cmd/wayfared` | Server and scheduler |
+
+`anchor.Profile.SEPs()` returns the numbers of the SEPs an anchor advertises
+in its `stellar.toml` — SEP-1 (the document itself), 6, 10, 12, 24, 31, 38 —
+derived from the same fields `Priceable`, `SEP24`, `SEP31`, `SEP6`, `SEP10`
+and `SEP12` already read, so the capability picture is legible in one call
+rather than six separate booleans read by hand. `SEPCapabilities()` renders
+the same list with a short name per SEP, and `Explain()` includes it.
 
 ---
 
