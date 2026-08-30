@@ -174,6 +174,12 @@ type Subject struct {
 
 	// Profile is an already-resolved stellar.toml, when one is available.
 	// A CostFree check reads this rather than fetching anything.
+	//
+	// Profile is shared context, not per-check ownership: the sweep resolves
+	// the anchor once and hands the same document to every check, and it is
+	// not deep-copied per check. A check must treat it as read-only — the
+	// other Subject fields are value-isolated, but a mutation through this
+	// pointer reaches the rest of the sweep.
 	Profile *anchor.Profile
 
 	// Integrity is the corridor's routing integrity classification —

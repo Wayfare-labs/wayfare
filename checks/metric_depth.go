@@ -28,13 +28,9 @@ type DepthMetric struct {
 	Sizes []decimal.Decimal
 }
 
-var defaultDepthSizes = []decimal.Decimal{
-	decimal.NewFromInt(1),
-	decimal.NewFromInt(10),
-	decimal.NewFromInt(100),
-	decimal.NewFromInt(1000),
-	decimal.NewFromInt(5000),
-}
+// defaultDepthSizes uses the same probe sizes as the route ladder so
+// both measure the same corridor at the same sizes.
+var defaultDepthSizes = dex.DefaultSizes
 
 // Describe implements Metric.
 func (DepthMetric) Describe() Descriptor {
@@ -187,17 +183,33 @@ func (m DepthMetric) RunExecutable(ctx context.Context, s Subject) MetricResult 
 		}
 	}
 
+	// A book that runs out of liquidity at a certain size is a measured
+	// fact: depth exhausted. A probe that failed before reaching an
+	// upstream is not — depth unmeasured. The two must not produce the
+	// same undetermined result.
+	if pricedCount == 0 && len(probeErrors) == 0 {
+		// Every size was successfully queried and none returned a path.
+		// The depth is exhausted — not unknown.
+		evidence.Observed = fmt.Sprintf("probed %d sizes, no path found at any size", len(sizes))
+		return MetricValue(d, s, decimal.Zero, UnitAmount,
+			fmt.Sprintf("depth exhausted: no executable path at any of the %d sizes probed", len(sizes)),
+			evidence)
+	}
+
 	if len(probeErrors) > 0 {
 		evidence.Observed = fmt.Sprintf("probed %d sizes, %d errors: %s",
 			len(sizes), len(probeErrors), strings.Join(probeErrors, "; "))
-		return MetricUndetermined(d, s,
-			fmt.Sprintf("%d of %d probe requests failed", len(probeErrors), len(sizes)), evidence)
-	}
-
-	if pricedCount == 0 {
-		evidence.Observed = fmt.Sprintf("probed %d sizes, no path found", len(sizes))
-		return MetricUndetermined(d, s,
-			fmt.Sprintf("no path found at any of the %d sizes probed", len(sizes)), evidence)
+		if pricedCount == 0 {
+			return MetricUndetermined(d, s,
+				fmt.Sprintf("%d of %d probe requests failed", len(probeErrors), len(sizes)), evidence)
+		}
+		// Some sizes priced, others failed. The measured sizes give
+		// real data; the failed sizes are unknown, never zero.
+		evidence.Observed += fmt.Sprintf("; measured %d/%d sizes", pricedCount, len(sizes))
+		summary := fmt.Sprintf(
+			"max destination %s %s at %s %s send (%d of %d sizes measured)",
+			maxReceive, s.Receive.Code, maxReceiveSize, s.Send.Code, pricedCount, len(sizes))
+		return MetricValue(d, s, maxReceive, UnitAmount, summary, evidence)
 	}
 
 	evidence.Observed = fmt.Sprintf(

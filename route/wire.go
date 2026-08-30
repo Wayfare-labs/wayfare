@@ -149,14 +149,33 @@ type StaleJSON struct {
 	AgeHuman   string `json:"age_human"`
 }
 
+// AssetJSON identifies an asset on the wire.
+//
+// Code and Issuer are kept as separate fields for a reader who wants one or
+// the other without parsing a string. Asset carries the same identity in the
+// single wire form the README specifies — "stellar:CODE:ISSUER",
+// "stellar:native", or "iso4217:CODE" — which is also the SEP-38 asset
+// identification format this project already speaks everywhere else, so a
+// client comparing an asset here against a SEP-38 quote request or response
+// can compare the strings directly rather than reassembling one from parts.
+//
+// Asset is empty whenever the source asset.Asset is not Identifiable — an
+// issued Stellar asset with no issuer, in particular — and on a wire producer
+// that has only a bare code to work from at all (see route.AssetJSON{Code:
+// code} call sites), because in both cases a wire form built from a guess
+// would state an identity nothing verified.
 type AssetJSON struct {
 	Code   string `json:"code"`
 	Issuer string `json:"issuer,omitempty"`
 	Peg    string `json:"peg,omitempty"`
+	Asset  string `json:"asset,omitempty"`
 }
 
 func ToAssetJSON(a asset.Asset) AssetJSON {
 	j := AssetJSON{Code: a.Code, Issuer: a.Issuer}
+	if a.Identifiable() {
+		j.Asset = a.SEP38()
+	}
 	if peg, ok := asset.FiatPeg(a); ok {
 		j.Peg = peg
 	}
