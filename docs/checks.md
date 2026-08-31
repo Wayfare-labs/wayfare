@@ -161,6 +161,10 @@ type Evidence struct {
 A verdict without evidence is an assertion. This is the same standard the
 snapshot format applies to measurements: a reader must be able to go and look.
 
+The spread metric records the direct book's bid, ask, and independently useful
+mid in its evidence. The mid is retained as a decimal diagnostic even though
+the metric value itself remains the spread percentage.
+
 ---
 
 ## How results compose — and what they may never do

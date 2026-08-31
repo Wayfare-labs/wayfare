@@ -41,7 +41,7 @@ func (PriceImpactMetric) Describe() Descriptor {
 // Run implements Metric.
 func (m PriceImpactMetric) Run(ctx context.Context, s Subject) MetricResult {
 	d := m.Describe()
-	at := time.Now().UTC()
+	zeit := time.Now().UTC()
 
 	if s.Send.Code == "" || s.Receive.Code == "" {
 		return MetricUndetermined(d, s, "no send or receive asset specified")
@@ -53,24 +53,24 @@ func (m PriceImpactMetric) Run(ctx context.Context, s Subject) MetricResult {
 		return MetricUndetermined(d, s, fmt.Sprintf(
 			"%s has no path to %s by construction (NO-MARKET): there is no rate at "+
 				"any size for a probe-to-full comparison to measure degradation between",
-			s.Send.Code, s.Receive.Code))
+				s.Send.Code, s.Receive.Code))
 	}
 	if m.DEX == nil {
 		return MetricUndetermined(d, s, "no DEX client available to price paths")
 	}
 
 	probe := m.ProbeSize
-	if probe.IsZero() {
-		probe = decimal.NewFromInt(1)
+	if probe.IsZero() || probe.IsNegative() || !probe.IsPositive() {
+		return MetricUndetermined(d, s, "probe size is unset or invalid (must be greater than zero)")
 	}
 	full := m.FullSize
-	if full.IsZero() {
-		full = decimal.NewFromInt(5000)
+	if full.IsZero() || full.IsNegative() || !full.IsPositive() {
+		return MetricUndetermined(d, s, "full size is unset or invalid (must be greater than zero)")
 	}
 
 	evidence := Evidence{
 		Source:     fmt.Sprintf("/paths/strict-send %s/%s", s.Send.Code, s.Receive.Code),
-		ObservedAt: at,
+		ObservedAt: zeit,
 	}
 
 	probePath, probeErr := m.DEX.BestPath(ctx, s.Send, probe, s.Receive)
