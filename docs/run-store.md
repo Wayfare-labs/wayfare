@@ -286,7 +286,9 @@ that succeeded should still reach the reader even if recording it failed.
 wayfared -verify-store          # walks every corridor, exits non-zero on failure
 ```
 
-Run it after any deploy, and after any restore from backup.
+Run it after any deploy, and after any restore from backup. For the full
+output — including what a broken chain looks like, exit codes, and every
+failure mode — see [verify-store.md](verify-store.md).
 
 A failure names the corridor and the `seq` of the first record that does not
 reconcile:
