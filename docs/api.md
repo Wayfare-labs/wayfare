@@ -55,6 +55,142 @@ The first valid priced rung has no marginal cost. Missing rungs are skipped, nev
 
 A live measurement failure is served from the latest stored run when one exists, labelled `live: false`. If no stored run exists, the request returns an error rather than fabricating a reading.
 
+**cURL:**
+
+```bash
+# History-first (fast, may be stale)
+curl -s "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC"
+
+# Live measurement
+curl -s "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC&live=1"
+
+# Custom sizes
+curl -s "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC&sizes=10,100,500&live=1"
+```
+
+**Example Response (200 OK):**
+
+```json
+{
+  "send_asset": {
+    "code": "USDC",
+    "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+  },
+  "receive_asset": {
+    "code": "NGNC",
+    "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+    "peg": "NGN"
+  },
+  "integrity": "DIRECT",
+  "depends_on": [],
+  "reference_mid": "1350.753432",
+  "reference_source": "exchangerate-api",
+  "reference_pair": "USD/NGN",
+  "reference_agreement": "AGREE",
+  "reference_secondary_mid": "1346.90659134",
+  "reference_secondary_source": "currency-api",
+  "reference_divergence_pct": "0.2856",
+  "scored": true,
+  "reference_fetched_at": "2026-08-26T14:47:15Z",
+  "floor_loss_pct": "4.31",
+  "floor_size": "0.1",
+  "worst_loss_pct": "97.23",
+  "worst_size": "5000",
+  "recommended": {
+    "description": "USDC -> XRP -> XLM -> NGNC",
+    "source": "stellar-dex",
+    "receive_amount": "129.2574648",
+    "effective_rate": "1292.574648",
+    "loss_pct": "4.31",
+    "loss_amount": "5.82",
+    "verdict": "FAIR",
+    "warnings": [
+      "delivers NGNC tokens, not NGN in a bank account; redeeming to fiat is a separate step with its own cost"
+    ]
+  },
+  "recommended_size": "0.1",
+  "live": true,
+  "measured_at": "2026-08-26T14:47:17Z",
+  "finding": "Best available: 4.31% below the exchangerate-api mid at 0.1 USDC, graded FAIR. Loss reaches 97.23% at 5000 USDC.",
+  "findings": {
+    "checks": [
+      {
+        "id": "sep10.endpoint-responds",
+        "scope": "anchor",
+        "subject": "NGNC (GASB\u2026)",
+        "severity": "warning",
+        "determined": true,
+        "passed": false,
+        "summary": "the declared SEP-10 endpoint returned HTTP 403 rather than a challenge",
+        "evidence": [
+          {
+            "source": "https://anchor.ngnc.online/auth?account=GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            "observed": "HTTP 403",
+            "observed_at": "2026-08-26T14:47:17Z"
+          }
+        ],
+        "observed_at": "2026-08-26T14:47:17Z"
+      },
+      {
+        "id": "issuer.auth-flags",
+        "scope": "asset",
+        "subject": "NGNC (GASB\u2026)",
+        "severity": "critical",
+        "determined": true,
+        "passed": true,
+        "summary": "the issuer can neither freeze nor claw back this asset",
+        "evidence": [
+          {
+            "source": "https://horizon.stellar.org/accounts/GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6 \u2192 flags",
+            "observed": "auth_required=false auth_revocable=false auth_clawback_enabled=false auth_immutable=false",
+            "observed_at": "2026-08-26T14:47:17Z"
+          }
+        ],
+        "observed_at": "2026-08-26T14:47:18Z"
+      }
+    ],
+    "passed": 3,
+    "failed": 2,
+    "undetermined": 0,
+    "worst_severity": "warning"
+  },
+  "rungs": [
+    {
+      "send_amount": "5000",
+      "priced": true,
+      "integrity": "DIRECT",
+      "quote": {
+        "description": "USDC -> XLM -> NGNC",
+        "source": "stellar-dex",
+        "receive_amount": "186947.8515264",
+        "effective_rate": "37.38957030528",
+        "loss_pct": "97.23",
+        "loss_amount": "6566819.31",
+        "verdict": "UNUSABLE",
+        "warnings": [
+          "delivers NGNC tokens, not NGN in a bank account; redeeming to fiat is a separate step with its own cost",
+          "thin liquidity: this size gets 96.9% worse pricing than a 10 USDC trade"
+        ]
+      },
+      "cost": {
+        "parts": [
+          {
+            "component": "fx_loss",
+            "amount": "6566819.3084736",
+            "pct": "97.23194704381251",
+            "determined": true
+          }
+        ],
+        "total_loss_pct": "97.23194704381251"
+      },
+      "notes": [
+        "No viable route. The best of 1 priced route(s) still loses 97.2% against the exchangerate-api mid-market rate. Sending through this corridor at this size is not recommended."
+      ]
+    }
+  ]
+}
+```
+
 ## `GET /api/corridor/trend`
 
 Query parameters:
@@ -65,13 +201,97 @@ Query parameters:
 
 This endpoint reads stored history only; it never measures. It returns `200` with `count: 0` and `runs: []` for an empty history. Runs are returned oldest first. Each run carries its sequence, timestamp, integrity, dependencies, reference details, ladder summary, finding, and rung loss/verdict values.
 
+**cURL:**
+
+```bash
+curl -s "https://wayfare-cdb9.onrender.com/api/corridor/trend?from=USDC&to=NGNC&limit=30"
+curl -s "https://wayfare-cdb9.onrender.com/api/corridor/trend?to=NGNC&limit=7"
+```
+
+**Example Response (200 OK):**
+
+```json
+{
+  "corridor": "USDC-NGNC",
+  "send_asset": {"code": "USDC", "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+  "receive_asset": {"code": "NGNC", "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6", "peg": "NGN"},
+  "reference_pair": "USD/NGN",
+  "count": 1,
+  "runs": [
+    {
+      "seq": 1,
+      "recorded_at": "2026-08-22T12:09:59Z",
+      "integrity": "DIRECT",
+      "reference": {
+        "mid": "1349.669672",
+        "source": "exchangerate-api",
+        "as_of": "2026-08-22T00:02:31Z",
+        "divergence_pct": "0.0340"
+      },
+      "floor_loss_pct": "27.15",
+      "worst_loss_pct": "97.52",
+      "finding": "No usable size. Loss is 27.15% at 0.1 USDC...",
+      "rungs": [
+        {"send_amount": "0.1", "priced": true, "loss_pct": "27.15", "verdict": "UNUSABLE"},
+        {"send_amount": "5000", "priced": true, "loss_pct": "97.52", "verdict": "UNUSABLE"}
+      ]
+    }
+  ]
+}
+```
+
 ## `GET /api/assets`
 
 Returns an `assets` array. Each entry contains the asset fields and `can_be_destination`, which is true when the binary has a verified fiat peg for that asset.
 
+**cURL:**
+
+```bash
+curl -s https://wayfare-cdb9.onrender.com/api/assets
+```
+
+**Example Response (200 OK):**
+
+```json
+{
+  "assets": [
+    {
+      "code": "NGNC",
+      "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+      "peg": "NGN",
+      "can_be_destination": true
+    },
+    {
+      "code": "USDC",
+      "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "peg": "USD",
+      "can_be_destination": true
+    },
+    {
+      "code": "GHSC",
+      "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+      "peg": "GHS",
+      "can_be_destination": true
+    },
+    {
+      "code": "KESC",
+      "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+      "peg": "KES",
+      "can_be_destination": true
+    }
+  ]
+```
+
 ## `GET /healthz`
 
 A healthy service returns status `200` with:
+
+**cURL:**
+```bash
+curl -s https://wayfare-cdb9.onrender.com/healthz 
+```
+
+**Example Response (200 OK):**
 
 ```json
 { "status": "ok" }

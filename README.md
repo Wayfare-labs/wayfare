@@ -424,15 +424,11 @@ Deployment, cost and backup: **[docs/deployment.md](docs/deployment.md)**
 
 ### HTTP API
 
-The complete field-by-field reference is in **[docs/api.md](docs/api.md)**.
-
-```
-GET /api/corridor?to=NGNC[&from=USDC][&sizes=1,10,100]
-GET /api/corridor/trend?to=NGNC[&from=USDC][&limit=100]
-GET /api/assets
-GET /healthz
-GET /                            single-file UI, no build step
-```
+- [GET /healthz](docs/api.md#get-healthz)
+- [GET /api/assets](docs/api.md#get-api-assets)
+- [GET /api/corridor](docs/api.md#get-apicorridor)
+- [GET /api/corridor/trend](docs/api.md#get-apicorridortrend)
+- `GET /` single-file UI, no build step
 
 The API is public, keyless and read-only, and answers cross-origin requests
 from any origin (`Access-Control-Allow-Origin: *`), so browser consumers on
