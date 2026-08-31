@@ -36,7 +36,7 @@ func TestLookup(t *testing.T) {
 // would make that output nondeterministic.
 func TestKnownCodes(t *testing.T) {
 	got := KnownCodes()
-	want := []string{"GHSC", "KESC", "NGNC", "USDC"}
+	want := []string{"EURMTL", "GHSC", "KESC", "NGNC", "NGNT", "PYUSD", "USDC", "USDZ", "ZARZ"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("KnownCodes() = %v, want %v", got, want)
 	}
@@ -56,6 +56,23 @@ func TestFiatPeg(t *testing.T) {
 		t.Errorf("FiatPeg(KESC()) = (%q, %v), want (\"KES\", true)", peg, ok)
 	}
 
+	// The expanded registry: every entry verified 2026-08-26 from the
+	// issuer's own stellar.toml.
+	for _, c := range []struct {
+		a   Asset
+		peg string
+	}{
+		{NGNT(), "NGN"},
+		{USDZ(), "USD"},
+		{ZARZ(), "ZAR"},
+		{EURMTL(), "EUR"},
+		{PYUSD(), "USD"},
+	} {
+		if peg, ok := FiatPeg(c.a); !ok || peg != c.peg {
+			t.Errorf("FiatPeg(%s) = (%q, %v), want (%q, true)", c.a, peg, ok, c.peg)
+		}
+	}
+
 	impostor := Stellar("NGNC", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF5")
 	if _, ok := FiatPeg(impostor); ok {
 		t.Error("FiatPeg must return false for the right code from the wrong issuer")
@@ -67,6 +84,48 @@ func TestFiatPeg(t *testing.T) {
 
 	if _, ok := FiatPeg(USDC()); ok {
 		t.Error("FiatPeg must return false for a verified token with no registered peg")
+	}
+}
+
+// TestClassifyHop pins the three-way hop classification that route.classify
+// relies on: fiat-pegged tokens are dependencies, native XLM and registered
+// non-fiat tokens are bridges, and everything else is unknown — including an
+// unregistered token whose code matches a registered fiat token.
+func TestClassifyHop(t *testing.T) {
+	cases := []struct {
+		name string
+		a    Asset
+		want HopKind
+	}{
+		{"NGNC is a fiat dependency", NGNC(), HopFiat},
+		{"the expanded registry is fiat", USDZ(), HopFiat},
+		{"PYUSD is fiat", PYUSD(), HopFiat},
+		{"native XLM is a bridge", Native(), HopBridge},
+		{"USDC is a registered non-fiat bridge", USDC(), HopBridge},
+		{"an unregistered token is unknown", Stellar("BLND", "GBLNDISS1234567890123456789012345678901234567890123456789"), HopUnknown},
+		{"an impostor with a registered code is unknown", Stellar("NGNC", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF5"), HopUnknown},
+		{"off-chain fiat is unknown as a hop", NGN(), HopUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ClassifyHop(tc.a); got != tc.want {
+				t.Errorf("ClassifyHop(%s) = %v, want %v", tc.a, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClassifyHopString keeps the human forms stable for readers.
+func TestClassifyHopString(t *testing.T) {
+	cases := map[HopKind]string{
+		HopFiat:    "fiat",
+		HopBridge:  "bridge",
+		HopUnknown: "unknown",
+	}
+	for k, want := range cases {
+		if got := k.String(); got != want {
+			t.Errorf("HopKind(%d).String() = %q, want %q", k, got, want)
+		}
 	}
 }
 
