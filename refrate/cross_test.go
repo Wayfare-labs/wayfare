@@ -165,6 +165,80 @@ func TestBandBoundaries(t *testing.T) {
 	}
 }
 
+// atPct returns the decimal string for base*(1+pct/100), computed entirely
+// in decimal.Decimal so the result lands on the boundary exactly rather than
+// being approached through float error.
+func atPct(base, pct string) string {
+	b := decimal.RequireFromString(base)
+	p := decimal.RequireFromString(pct)
+	delta := b.Mul(p).Div(decimal.NewFromInt(100))
+	return b.Add(delta).String()
+}
+
+// TestDivergenceBoundariesExact pins the classification at the exact
+// thresholds where cross.go's `<` and `<=` comparisons diverge: 2% (agree vs
+// disagree) and 10% (disagree vs malfunction). Both provider orderings are
+// covered, since which provider carries the higher mid determines which one
+// is selected once the band is decided.
+func TestDivergenceBoundariesExact(t *testing.T) {
+	const base = "1000"
+
+	cases := []struct {
+		pct      string
+		want     Agreement
+		scorable bool
+	}{
+		{"1.999", AgreementAgree, true},
+		{"2", AgreementAgree, true},
+		{"2.001", AgreementDisagree, true},
+		{"9.999", AgreementDisagree, true},
+		{"10", AgreementDisagree, true},
+		{"10.001", AgreementMalfunction, false},
+	}
+
+	for _, tc := range cases {
+		hi := atPct(base, tc.pct)
+
+		t.Run(tc.pct+"%_primary_lower", func(t *testing.T) {
+			r := rateOf(t, crossOf(base, hi))
+
+			if r.Agreement != tc.want {
+				t.Errorf("Agreement = %s, want %s (divergence %s%%)", r.Agreement, tc.want, tc.pct)
+			}
+			if r.Scorable() != tc.scorable {
+				t.Errorf("Scorable() = %v, want %v", r.Scorable(), tc.scorable)
+			}
+			// Below 10%, the higher mid wins once it's a genuine disagreement.
+			// Elsewhere (agree, malfunction), the primary's own mid is kept.
+			wantMid := base
+			if tc.want == AgreementDisagree {
+				wantMid = hi
+			}
+			if !r.Mid.Equal(decimal.RequireFromString(wantMid)) {
+				t.Errorf("Mid = %s, want %s", r.Mid, wantMid)
+			}
+		})
+
+		t.Run(tc.pct+"%_primary_higher", func(t *testing.T) {
+			r := rateOf(t, crossOf(hi, base))
+
+			if r.Agreement != tc.want {
+				t.Errorf("Agreement = %s, want %s (divergence %s%%)", r.Agreement, tc.want, tc.pct)
+			}
+			if r.Scorable() != tc.scorable {
+				t.Errorf("Scorable() = %v, want %v", r.Scorable(), tc.scorable)
+			}
+			// The primary already carries the higher mid here, so it is kept
+			// in every band: on agree/malfunction because nothing reassigns
+			// it, and on disagree because it is already the conservative
+			// choice.
+			if !r.Mid.Equal(decimal.RequireFromString(hi)) {
+				t.Errorf("Mid = %s, want %s", r.Mid, hi)
+			}
+		})
+	}
+}
+
 // TestDivergenceIsSymmetric checks the figure does not depend on which
 // provider happens to be configured as primary.
 func TestDivergenceIsSymmetric(t *testing.T) {
