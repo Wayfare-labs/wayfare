@@ -2,6 +2,7 @@ package route
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -308,6 +309,137 @@ func TestVerdictThresholds(t *testing.T) {
 	}
 }
 
+// TestVerdictThresholdBoundaries pins the three grade bands at the exact
+// edge documented in the Verdict constants, immediately below it, and
+// immediately above it.
+//
+// verdictFor uses LessThanOrEqual, so "within 3%" means 3.0% is GOOD and
+// 3.000001% is FAIR -- that is the intended reading of "<= 3%", and nothing
+// else in this suite fails if a refactor quietly swaps LessThanOrEqual for
+// LessThan. These nine values, expressed as decimals rather than floats so
+// no binary rounding can nudge a value across a boundary before it is even
+// compared, make that swap fail here instead.
+func TestVerdictThresholdBoundaries(t *testing.T) {
+	cases := []struct {
+		loss           string
+		wantVerdict    Verdict
+		wantAcceptable bool
+	}{
+		// ThresholdGood = 3
+		{"2.999", VerdictGood, true},
+		{"3.0", VerdictGood, true},
+		{"3.001", VerdictFair, true},
+		// ThresholdFair = 8
+		{"7.999", VerdictFair, true},
+		{"8.0", VerdictFair, true},
+		{"8.001", VerdictPoor, true},
+		// ThresholdPoor = 20
+		{"19.999", VerdictPoor, true},
+		{"20.0", VerdictPoor, true},
+		{"20.001", VerdictUnusable, false},
+	}
+	for _, c := range cases {
+		loss := decimal.RequireFromString(c.loss)
+		got := verdictFor(loss)
+		if got != c.wantVerdict {
+			t.Errorf("verdictFor(%s) = %s, want %s", c.loss, got, c.wantVerdict)
+		}
+		if gotAcceptable := got.Acceptable(); gotAcceptable != c.wantAcceptable {
+			t.Errorf("verdictFor(%s).Acceptable() = %v, want %v", c.loss, gotAcceptable, c.wantAcceptable)
+		}
+	}
+}
+
+// stubDestAmount is a strict-send Horizon fixture for a single direct
+// (path-less) route from 100 USDC to the given NGNC amount. Paired with a
+// mid of 1000 USD/NGN and a send amount of 100, the destination amount
+// determines LossPct exactly:
+//
+//	LossPct = (1000 - destAmount/100) / 1000 * 100
+//
+// which is how each case below is constructed to land precisely on or
+// beside a threshold rather than merely near it.
+func stubDestAmount(destAmount string) string {
+	return fmt.Sprintf(`{
+  "_embedded": {
+    "records": [
+      {
+        "source_asset_type": "credit_alphanum4",
+        "source_asset_code": "USDC",
+        "source_amount": "100.0000000",
+        "destination_asset_type": "credit_alphanum4",
+        "destination_asset_code": "NGNC",
+        "destination_amount": "%s",
+        "path": []
+      }
+    ]
+  }
+}`, destAmount)
+}
+
+// TestLadderRecommendationAtPoorBoundary pins the recommendation rule at
+// exactly the Poor/Unusable edge: at 20.0% loss a quote is POOR, therefore
+// Acceptable, therefore recommendable; at 20.001% it is UNUSABLE and a
+// ladder containing only that one rung must recommend nothing at all. One
+// comparison operator separates "we recommend this route" from "we
+// recommend nothing", and this test fails if verdictFor's
+// LessThanOrEqual against ThresholdPoor is weakened to LessThan.
+func TestLadderRecommendationAtPoorBoundary(t *testing.T) {
+	cases := []struct {
+		name          string
+		destAmount    string // chosen to yield exactly lossPct against a mid of 1000
+		lossPct       string
+		wantVerdict   Verdict
+		wantRecommend bool
+	}{
+		{"at_threshold_20.0_is_recommended", "80000", "20", VerdictPoor, true},
+		{"just_over_threshold_20.001_is_not_recommended", "79999", "20.001", VerdictUnusable, false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := horizonStub(t, stubDestAmount(c.destAmount))
+			defer srv.Close()
+
+			e := &Engine{DEX: &dex.Client{HorizonURL: srv.URL}, RefRate: usdToNGN("1000")}
+
+			// A ladder made of exactly one rung, at the send amount this
+			// fixture's loss was constructed against.
+			lr, err := e.Ladder(context.Background(), LadderRequest{
+				SendAsset:      asset.USDC(),
+				ReceiveAsset:   asset.NGNC(),
+				Sizes:          []decimal.Decimal{decimal.NewFromInt(100)},
+				ReferenceBase:  "USD",
+				ReferenceQuote: "NGN",
+			})
+			if err != nil {
+				t.Fatalf("Ladder: %v", err)
+			}
+			if len(lr.Rungs) != 1 || !lr.Rungs[0].Priced() {
+				t.Fatalf("expected exactly one priced rung, got %+v", lr.Rungs)
+			}
+
+			q := lr.Rungs[0].Result.Quotes[0]
+			if got := q.LossPct.String(); got != c.lossPct {
+				t.Fatalf("fixture produced loss %s, want %s -- fix the fixture, this case does not test the boundary it claims to", got, c.lossPct)
+			}
+			if q.Verdict != c.wantVerdict {
+				t.Fatalf("Verdict = %s, want %s", q.Verdict, c.wantVerdict)
+			}
+
+			if got := lr.Viable(); got != c.wantRecommend {
+				t.Errorf("Viable() = %v, want %v", got, c.wantRecommend)
+			}
+			switch {
+			case c.wantRecommend && lr.Recommended == nil:
+				t.Error("expected a recommendation at exactly the Poor threshold, got nil")
+			case !c.wantRecommend && lr.Recommended != nil:
+				t.Errorf("expected no recommendation just over the Poor threshold, got %+v", lr.Recommended)
+			}
+		})
+	}
+}
+
 // TestNoPathsProducesNoQuotes covers a corridor Horizon cannot route at all.
 func TestNoPathsProducesNoQuotes(t *testing.T) {
 	srv := horizonStub(t, `{"_embedded":{"records":[]}}`)
@@ -544,5 +676,60 @@ func TestUnknownIssuerIsNotTreatedAsFiat(t *testing.T) {
 	}
 	if !asset.IsFiatToken(asset.NGNC()) {
 		t.Error("the registered NGNC issuer must be recognised")
+	}
+}
+
+// TestUnknownOnlyPathIsTheDocumentedFalseNegative pins the bounded
+// false-negative written down in asset/known.go: a corridor whose only hops
+// are unregistered is classified DIRECT, because an unrecognised fiat token
+// is indistinguishable from XLM. The classification is the documented
+// default; the point of the test is that the gap is surfaced, not hidden.
+//
+// The mixed unknown-plus-XLM case is covered by
+// TestRecordedNewHopsAreClassifiedFromSnapshots, which runs the same
+// assertions over the recorded 2026-08-21 path bytes (AQUA at 0.1 and 1
+// USDC, yUSDC at 1, BTC at 10) rather than an inline fixture.
+func TestUnknownOnlyPathIsTheDocumentedFalseNegative(t *testing.T) {
+	onlyUnknown := `{
+  "_embedded": {
+    "records": [
+      {
+        "source_asset_type": "credit_alphanum4",
+        "source_asset_code": "USDC",
+        "source_amount": "1.0000000",
+        "destination_asset_type": "credit_alphanum4",
+        "destination_asset_code": "NGNC",
+        "destination_amount": "900.0000000",
+        "path": [
+          {
+            "asset_type": "credit_alphanum4",
+            "asset_code": "BLND",
+            "asset_issuer": "GDLDCRZ3F6O7DXC5Q3SNSIBPZFDWLFBHWDTSRXHS6EQ4LQ7Y4G7K7LKA"
+          }
+        ]
+      }
+    ]
+  }
+}`
+	srv := horizonStub(t, onlyUnknown)
+	defer srv.Close()
+
+	e := &Engine{DEX: &dex.Client{HorizonURL: srv.URL}, RefRate: usdToNGN("1500")}
+	res, err := e.Quote(context.Background(), ngnRequest("1"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+
+	// The documented false-negative: BLND is not a fiat token, so the
+	// corridor reports an independent market. This is the default the
+	// registry exists to shrink, and the note keeps it visible.
+	if res.Integrity != IntegrityDirect {
+		t.Errorf("Integrity = %s, want DIRECT (the documented false-negative)",
+			res.Integrity)
+	}
+
+	joined := strings.Join(res.Notes, " ")
+	if !strings.Contains(joined, "Unregistered hop") || !strings.Contains(joined, "BLND") {
+		t.Errorf("expected the note to surface BLND, got notes: %v", res.Notes)
 	}
 }
