@@ -108,6 +108,63 @@ func TestDisagreementScoresConservatively(t *testing.T) {
 	}
 }
 
+// TestDisagreeSelectsConservativeMidRegardlessOfOrder pins the selection rule
+// inside the DISAGREE band: between 2% and 10% the *more conservative* mid —
+// the one producing the higher loss — is scored against, whichever position it
+// holds in the configuration.
+//
+// The disagreement band answers "which reading is more pessimistic", not
+// "which is primary", so the choice must not depend on ordering. The single
+// ordering in TestDisagreementScoresConservatively is satisfied by an
+// implementation that always scores the secondary; the swap in reconcile()
+// only runs when the conservative mid sits with the secondary, so an
+// implementation selecting correctly by accident in one ordering fails here.
+func TestDisagreeSelectsConservativeMidRegardlessOfOrder(t *testing.T) {
+	// 5% apart: past agreement, well inside malfunction. The larger mid
+	// produces the higher loss — loss is measured as how far the achieved
+	// rate falls below the benchmark — so it is the conservative choice in
+	// both orderings.
+	low := &fakeProvider{name: "low", mid: "1300"}
+	high := &fakeProvider{name: "high", mid: "1365"}
+
+	cases := []struct {
+		name               string
+		primary, secondary *fakeProvider
+	}{
+		{"conservative secondary", low, high},
+		{"conservative primary", high, low},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := rateOf(t, &Cross{Primary: tc.primary, Secondary: tc.secondary})
+
+			if r.Agreement != AgreementDisagree {
+				t.Fatalf("Agreement = %s, want DISAGREE (divergence %s%%)",
+					r.Agreement, r.DivergencePct.StringFixed(2))
+			}
+			// The conservative mid is the same whichever ordering ran.
+			if !r.Mid.Equal(decimal.RequireFromString("1365")) {
+				t.Errorf("Mid = %s, want 1365 — the mid producing the higher loss", r.Mid)
+			}
+			if r.Source != "high" {
+				t.Errorf("Source = %s, want the provider holding the conservative mid", r.Source)
+			}
+			// The displaced feed survives in the secondary fields, so a
+			// reader can see both readings rather than only the chosen one.
+			if r.SecondarySource != "low" || !r.SecondaryMid.Equal(decimal.RequireFromString("1300")) {
+				t.Errorf("secondary = %s/%s, want the unused mid 1300 from low",
+					r.SecondarySource, r.SecondaryMid)
+			}
+			if !r.Scorable() {
+				t.Error("a disagreement inside the malfunction bound is still scorable")
+			}
+			if !strings.Contains(r.Note, "conservative") {
+				t.Errorf("Note = %q, want it to explain the conservative choice", r.Note)
+			}
+		})
+	}
+}
+
 // TestMalfunctionBandRefusesToScore is the band added because conservative
 // scoring has a failure mode: a broken feed always wins it.
 //

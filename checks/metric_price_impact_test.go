@@ -19,7 +19,7 @@ func TestPriceImpactMetric_UnsetSizes(t *testing.T) {
 		Receive: asset.Asset{Code: "NGNC"},
 	}
 	res := m.Run(context.Background(), s)
-	if res.Verdict != VerdictUndetermined {
-		Errorf(t, "expected undetermined for unset probe and full sizes, got %v", res.Verdict)
+	if res.Determined {
+		t.Errorf("expected undetermined for unset probe and full sizes, got determined")
 	}
 }

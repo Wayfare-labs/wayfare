@@ -198,7 +198,7 @@ func ToQuoteJSON(q *Quote) *QuoteJSON {
 		Source:        q.Source,
 		ReceiveAmount: q.ReceiveAmount.String(),
 		EffectiveRate: q.EffectiveRate.String(),
-		LossPct:       q.LossPct.StringFixed(2),
+		LossPct:       q.LossPct.String(),
 		LossAmount:    q.LossAmount.StringFixed(2),
 		Verdict:       q.Verdict.String(),
 		Warnings:      w,
