@@ -20,6 +20,10 @@ type trendSeed struct {
 	source    string
 	loss      string
 	verdict   string
+
+	// divergencePct is the reference cross-check divergence to store, left
+	// empty for the common case (a SINGLE-provider run has none to report).
+	divergencePct string
 }
 
 // seedTrendStore builds a store holding the given runs for USDC-NGNC, in the
@@ -40,6 +44,7 @@ func seedTrendStore(t *testing.T, seeds []trendSeed) runstore.Store {
 				Source:        s.source,
 				AsOf:          s.at.UTC().Format(time.RFC3339),
 				ScoredAgainst: s.source,
+				DivergencePct: s.divergencePct,
 			},
 			FloorLossPct: s.loss, FloorSize: "0.1",
 			WorstLossPct: s.loss, WorstSize: "0.1",
@@ -217,6 +222,151 @@ func TestTrendLimitBoundsTheRead(t *testing.T) {
 				t.Errorf("%s: status = %d, want 400", name, status)
 			}
 		})
+	}
+}
+
+// buildTrendSeeds returns n runs, oldest first, each carrying divergencePct
+// where wantDivergence[i] is true and empty otherwise — simulating a mix of
+// cross-checked and SINGLE-provider runs.
+func buildTrendSeeds(n int, divergencePct string, wantDivergence func(i int) bool) []trendSeed {
+	base := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	seeds := make([]trendSeed, 0, n)
+	for i := 0; i < n; i++ {
+		s := trendSeed{
+			at:        base.Add(time.Duration(i) * 6 * time.Hour),
+			integrity: "DIRECT", mid: "1350", source: "currency-api",
+			loss: "5.00", verdict: "FAIR",
+		}
+		if wantDivergence(i) {
+			s.divergencePct = divergencePct
+		}
+		seeds = append(seeds, s)
+	}
+	return seeds
+}
+
+// TestTrendDivergenceStatsIsAlwaysPresent covers the case with no store and
+// the case with an empty store: divergence_stats must still appear, reported
+// as undetermined rather than left off the response for a client to infer
+// from its absence.
+func TestTrendDivergenceStatsIsAlwaysPresent(t *testing.T) {
+	empty, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, store := range map[string]runstore.Store{"empty store": empty, "nil store": nil} {
+		t.Run(name, func(t *testing.T) {
+			srv := trendServer(t, store)
+			status, body := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC")
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %v", status, body)
+			}
+			stats, ok := body["divergence_stats"].(map[string]any)
+			if !ok {
+				t.Fatal("divergence_stats must always be present, even with no history")
+			}
+			if stats["determined"] != false {
+				t.Errorf("determined = %v, want false with no runs", stats["determined"])
+			}
+			if stats["observation_count"] != float64(0) {
+				t.Errorf("observation_count = %v, want 0", stats["observation_count"])
+			}
+			if stats["reason"] == nil || stats["reason"] == "" {
+				t.Error("expected a reason explaining why divergence could not be determined")
+			}
+		})
+	}
+}
+
+// TestTrendDivergenceStatsUndeterminedBelowMinimumSample pins that a handful
+// of divergence-bearing runs is reported as undetermined rather than a mean
+// that looks precise but is not meaningful — the same discipline
+// analysis.AnalyzeDecimal already enforces, now reachable over the API.
+func TestTrendDivergenceStatsUndeterminedBelowMinimumSample(t *testing.T) {
+	seeds := buildTrendSeeds(10, "1.50", func(i int) bool { return true })
+	srv := trendServer(t, seedTrendStore(t, seeds))
+
+	status, body := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %v", status, body)
+	}
+	stats, ok := body["divergence_stats"].(map[string]any)
+	if !ok {
+		t.Fatal("expected a divergence_stats object")
+	}
+	if stats["observation_count"] != float64(10) {
+		t.Errorf("observation_count = %v, want 10", stats["observation_count"])
+	}
+	if stats["determined"] != false {
+		t.Error("expected undetermined with only 10 divergence observations")
+	}
+	if stats["mean_pct"] != nil {
+		t.Error("mean_pct must be absent when undetermined, not a misleadingly precise figure")
+	}
+}
+
+// TestTrendDivergenceStatsSkipsRunsWithNoDivergence is the test named in the
+// issue: a corridor whose providers increasingly disagree is a fact about
+// the benchmark, and a run scored against a single provider has nothing to
+// contribute to that fact. Mixing 30 divergence-bearing runs with 10
+// SINGLE-provider runs must produce observation_count 30, not 40, and must
+// cross the minimum-sample threshold to a determined result.
+func TestTrendDivergenceStatsSkipsRunsWithNoDivergence(t *testing.T) {
+	seeds := buildTrendSeeds(40, "2.00", func(i int) bool { return i < 30 })
+	srv := trendServer(t, seedTrendStore(t, seeds))
+
+	status, body := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %v", status, body)
+	}
+	stats, ok := body["divergence_stats"].(map[string]any)
+	if !ok {
+		t.Fatal("expected a divergence_stats object")
+	}
+	if stats["observation_count"] != float64(30) {
+		t.Errorf("observation_count = %v, want 30 (40 runs, 10 with no divergence to report)",
+			stats["observation_count"])
+	}
+	if stats["determined"] != true {
+		t.Errorf("determined = %v, want true with 30 divergence observations", stats["determined"])
+	}
+	if stats["mean_pct"] != "2.0000" {
+		t.Errorf("mean_pct = %v, want 2.0000 (every divergence-bearing run reported 2.00)", stats["mean_pct"])
+	}
+}
+
+// TestTrendDivergenceStatsMalformedValueIsAnError pins the "nothing is ever
+// synthesised to fill a gap" constraint at this boundary: a stored
+// divergence_pct that fails to parse is a corrupt record, not a missing
+// observation, and must fail the request rather than silently drop the run
+// or report a plausible-looking number.
+func TestTrendDivergenceStatsMalformedValueIsAnError(t *testing.T) {
+	seeds := buildTrendSeeds(1, "not-a-decimal", func(i int) bool { return true })
+	srv := trendServer(t, seedTrendStore(t, seeds))
+
+	status, body := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC")
+	if status != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for a corrupt stored divergence_pct: %v", status, body)
+	}
+	if body["error"] == nil {
+		t.Error("expected an error message")
+	}
+}
+
+// TestTrendDivergenceStatsNegativeValueIsAnError covers the same defect class
+// as the malformed-value test above: DivergencePct is a magnitude and cannot
+// legitimately be negative, so a stored negative figure must fail the
+// request rather than be allowed to quietly pull the reported mean down.
+func TestTrendDivergenceStatsNegativeValueIsAnError(t *testing.T) {
+	seeds := buildTrendSeeds(1, "-2.50", func(i int) bool { return true })
+	srv := trendServer(t, seedTrendStore(t, seeds))
+
+	status, body := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC")
+	if status != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for a negative stored divergence_pct: %v", status, body)
+	}
+	if body["error"] == nil {
+		t.Error("expected an error message")
 	}
 }
 

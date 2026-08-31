@@ -7,6 +7,10 @@
 //
 // The history is written by cmd/wayfared and committed by the measure
 // workflow; nothing reads this variable to produce a measurement.
+//
+// What this embedding means in production — the deployed instance serves the
+// committed history, so freshness depends on redeploys rather than on the
+// scheduler — is documented in docs/embedded-history.md.
 package wayfare
 
 import "embed"
