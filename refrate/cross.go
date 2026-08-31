@@ -174,6 +174,9 @@ func (c *Cross) Rate(ctx context.Context, base, quote string) (Rate, error) {
 	}
 
 	primary, primaryErr := c.Primary.Rate(ctx, base, quote)
+	if err := ctx.Err(); err != nil {
+		return Rate{}, err
+	}
 
 	if c.Secondary == nil {
 		if primaryErr != nil {
@@ -183,6 +186,9 @@ func (c *Cross) Rate(ctx context.Context, base, quote string) (Rate, error) {
 	}
 
 	secondary, secondaryErr := c.Secondary.Rate(ctx, base, quote)
+	if err := ctx.Err(); err != nil {
+		return Rate{}, err
+	}
 
 	switch {
 	case primaryErr != nil && secondaryErr != nil:

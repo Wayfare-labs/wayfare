@@ -175,6 +175,9 @@ const stellarMaxScale = -7
 //
 // Results are returned in Horizon's order, best first.
 func (c *Client) StrictSendPaths(ctx context.Context, source asset.Asset, amount decimal.Decimal, dest asset.Asset) ([]Path, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	q := url.Values{}
 	for k, v := range source.HorizonParams("source") {
 		q.Set(k, v)
