@@ -2,6 +2,7 @@ package refrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -88,6 +89,49 @@ var (
 // beyond its own refresh cycle.
 var StaleGap = 48 * time.Hour
 
+// errorClass labels a provider error for degradation reporting.
+type errorClass int
+
+const (
+	// errClassUnknown is the fallback for errors that do not match any
+	// typed error in the taxonomy.
+	errClassUnknown errorClass = iota
+
+	// errClassUnavailable means the provider did not answer at all —
+	// network failure, timeout, or HTTP-level error.
+	errClassUnavailable
+
+	// errClassUnparseable means the provider answered with a body that
+	// could not be interpreted as a rate.
+	errClassUnparseable
+)
+
+// classifyError identifies which category of provider failure occurred.
+func classifyError(err error) errorClass {
+	var unavailable *ErrUnavailable
+	if errors.As(err, &unavailable) {
+		return errClassUnavailable
+	}
+	var unparseable *ErrUnparseable
+	if errors.As(err, &unparseable) {
+		return errClassUnparseable
+	}
+	return errClassUnknown
+}
+
+// errorDescription renders an error class as a human-readable phrase for use
+// in degradation notes.
+func errorDescription(err error) string {
+	switch classifyError(err) {
+	case errClassUnavailable:
+		return "unavailable"
+	case errClassUnparseable:
+		return "returned an unparseable response"
+	default:
+		return "unavailable"
+	}
+}
+
 // Cross queries two providers and reports whether they agree.
 //
 // # Why not average them
@@ -144,19 +188,21 @@ func (c *Cross) Rate(ctx context.Context, base, quote string) (Rate, error) {
 	switch {
 	case primaryErr != nil && secondaryErr != nil:
 		return Rate{}, fmt.Errorf(
-			"refrate: no reference rate for %s/%s: %s failed (%v) and %s failed (%v)",
-			base, quote, c.Primary.Name(), primaryErr, c.Secondary.Name(), secondaryErr)
+			"refrate: no reference rate for %s/%s: %s was %s (%v); %s was %s (%v)",
+			base, quote,
+			c.Primary.Name(), errorDescription(primaryErr), primaryErr,
+			c.Secondary.Name(), errorDescription(secondaryErr), secondaryErr)
 
 	case primaryErr != nil:
 		secondary.Agreement = AgreementSingle
 		secondary.Note = fmt.Sprintf(
-			"uncorroborated: %s was unavailable (%v)", c.Primary.Name(), primaryErr)
+			"uncorroborated: %s was %s (%v)", c.Primary.Name(), errorDescription(primaryErr), primaryErr)
 		return secondary, nil
 
 	case secondaryErr != nil:
 		primary.Agreement = AgreementSingle
 		primary.Note = fmt.Sprintf(
-			"uncorroborated: %s was unavailable (%v)", c.Secondary.Name(), secondaryErr)
+			"uncorroborated: %s was %s (%v)", c.Secondary.Name(), errorDescription(secondaryErr), secondaryErr)
 		return primary, nil
 	}
 
