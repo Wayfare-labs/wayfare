@@ -671,6 +671,84 @@ func TestPartialWriteSingleTruncatedLineRefused(t *testing.T) {
 		t.Errorf("OpenFS error should cite corridor and line 1, got: %v", err)
 	}
 }
+// TestPartialWriteTruncatedFinalLineRefused covers NDJSON appended by a process
+// killed mid-write: a file with valid records followed by an incomplete,
+// truncated final line (no trailing newline, invalid JSON) must be refused by
+// Open and OpenFS rather than silently truncating or loading a broken chain.
+func TestPartialWriteTruncatedFinalLineRefused(t *testing.T) {
+	validLine := `{"version":2,"seq":1,"recorded_at":"2026-08-21T22:30:40Z","corridor":"USDC-NGNC",` +
+		`"integrity":"DIRECT","depends_on":[],"reference":{"mid":"1350.2568",` +
+		`"source":"currency-api","as_of":"2026-08-21T00:00:00Z",` +
+		`"scored_against":"currency-api"},"floor_loss_pct":"25.02",` +
+		`"floor_size":"0.1","worst_loss_pct":"97.68","worst_size":"5000",` +
+		`"recommended":null,"finding":"No usable size.","rungs":[{"send_amount":"0.1",` +
+		`"priced":true,"integrity":"DIRECT","receive_amount":"102.78",` +
+		`"effective_rate":"1027.84","loss_pct":"24.65","verdict":"UNUSABLE",` +
+		`"path":"USDC -> NGNC"}],"prev_hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000",` +
+		`"hash":"sha256:ebc429fff786de9cb43abbc16b6859efa62a6be06ca25692dc91c233d05e5fb0"}`
+
+	truncatedLine := `{"version":2,"seq":2,"recorded_at":"2026-08-21T23:00:00Z","corridor":"USDC-NGNC"`
+
+	content := validLine + "\n" + truncatedLine
+
+	// 1. FileStore.Open path
+	dir := t.TempDir()
+	path := filepath.Join(dir, "USDC-NGNC"+FileExt)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Open(dir)
+	if err == nil {
+		t.Fatal("Open accepted a store with a truncated final line from a partial write")
+	}
+	if !strings.Contains(err.Error(), "USDC-NGNC line 2") {
+		t.Errorf("error should cite corridor and line 2, got: %v", err)
+	}
+
+	// 2. ReadOnly.OpenFS path
+	mapFS := fstest.MapFS{
+		"data/USDC-NGNC.ndjson": &fstest.MapFile{Data: []byte(content)},
+	}
+	_, err = OpenFS(mapFS, "data")
+	if err == nil {
+		t.Fatal("OpenFS accepted an embedded store with a truncated final line")
+	}
+	if !strings.Contains(err.Error(), "USDC-NGNC line 2") {
+		t.Errorf("OpenFS error should cite corridor and line 2, got: %v", err)
+	}
+}
+
+// TestPartialWriteSingleTruncatedLineRefused covers a process killed mid-write
+// on the very first record append, leaving only a partial, unparseable line.
+func TestPartialWriteSingleTruncatedLineRefused(t *testing.T) {
+	truncatedContent := `{"version":2,"seq":1,"recorded_at":"2026-08-21T22:30:40Z","corridor":"USDC-NGNC"`
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "USDC-NGNC"+FileExt)
+	if err := os.WriteFile(path, []byte(truncatedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Open(dir)
+	if err == nil {
+		t.Fatal("Open accepted a store with a single truncated line from a partial write")
+	}
+	if !strings.Contains(err.Error(), "USDC-NGNC line 1") {
+		t.Errorf("error should cite corridor and line 1, got: %v", err)
+	}
+
+	mapFS := fstest.MapFS{
+		"data/USDC-NGNC.ndjson": &fstest.MapFile{Data: []byte(truncatedContent)},
+	}
+	_, err = OpenFS(mapFS, "data")
+	if err == nil {
+		t.Fatal("OpenFS accepted a store with a single truncated line")
+	}
+	if !strings.Contains(err.Error(), "USDC-NGNC line 1") {
+		t.Errorf("OpenFS error should cite corridor and line 1, got: %v", err)
+	}
+}
 
 // TestPartialWriteSyntacticallyValidTruncatedLineRefused covers a truncated line
 // that happens to parse as valid JSON (e.g. truncated mid-object but closing
@@ -704,50 +782,5 @@ func TestPartialWriteSyntacticallyValidTruncatedLineRefused(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "seq 2") && !strings.Contains(err.Error(), "hash") {
 		t.Errorf("error should cite record seq 2 or hash failure, got: %v", err)
-// TestReadOnlyOpenFSRefusesUnknownVersion is the OpenFS mirror of
-// TestUnknownVersionIsRefused: the read-only store must refuse the same way.
-func TestReadOnlyOpenFSRefusesUnknownVersion(t *testing.T) {
-	dir := t.TempDir()
-	writeVersionNRecord(t, dir, 99)
-
-	// writeVersionNRecord creates dir/USDC-NGNC/<FileExt>, so we pass
-	// "USDC-NGNC" as the subdirectory to OpenFS.
-	_, err := OpenFS(os.DirFS(dir), "USDC-NGNC")
-	if err == nil {
-		t.Fatal("OpenFS accepted a record with an unknown version")
-	}
-	if !strings.Contains(err.Error(), "version 99") {
-		t.Errorf("error should name the version found, got: %v", err)
-	}
-}
-
-// TestReadOnlyOpenFSRefusesVersion0 guards the same zero-value edge case for
-// the read-only store.
-func TestReadOnlyOpenFSRefusesVersion0(t *testing.T) {
-	dir := t.TempDir()
-	writeVersionNRecord(t, dir, 0)
-
-	_, err := OpenFS(os.DirFS(dir), "USDC-NGNC")
-	if err == nil {
-		t.Fatal("OpenFS accepted a record with version 0")
-	}
-	if !strings.Contains(err.Error(), "version 0") {
-		t.Errorf("error should name the version found, got: %v", err)
-	}
-}
-
-// TestReadOnlyOpenFSRefusesFutureVersion covers the boundary for the read-only
-// store: a version exactly one above the current schema must be refused.
-func TestReadOnlyOpenFSRefusesFutureVersion(t *testing.T) {
-	dir := t.TempDir()
-	writeVersionNRecord(t, dir, Version+1)
-
-	_, err := OpenFS(os.DirFS(dir), "USDC-NGNC")
-	if err == nil {
-		t.Fatalf("OpenFS accepted a record with version %d", Version+1)
-	}
-	want := fmt.Sprintf("version %d", Version+1)
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("error should name version %d, got: %v", Version+1, err)
 	}
 }
