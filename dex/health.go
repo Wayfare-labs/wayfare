@@ -27,7 +27,7 @@ type BookHealth struct {
 	BestAsk decimal.Decimal
 	// Mid is the average of BestBid and BestAsk when both sides are present.
 	// It remains zero when the book cannot provide a two-sided mid.
-	Mid     decimal.Decimal
+	Mid decimal.Decimal
 
 	// SpreadPct is (ask - bid) / mid, as a percentage. On a healthy market
 	// this is a fraction of one percent. The live USDC/NGNC book measured

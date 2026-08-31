@@ -41,7 +41,7 @@ func (PriceImpactMetric) Describe() Descriptor {
 // Run implements Metric.
 func (m PriceImpactMetric) Run(ctx context.Context, s Subject) MetricResult {
 	d := m.Describe()
-	zeit := time.Now().UTC()
+	at := time.Now().UTC()
 
 	if s.Send.Code == "" || s.Receive.Code == "" {
 		return MetricUndetermined(d, s, "no send or receive asset specified")
@@ -53,7 +53,7 @@ func (m PriceImpactMetric) Run(ctx context.Context, s Subject) MetricResult {
 		return MetricUndetermined(d, s, fmt.Sprintf(
 			"%s has no path to %s by construction (NO-MARKET): there is no rate at "+
 				"any size for a probe-to-full comparison to measure degradation between",
-				s.Send.Code, s.Receive.Code))
+			s.Send.Code, s.Receive.Code))
 	}
 	if m.DEX == nil {
 		return MetricUndetermined(d, s, "no DEX client available to price paths")
@@ -70,7 +70,7 @@ func (m PriceImpactMetric) Run(ctx context.Context, s Subject) MetricResult {
 
 	evidence := Evidence{
 		Source:     fmt.Sprintf("/paths/strict-send %s/%s", s.Send.Code, s.Receive.Code),
-		ObservedAt: zeit,
+		ObservedAt: at,
 	}
 
 	probePath, probeErr := m.DEX.BestPath(ctx, s.Send, probe, s.Receive)

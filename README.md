@@ -224,6 +224,17 @@ Established remittance corridors run a total cost of 3–8%, so `GOOD` means
 on-chain norms instead would have graded this project's own findings as
 acceptable.
 
+### Verdict reconciliation — the published number always matches the grade
+
+The server publishes `loss_pct` as a full-precision decimal string, not
+rounded. The verdict is computed against the same full-precision value, so
+the two always reconcile: a loss of 20.001% publishes as `"20.001"` and is
+graded `UNUSABLE`, never as `"20.00"` graded `UNUSABLE`. The UI rounds for
+display, but the wire contract is unambiguous.
+
+`TestLossPctReconcilesWithVerdict` asserts this at every threshold boundary
+(2.999, 3.0, 3.001, 7.999, 8.0, 8.001, 19.999, 20.0, 20.001).
+
 ### The recommendation rule — breaking if altered
 
 > **When no size produces a verdict of `POOR` or better, the monitor
