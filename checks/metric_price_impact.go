@@ -60,12 +60,12 @@ func (m PriceImpactMetric) Run(ctx context.Context, s Subject) MetricResult {
 	}
 
 	probe := m.ProbeSize
-	if probe.IsZero() {
-		probe = decimal.NewFromInt(1)
+	if probe.IsZero() || probe.IsNegative() || !probe.IsPositive() {
+		return MetricUndetermined(d, s, "probe size is unset or invalid (must be greater than zero)")
 	}
 	full := m.FullSize
-	if full.IsZero() {
-		full = decimal.NewFromInt(5000)
+	if full.IsZero() || full.IsNegative() || !full.IsPositive() {
+		return MetricUndetermined(d, s, "full size is unset or invalid (must be greater than zero)")
 	}
 
 	evidence := Evidence{

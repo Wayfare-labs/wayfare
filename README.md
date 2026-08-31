@@ -224,6 +224,17 @@ Established remittance corridors run a total cost of 3–8%, so `GOOD` means
 on-chain norms instead would have graded this project's own findings as
 acceptable.
 
+### Verdict reconciliation — the published number always matches the grade
+
+The server publishes `loss_pct` as a full-precision decimal string, not
+rounded. The verdict is computed against the same full-precision value, so
+the two always reconcile: a loss of 20.001% publishes as `"20.001"` and is
+graded `UNUSABLE`, never as `"20.00"` graded `UNUSABLE`. The UI rounds for
+display, but the wire contract is unambiguous.
+
+`TestLossPctReconcilesWithVerdict` asserts this at every threshold boundary
+(2.999, 3.0, 3.001, 7.999, 8.0, 8.001, 19.999, 20.0, 20.001).
+
 ### The recommendation rule — breaking if altered
 
 > **When no size produces a verdict of `POOR` or better, the monitor
@@ -255,6 +266,8 @@ was learned" from "nothing exists", which matters because both produce
 identical zero-valued figures.
 
 ### Reference agreement — breaking if altered
+
+The architectural decision behind this contract is documented in **[ADR: reference mids are never averaged](docs/adr-reference-mids.md)**.
 
 Two providers are queried per measurement. Rates are **never averaged**: a
 blended mid names no provider, and every figure has to be traceable to a source
@@ -303,6 +316,7 @@ pass/fail discards the number that carries the meaning. Thresholding a metric
 into a verdict is maintainer-owned.
 
 Full spec: **[docs/checks.md](docs/checks.md)**
+Methodology: **[docs/metrics.md](docs/metrics.md)**
 
 ### Asset identity — breaking if altered
 
@@ -585,7 +599,7 @@ These keep the project shippable and legal for a small team:
 | Recorded snapshots | Hash-verified on load; provenance refuses a dirty tree |
 | SEP-38 fee identity | Verified against SEP-0038 spec text, pinned in golden files |
 | USDC issuer is Circle's | **Not yet verified** against circle.com stellar.toml |
-| Live SEP-38 round-trip | **Not done** — no anchor on this corridor publishes a quote server |
+| Live SEP-38 round-trip | **Verified** — recorded fixture from testanchor.stellar.org in `sep38/testdata/live/` |
 | Public deployment | Running at [wayfare-cdb9.onrender.com](https://wayfare-cdb9.onrender.com/); `/healthz` verified 200 on 2026-08-24 |
 | Continuous measurement | **Not currently running** — the measure workflow cannot push ([#63](https://github.com/Wayfare-labs/wayfare/issues/63)), so the served history is frozen at its last successful sweep |
 
