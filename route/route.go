@@ -331,6 +331,9 @@ type Engine struct {
 
 // Quote prices every available route for the request and ranks them.
 func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if e.RefRate == nil {
 		return nil, fmt.Errorf("route: a reference rate provider is required; " +
 			"without one the engine can rank routes but cannot tell a good one from a bad one")
@@ -342,6 +345,9 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 	ref, err := e.RefRate.Rate(ctx, req.ReferenceBase, req.ReferenceQuote)
 	if err != nil {
 		return nil, fmt.Errorf("route: reference rate unavailable: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	// A benchmark the providers cannot agree on is not a benchmark. Scoring
