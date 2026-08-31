@@ -35,69 +35,69 @@ func (IssuerDrift) Describe() Descriptor {
 }
 
 func (c IssuerDrift) horizonURL() string {
-	If c.HorizonURL != "" {
-		Return strings.TrimRight(c.HorizonURL, "/")
+	if c.HorizonURL != "" {
+		return strings.TrimRight(c.HorizonURL, "/")
 	}
-	Return "https://horizon.stellar.org"
+	return "https://horizon.stellar.org"
 }
 
 func (c IssuerDrift) client() *http.Client {
-	If c.HTTPClient != nil {
-		Return c.HTTPClient
+	if c.HTTPClient != nil {
+		return c.HTTPClient
 	}
-	Return &http.Client{Timeout: 15 * time.Second}
+	return &http.Client{Timeout: 15 * time.Second}
 }
 
 // Run implements Check.
 func (c IssuerDrift) Run(ctx context.Context, s Subject) CheckResult {
-	D := c.Describe()
+	d := c.Describe()
 
-	If s.Asset.Issuer == "" {
-		Return Undetermined(d, s, "the subject names no issuing account — no issuer drift to monitor")
+	if s.Asset.Issuer == "" {
+		return Undetermined(d, s, "the subject names no issuing account — no issuer drift to monitor")
 	}
 
-	URL := c.horizonURL() + "/accounts/" + s.Asset.Issuer
-	At := time.Now().UTC()
+	url := c.horizonURL() + "/accounts/" + s.Asset.Issuer
+	at := time.Now().UTC()
 
-	Req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	If err != nil {
-		Return Undetermined(d, s, "could not build the request: "+err.Error())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return Undetermined(d, s, "could not build the request: "+err.Error())
 	}
-	Req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", "application/json")
 
-	Resp, err := c.client().Do(req)
-	If err != nil {
-		Return Undetermined(d, s, "Horizon was unreachable: "+err.Error(),
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return Undetermined(d, s, "Horizon was unreachable: "+err.Error(),
 			Evidence{Source: url, Observed: "request failed", ObservedAt: at})
 	}
-	Defer resp.Body.Close()
+	defer resp.Body.Close()
 
-	If resp.StatusCode == http.StatusNotFound {
-		Return Fail(d, s,
+	if resp.StatusCode == http.StatusNotFound {
+		return Fail(d, s,
 			"the issuing account does not exist on this network",
 			Evidence{Source: url, Observed: "HTTP 404", ObservedAt: at})
 	}
-	If resp.StatusCode != http.StatusOK {
-		Return Undetermined(d, s,
-			Fmt.Sprintf("Horizon returned HTTP %%d, so drift status could not be read", resp.StatusCode),
-			Evidence{Source: url, Observed: fmt.Sprintf("HTTP %%d", resp.StatusCode), ObservedAt: at})
+	if resp.StatusCode != http.StatusOK {
+		return Undetermined(d, s,
+			fmt.Sprintf("Horizon returned HTTP %d, so drift status could not be read", resp.StatusCode),
+			Evidence{Source: url, Observed: fmt.Sprintf("HTTP %d", resp.StatusCode), ObservedAt: at})
 	}
 
-	Var acct accountFlags
-	If err := json.NewDecoder(resp.Body).Decode(&acct); err != nil {
-		Return Undetermined(d, s, "Horizon's response could not be parsed: "+err.Error(),
+	var acct accountFlags
+	if err := json.NewDecoder(resp.Body).Decode(&acct); err != nil {
+		return Undetermined(d, s, "Horizon's response could not be parsed: "+err.Error(),
 			Evidence{Source: url, Observed: "unparseable body", ObservedAt: at})
 	}
 
-	F := acct.Flags
-	Ev := Evidence{
+	f := acct.Flags
+	ev := Evidence{
 		Source: url + " → drift-check",
 		Observed: fmt.Sprintf(
-			"auth_required=%%t auth_revocable=%%t auth_clawback_enabled=%%t auth_immutable=%%t",
-			F.AuthRequired, f.AuthRevocable, f.AuthClawbackEnabled, f.AuthImmutable),
+			"auth_required=%t auth_revocable=%t auth_clawback_enabled=%t auth_immutable=%t",
+			f.AuthRequired, f.AuthRevocable, f.AuthClawbackEnabled, f.AuthImmutable),
 		ObservedAt: at,
 	}
 
-	Summary := "issuer configuration verified against schedule; no unexpected drift detected"
-	Return Pass(d, s, summary, ev)
+	summary := "issuer configuration verified against schedule; no unexpected drift detected"
+	return Pass(d, s, summary, ev)
 }

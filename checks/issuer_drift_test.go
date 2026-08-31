@@ -10,27 +10,28 @@ import (
 )
 
 func TestIssuerDrift_Run(t *testing.T) {
-	Ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		W.Header().Set("Content-Type", "application/json")
-		W.WriteHeader(http.StatusOK)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"flags":{"auth_required":false,"auth_revocable":false,"auth_immutable":true,"auth_clawback_enabled":false}}`))
 	}))
-	Defer ts.Close()
+	defer ts.Close()
 
-	Check := IssuerDrift{
+	check := IssuerDrift{
 		HorizonURL: ts.URL,
 		HTTPClient: ts.Client(),
 	}
 
-	Sub := Subject{
+	sub := Subject{
 		Asset: asset.Asset{
 			Code:   "USDC",
 			Issuer: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
 		},
 	}
 
-	Res := check.Run(context.Background(), sub)
-	if res.Verdict != VerdictPass {
-		T.Fatalf("expected VerdictPass, got %%v: %%s", res.Verdict, res.Summary)
+	res := check.Run(context.Background(), sub)
+	if !res.Determined || !res.Passed {
+		t.Fatalf("expected a determined pass, got determined=%v passed=%v: %s",
+			res.Determined, res.Passed, res.Summary)
 	}
 }
