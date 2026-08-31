@@ -360,6 +360,76 @@ func TestUIScoredFalseSuppressesVerdicts(t *testing.T) {
 	}
 }
 
+// TestAPIAnswersCrossOriginRequests pins the CORS decision from backlog
+// #38: the API is public, keyless and read-only, so any origin may read it,
+// and no credentials are ever attached. A browser consumer on another
+// origin must be able to call every endpoint.
+func TestAPIAnswersCrossOriginRequests(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	for _, path := range []string{
+		"/healthz",
+		"/api/assets",
+		"/api/corridor?to=NGNC&sizes=100",
+	} {
+		req, err := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Origin", "https://consumer.example")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		resp.Body.Close()
+
+		if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+			t.Errorf("%s: Access-Control-Allow-Origin = %q, want *", path, got)
+		}
+		// The wildcard is only safe because nothing here is credentials.
+		// Its absence is the point: a browser must never attach stored
+		// auth to a cross-origin read of this API.
+		if creds := resp.Header.Get("Access-Control-Allow-Credentials"); creds != "" {
+			t.Errorf("%s: Access-Control-Allow-Credentials = %q; this API carries no credentials", path, creds)
+		}
+	}
+}
+
+// TestCORSPreflightIsAnswered covers the OPTIONS handshake a browser sends
+// before a cross-origin request that adds custom headers.
+func TestCORSPreflightIsAnswered(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	req, err := http.NewRequest(http.MethodOptions, srv.URL+"/api/corridor?to=NGNC&sizes=100", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", "https://consumer.example")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+	req.Header.Set("Access-Control-Request-Headers", "X-Consumer-Token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("OPTIONS: %v", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("preflight status = %d, want 204", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want *", got)
+	}
+	if methods := resp.Header.Get("Access-Control-Allow-Methods"); !strings.Contains(methods, "GET") {
+		t.Errorf("Access-Control-Allow-Methods = %q, want it to include GET", methods)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Headers"); got != "X-Consumer-Token" {
+		t.Errorf("Access-Control-Allow-Headers = %q, want the requested headers echoed", got)
+	}
+	if got := resp.Header.Get("Access-Control-Max-Age"); got == "" {
+		t.Error("Access-Control-Max-Age is unset; the preflight answer should be cacheable")
+	}
+}
+
 // dexClientAt builds a dex client pointed at a test Horizon.
 func dexClientAt(url string) *dex.Client {
 	return &dex.Client{HorizonURL: url}

@@ -960,6 +960,9 @@ func TestSpreadMetricFromRecordedBook(t *testing.T) {
 	if !r.Value.IsPositive() {
 		t.Errorf("spread = %s, want positive on a real book", r.Value)
 	}
+	if len(r.Evidence) == 0 || !strings.Contains(r.Evidence[0].Observed, "mid=") {
+		t.Errorf("spread evidence = %+v, want the independently useful book mid", r.Evidence)
+	}
 	if len(r.Evidence) == 0 {
 		t.Error("no evidence recorded")
 	}

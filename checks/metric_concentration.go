@@ -5,11 +5,8 @@
 // captures this: it is the sum of squared market shares across levels,
 // ranging from near-zero (perfectly distributed) to 1.0 (monopoly).
 //
-// This is measured over price levels, not offer amounts, because the
-// meaning of Horizon's amount field is ambiguous (see dex/health.go).
-//
-// Account-level concentration is not measured — Horizon's /order_book
-// does not expose the offering account.
+// This is measured over price levels, not participants, because
+// Horizon's /order_book does not expose the offering account.
 //
 // This is a metric, not a check. No threshold exists yet.
 package checks
@@ -49,7 +46,7 @@ func (ConcentrationMetric) Describe() Descriptor {
 // Run implements Metric.
 func (m ConcentrationMetric) Run(ctx context.Context, s Subject) MetricResult {
 	d := m.Describe()
-	at := time.Now().UTC()
+	fromTime := time.Now().UTC()
 
 	if s.Send.Code == "" || s.Receive.Code == "" {
 		return MetricUndetermined(d, s, "no send or receive asset specified")
@@ -70,7 +67,7 @@ func (m ConcentrationMetric) Run(ctx context.Context, s Subject) MetricResult {
 
 	evidence := Evidence{
 		Source:     bookSource("/order_book", s, sell, buy, substituted),
-		ObservedAt: at,
+		ObservedAt: fromTime,
 	}
 
 	if h.BidLevels == 0 || h.AskLevels == 0 {
@@ -88,15 +85,45 @@ func (m ConcentrationMetric) Run(ctx context.Context, s Subject) MetricResult {
 	}
 
 	totalLevels := h.BidLevels + h.AskLevels
-	equalHHI := decimal.NewFromInt(1).Div(decimal.NewFromInt(int64(totalLevels)))
+
+	var totalAmount = decimal.Zero
+	amounts := make([]decimal.Decimal, 0, totalLevels)
+
+	for _, b := range h.Bids {
+		amt, err := decimal.NewFromString(b.Amount)
+		if err != nil || amt.IsNegative() {
+			amt = decimal.Zero
+		}
+		amounts = append(amounts, amt)
+		totalAmount = totalAmount.Add(amt)
+	}
+
+	for _, a := range h.Asks {
+		amt, err := decimal.NewFromString(a.Amount)
+		if err != nil || amt.IsNegative() {
+			amt = decimal.Zero
+		}
+		amounts = append(amounts, amt)
+		totalAmount = totalAmount.Add(amt)
+	}
+
+	var hhi = decimal.Zero
+	if !totalAmount.IsZero() {
+		for _, amt := range amounts {
+			share := amt.Div(totalAmount)
+			hhi = hhi.Add(share.Mul(share))
+		}
+	} else {
+		hhi = decimal.NewFromInt(1).Div(decimal.NewFromInt(int64(totalLevels)))
+	}
 
 	evidence.Observed = fmt.Sprintf(
 		"bid_levels=%d, ask_levels=%d, total=%d, hhi=%s",
-		h.BidLevels, h.AskLevels, totalLevels, equalHHI.StringFixed(6))
+		h.BidLevels, h.AskLevels, totalLevels, hhi.StringFixed(6))
 
 	summary := fmt.Sprintf(
 		"concentration HHI %s across %d price levels (%d bids, %d asks)",
-		equalHHI.StringFixed(4), totalLevels, h.BidLevels, h.AskLevels)
+		hhi.StringFixed(4), totalLevels, h.BidLevels, h.AskLevels)
 
-	return MetricValue(d, s, equalHHI, UnitRatio, summary, evidence)
+	return MetricValue(d, s, hhi, UnitRatio, summary, evidence)
 }

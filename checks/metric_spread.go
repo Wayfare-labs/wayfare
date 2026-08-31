@@ -88,8 +88,8 @@ func (m SpreadMetric) Run(ctx context.Context, s Subject) MetricResult {
 		return MetricUndetermined(d, s, reason, evidence)
 	}
 
-	evidence.Observed = fmt.Sprintf("spread=%s%%, bid=%s, ask=%s, bids=%d, asks=%d, dust=%d",
-		h.SpreadPct.StringFixed(4), h.BestBid, h.BestAsk,
+	evidence.Observed = fmt.Sprintf("spread=%s%%, mid=%s, bid=%s, ask=%s, bids=%d, asks=%d, dust=%d",
+		h.SpreadPct.StringFixed(4), h.Mid, h.BestBid, h.BestAsk,
 		h.BidLevels, h.AskLevels, h.DustLevels)
 
 	summary := fmt.Sprintf(
