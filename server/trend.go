@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wayfare-labs/wayfare/analysis"
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
@@ -45,6 +46,68 @@ type TrendJSON struct {
 	// Runs is oldest first. An array, never null, so a client can iterate
 	// it without a nil check when the history is empty.
 	Runs []TrendRunJSON `json:"runs"`
+
+	// DivergenceStats summarises how far the corridor's two reference
+	// providers have disagreed across the runs above — a fact about the
+	// benchmark, not the corridor. Always present, never omitted: a benchmark
+	// that has never diverged (or a history too short to say) is reported
+	// explicitly rather than left for a client to infer from an absent key.
+	// Never feeds back into any run's verdict or integrity state above.
+	DivergenceStats DivergenceStatsJSON `json:"divergence_stats"`
+}
+
+// DivergenceStatsJSON is a corridor benchmark's own longitudinal divergence:
+// how far its two reference providers have disagreed, across the same window
+// of runs the trend response carries. See analysis.DivergenceHistory.
+type DivergenceStatsJSON struct {
+	// ObservationCount is how many of the runs above actually carried a
+	// divergence figure. A run scored against a single provider (SINGLE
+	// agreement) has no divergence to report and is not counted — an
+	// unmeasured divergence is unknown, never zero, so it must not pad this
+	// count toward the minimum sample size below.
+	ObservationCount int `json:"observation_count"`
+
+	// Determined is false below the documented minimum sample size (see
+	// analysis.MinSampleSizeForMeanStdDev); Reason then explains why, and
+	// MeanPct/StdDevPct/trend are absent rather than a plausible-looking
+	// zero.
+	Determined bool   `json:"determined"`
+	Reason     string `json:"reason,omitempty"`
+
+	MeanPct   string `json:"mean_pct,omitempty"`
+	StdDevPct string `json:"stddev_pct,omitempty"`
+
+	// TrendDirection and TrendMagnitudePct are present only with enough
+	// observations for a trend (see analysis.MinSampleSizeForTrend), which
+	// is a higher bar than Determined alone: a mean can be meaningful before
+	// a trend direction is.
+	TrendDirection    string `json:"trend_direction,omitempty"`
+	TrendMagnitudePct string `json:"trend_magnitude_pct,omitempty"`
+}
+
+// toDivergenceStatsJSON renders an analysis.MetricStats for the wire.
+//
+// Regime is deliberately not rendered: analysis.DefaultRegimeThresholds is
+// calibrated to loss percentages, not to reference-provider divergence, and
+// publishing a regime label computed against the wrong scale would read as a
+// verdict this project never issued.
+func toDivergenceStatsJSON(s *analysis.MetricStats) DivergenceStatsJSON {
+	out := DivergenceStatsJSON{
+		ObservationCount: s.ObservationCount,
+		Determined:       !s.Undetermined,
+		Reason:           s.Reason,
+	}
+	if s.Mean != nil {
+		out.MeanPct = s.Mean.StringFixed(4)
+	}
+	if s.StdDev != nil {
+		out.StdDevPct = s.StdDev.StringFixed(4)
+	}
+	if s.Trend != nil {
+		out.TrendDirection = string(s.Trend.Direction)
+		out.TrendMagnitudePct = s.Trend.Magnitude.StringFixed(4)
+	}
+	return out
 }
 
 // TrendRunJSON is one stored measurement, reduced to what a trend needs:
@@ -223,7 +286,20 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, toTrendJSON(recs, key, pair, sendAsset, recvAsset))
+	trend := toTrendJSON(recs, key, pair, sendAsset, recvAsset)
+
+	stats, err := analysis.DivergenceHistory(recs)
+	if err != nil {
+		// A stored divergence_pct that fails to parse is a corrupt record,
+		// not an absent observation — the correct output is an error, not a
+		// history that silently omits the bad run.
+		writeError(w, http.StatusInternalServerError,
+			"computing reference-divergence history: "+err.Error())
+		return
+	}
+	trend.DivergenceStats = toDivergenceStatsJSON(stats)
+
+	writeJSON(w, http.StatusOK, trend)
 }
 
 // parseTrendLimit bounds how much history one request may read.

@@ -59,6 +59,9 @@ func TestOrderBookParsesRecordedMarket(t *testing.T) {
 	if h.SpreadPct.IsNegative() {
 		t.Errorf("SpreadPct = %s, want non-negative", h.SpreadPct)
 	}
+	if !h.Mid.Equal(decFromString(t, "185.75851395")) {
+		t.Errorf("Mid = %s, want 185.75851395 from the recorded best prices", h.Mid)
+	}
 	if h.Selling.Code != "XLM" || h.Buying.Code != "NGNC" {
 		t.Errorf("book endpoints = %s/%s, want XLM/NGNC", h.Selling.Code, h.Buying.Code)
 	}
