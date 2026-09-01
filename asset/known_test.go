@@ -132,7 +132,7 @@ func TestClassifyHopString(t *testing.T) {
 // TestIsFiatToken exercises the same cases through the boolean-only helper,
 // since callers on the hot classification path use this form directly.
 func TestIsFiatToken(t *testing.T) {
-	for _, a := range []Asset{NGNC(), GHSC(), KESC()} {
+	for _, a := range []Asset{NGNC(), GHSC(), KESC(), NGNT()} {
 		if !IsFiatToken(a) {
 			t.Errorf("IsFiatToken(%s) = false, want true", a)
 		}
