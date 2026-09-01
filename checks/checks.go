@@ -128,6 +128,29 @@ const (
 	UnitSeconds Unit = "seconds"
 )
 
+// Venue names the liquidity source a corridor metric observes.
+//
+// Two metrics reporting the same corridor from different venues describe
+// different markets, and cannot be reconciled by arithmetic — Horizon's
+// /order_book endpoint reports only offers, while /paths/strict-send prices
+// through both offers and AMM liquidity pools. A reader comparing a book
+// spread against a pathfinding-based figure without knowing which venue each
+// came from will draw a wrong inference; the CannotDetermine prose was where
+// this used to live, and prose is not something a consumer can act on.
+//
+// See docs/liquidity-venues.md for the reconciliation rule this field makes
+// enforceable.
+type Venue string
+
+const (
+	// VenueOrderBook is Horizon's /order_book endpoint: offers only, no AMM.
+	VenueOrderBook Venue = "order-book"
+
+	// VenuePathfinding is Horizon's /paths/strict-send endpoint: offers plus
+	// AMM liquidity pools, the same engine that would settle the payment.
+	VenuePathfinding Venue = "pathfinding"
+)
+
 // Subject is what a check examines.
 //
 // Typed rather than a string: a corridor check needs a send and a receive
@@ -151,6 +174,12 @@ type Subject struct {
 
 	// Profile is an already-resolved stellar.toml, when one is available.
 	// A CostFree check reads this rather than fetching anything.
+	//
+	// Profile is shared context, not per-check ownership: the sweep resolves
+	// the anchor once and hands the same document to every check, and it is
+	// not deep-copied per check. A check must treat it as read-only — the
+	// other Subject fields are value-isolated, but a mutation through this
+	// pointer reaches the rest of the sweep.
 	Profile *anchor.Profile
 
 	// Integrity is the corridor's routing integrity classification —
@@ -256,6 +285,12 @@ type MetricResult struct {
 	Value decimal.Decimal
 	Unit  Unit
 
+	// Venue is the liquidity source the metric observed. Copied from the
+	// descriptor by MetricValue and MetricUndetermined so a caller reading
+	// results without going back to Describe still sees which market the
+	// figure refers to. Empty on non-corridor metrics.
+	Venue Venue
+
 	Summary string
 }
 
@@ -265,6 +300,16 @@ type Descriptor struct {
 	Scope    Scope
 	Cost     Cost
 	Severity Severity
+
+	// Venue names the liquidity source a corridor metric observes. Required
+	// for corridor-scoped metrics and empty otherwise: an anchor or asset
+	// check has no venue, and a check with one would suggest a market
+	// figure the check does not produce.
+	//
+	// Making the venue a first-class descriptor field, rather than a phrase
+	// buried inside CannotDetermine, is what lets a downstream consumer
+	// refuse to reconcile a book figure with a route figure by machine.
+	Venue Venue
 
 	// Title is one line naming what is checked.
 	Title string
@@ -297,6 +342,36 @@ func (d Descriptor) Validate() error {
 	if len(missing) > 0 {
 		return fmt.Errorf("checks: descriptor %q is missing required field(s): %s",
 			d.ID, strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// ValidateAsMetric adds the metric-only requirements on top of Validate: a
+// corridor-scoped metric must declare a Venue, and no metric may declare a
+// venue outside the known set.
+//
+// A metric without a venue reports a market figure without saying which
+// market — the specific misuse issue #104 exists to fix, and precisely the
+// shape a downstream consumer cannot recover from without going back to the
+// prose descriptor. Anchor and asset metrics have no venue: liquidity is a
+// corridor property, and forcing a venue on a non-corridor metric would
+// invent one.
+func (d Descriptor) ValidateAsMetric() error {
+	if err := d.Validate(); err != nil {
+		return err
+	}
+	switch d.Venue {
+	case "", VenueOrderBook, VenuePathfinding:
+	default:
+		return fmt.Errorf("checks: metric %q declares unknown venue %q; known: %q, %q",
+			d.ID, d.Venue, VenueOrderBook, VenuePathfinding)
+	}
+	if d.Scope == ScopeCorridor && d.Venue == "" {
+		return fmt.Errorf("checks: corridor metric %q must declare a Venue", d.ID)
+	}
+	if d.Scope != ScopeCorridor && d.Venue != "" {
+		return fmt.Errorf("checks: non-corridor metric %q must not declare a Venue (got %q)",
+			d.ID, d.Venue)
 	}
 	return nil
 }

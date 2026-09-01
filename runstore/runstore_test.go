@@ -3,6 +3,7 @@ package runstore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -498,22 +499,80 @@ func TestReopenResumesTheChain(t *testing.T) {
 	}
 }
 
-// TestUnknownVersionIsRefused mirrors the snapshot format's rule: a schema
-// this build does not understand is an error, never a best-effort parse.
-func TestUnknownVersionIsRefused(t *testing.T) {
-	dir := t.TempDir()
-	line := `{"version":99,"seq":1,"corridor":"USDC-NGNC","prev_hash":"` +
-		GenesisPrevHash + `","hash":"sha256:x"}` + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "USDC-NGNC"+FileExt), []byte(line), 0o644); err != nil {
+// writeVersionNRecord builds a record with the given version and a valid
+// hash, then writes it as the sole corridor line. The record is otherwise
+// well-formed: correct prev_hash, sealed hash, and all required fields.
+// This ensures the only reason Open fails is the version check, not a
+// coincidental hash or chain failure.
+func writeVersionNRecord(t *testing.T, dir string, version int) {
+	dir = filepath.Join(dir, "USDC-NGNC")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	r := fixedRecord()
+	r.Version = version
+	if err := r.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	line, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, FileExt), append(line, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
 
-	_, err := Open(dir)
+// TestUnknownVersionIsRefused mirrors the snapshot format's rule: a schema
+// this build does not understand is an error, never a best-effort parse.
+//
+// The record is sealed with a valid hash so the test specifically asserts
+// the version check: if the version check were removed, Open would succeed
+// and the test would fail for the right reason.
+func TestUnknownVersionIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	writeVersionNRecord(t, dir, 99)
+
+	_, err := Open(filepath.Join(dir, "USDC-NGNC"))
 	if err == nil {
 		t.Fatal("Open accepted a record with an unknown version")
 	}
 	if !strings.Contains(err.Error(), "version 99") {
 		t.Errorf("error should name the version found, got: %v", err)
+	}
+}
+
+// TestVersion0IsRefused guards against treating a zero-value version as a
+// default to be filled in. An absent or zero version is unknown, never a
+// fallback — the correct output is an error.
+func TestVersion0IsRefused(t *testing.T) {
+	dir := t.TempDir()
+	writeVersionNRecord(t, dir, 0)
+
+	_, err := Open(filepath.Join(dir, "USDC-NGNC"))
+	if err == nil {
+		t.Fatal("Open accepted a record with version 0")
+	}
+	if !strings.Contains(err.Error(), "version 0") {
+		t.Errorf("error should name the version found, got: %v", err)
+	}
+}
+
+// TestFutureVersionJustAboveCurrentIsRefused covers the boundary: a version
+// that is exactly one above the current schema is still unknown and must be
+// refused. This catches a future build bumping Version without updating the
+// acceptance list.
+func TestFutureVersionJustAboveCurrentIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	writeVersionNRecord(t, dir, Version+1)
+
+	_, err := Open(filepath.Join(dir, "USDC-NGNC"))
+	if err == nil {
+		t.Fatalf("Open accepted a record with version %d (current is %d)", Version+1, Version)
+	}
+	want := fmt.Sprintf("version %d", Version+1)
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error should name version %d, got: %v", Version+1, err)
 	}
 }
 
@@ -530,5 +589,53 @@ func TestNopStoreIsSafe(t *testing.T) {
 	}
 	if err := s.Verify(ctx(), "USDC-NGNC"); err != nil {
 		t.Errorf("Nop.Verify: %v", err)
+	}
+}
+
+// TestReadOnlyOpenFSRefusesUnknownVersion is the OpenFS mirror of
+// TestUnknownVersionIsRefused: the read-only store must refuse the same way.
+func TestReadOnlyOpenFSRefusesUnknownVersion(t *testing.T) {
+	dir := t.TempDir()
+	writeVersionNRecord(t, dir, 99)
+
+	// writeVersionNRecord creates dir/USDC-NGNC/<FileExt>, so we pass
+	// "USDC-NGNC" as the subdirectory to OpenFS.
+	_, err := OpenFS(os.DirFS(dir), "USDC-NGNC")
+	if err == nil {
+		t.Fatal("OpenFS accepted a record with an unknown version")
+	}
+	if !strings.Contains(err.Error(), "version 99") {
+		t.Errorf("error should name the version found, got: %v", err)
+	}
+}
+
+// TestReadOnlyOpenFSRefusesVersion0 guards the same zero-value edge case for
+// the read-only store.
+func TestReadOnlyOpenFSRefusesVersion0(t *testing.T) {
+	dir := t.TempDir()
+	writeVersionNRecord(t, dir, 0)
+
+	_, err := OpenFS(os.DirFS(dir), "USDC-NGNC")
+	if err == nil {
+		t.Fatal("OpenFS accepted a record with version 0")
+	}
+	if !strings.Contains(err.Error(), "version 0") {
+		t.Errorf("error should name the version found, got: %v", err)
+	}
+}
+
+// TestReadOnlyOpenFSRefusesFutureVersion covers the boundary for the read-only
+// store: a version exactly one above the current schema must be refused.
+func TestReadOnlyOpenFSRefusesFutureVersion(t *testing.T) {
+	dir := t.TempDir()
+	writeVersionNRecord(t, dir, Version+1)
+
+	_, err := OpenFS(os.DirFS(dir), "USDC-NGNC")
+	if err == nil {
+		t.Fatalf("OpenFS accepted a record with version %d", Version+1)
+	}
+	want := fmt.Sprintf("version %d", Version+1)
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error should name version %d, got: %v", Version+1, err)
 	}
 }
