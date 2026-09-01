@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+  # A merge queue builds each candidate against the projected result of
+  # everything ahead of it, and branch protection waits for these same four
+  # contexts on that build. Without this trigger the checks never run for a
+  # queued entry, so every pull request that enters the queue sits there until
+  # it times out — the queue would look broken when it is simply unanswered.
+  merge_group:
+    branches: [main]
+
 permissions:
   contents: read
 
