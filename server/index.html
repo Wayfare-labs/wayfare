@@ -223,6 +223,14 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, c => (
   {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+// formatPct rounds a loss percentage string to 2 decimal places for display.
+// The server publishes full-precision decimals (per issue #83) so the verdict
+// always reconciles with the published number; the UI rounds for readability.
+const formatPct = (s) => {
+  const n = parseFloat(s);
+  return isNaN(n) ? s : n.toFixed(2);
+};
+
 const badgeClass = (i) =>
   i === 'NO-MARKET' ? 'b-nomarket' : i === 'DERIVATIVE' ? 'b-derivative' : 'b-direct';
 
@@ -312,7 +320,7 @@ function recommendationBlock(d) {
   }
   const q = d.recommended;
   return `<div class="rec-some">Recommended at ${esc(d.recommended_size)}
-    ${esc(d.send_asset.code)}: ${esc(q.description)} &mdash; ${esc(q.loss_pct)}%
+    ${esc(d.send_asset.code)}: ${esc(q.description)} &mdash; ${formatPct(q.loss_pct)}%
     below mid, graded ${esc(q.verdict)}.</div>`;
 }
 
@@ -339,7 +347,7 @@ function curve(rungs) {
 
   const dots = xs.map((x, i) =>
     `<circle cx="${sx(x).toFixed(1)}" cy="${sy(ys[i]).toFixed(1)}" r="3"
-       fill="var(--bad)"><title>${esc(rungs[i].send_amount)} → ${esc(rungs[i].quote.loss_pct)}% loss</title></circle>`).join('');
+       fill="var(--bad)"><title>${esc(rungs[i].send_amount)} → ${formatPct(rungs[i].quote.loss_pct)}% loss</title></circle>`).join('');
 
   const labels = rungs.map((r, i) =>
     (i === 0 || i === rungs.length - 1 || i === Math.floor(rungs.length / 2))
@@ -376,7 +384,7 @@ function table(rungs, scored) {
         <td class="num">${esc(r.send_amount)}</td>
         <td class="num">${esc(q.receive_amount)}</td>
         <td class="num">${esc(q.effective_rate)}</td>
-        <td class="num ${verdictClass(q.verdict)}">${esc(q.loss_pct)}%</td>
+        <td class="num ${verdictClass(q.verdict)}">${formatPct(q.loss_pct)}%</td>
         <td class="${verdictClass(q.verdict)}">${esc(q.verdict)}</td>
         <td>${esc(q.description)}</td>
       </tr>`;
@@ -757,7 +765,7 @@ function trendChart(d, size) {
     const r = p.run, ref = r.reference || {};
     const title = [
       `run #${r.seq} · ${r.recorded_at}`,
-      `${esc(p.rung.loss_pct)}% loss (${esc(p.rung.verdict)}) at ${esc(size)} ${esc(sendCode)}`,
+      `${formatPct(p.rung.loss_pct)}% loss (${esc(p.rung.verdict)}) at ${esc(size)} ${esc(sendCode)}`,
       `reference mid ${esc(ref.mid || 'n/a')} via ${esc(ref.scored_against || ref.source || 'unknown')}`,
       `integrity ${esc(r.integrity)}${(r.depends_on || []).length ? ' via ' + esc(r.depends_on.join(', ')) : ''}`,
     ].join('<br/>');

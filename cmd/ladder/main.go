@@ -7,6 +7,7 @@
 //	go run ./cmd/ladder                  # USDC -> NGNC
 //	go run ./cmd/ladder -to GHSC         # USDC -> GHSC, benchmarked against GHS
 //	go run ./cmd/ladder -to GHSC -json   # same, as JSON on stdout
+//	go run ./cmd/ladder -checks=false    # same, without counterparty checks
 //
 //	go run ./cmd/ladder -record testdata/snapshots   # also keep the bytes
 //
@@ -31,6 +32,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
@@ -63,6 +65,10 @@ func main() {
 			"reference rate provider: exchangerate-api or currency-api")
 		allowDirty = flag.Bool("allow-dirty", false,
 			"record even though the working tree is modified, marking the manifest dirty")
+		checksFlag = flag.Bool("checks", true,
+			"run counterparty checks (anchor toml, SEP-10/SEP-24, issuer flags) and "+
+				"attach the findings; set false to skip them (the JSON document then "+
+				"carries no findings block)")
 	)
 	flag.Parse()
 
@@ -122,6 +128,24 @@ func main() {
 		RefRate: &refrate.Checked{Inner: refProvider},
 	}
 
+	// The same counterparty checks the server runs, so -json and
+	// /api/corridor describe the same corridor with the same facts. Nil
+	// disables them and the document then carries no findings block at all
+	// — absent and empty must not look the same, which mirrors the server's
+	// own Checks field. -checks=false is how an operator opts out of the
+	// extra latency; the difference is then the flag they chose, not the
+	// binary they ran.
+	var checkRunner *checks.Runner
+	if *checksFlag {
+		checkRunner = &checks.Runner{HorizonURL: dex.DefaultHorizonURL}
+		if httpClient != nil {
+			// One transport covers the sweep, so a recording captures the
+			// checks' traffic alongside the ladder's (see the Runner's own
+			// HTTPClient doc for why this is the supported shape).
+			checkRunner.HTTPClient = httpClient
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -137,10 +161,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Checks run after the measurement and cannot alter it: route.WithFindings
+	// is the only composition point and branches on nothing, exactly as in
+	// the server. With checks skipped this stays nil and the document says
+	// "not checked", never "checked, nothing found".
+	var findings *checks.Findings
+	if checkRunner != nil {
+		findings = checkRunner.ForAsset(ctx, c.dest)
+	}
+
 	if *jsonOut {
-		printJSON(result, "USD/"+c.refPair)
+		printJSON(result, "USD/"+c.refPair, findings)
 	} else {
-		printTable(ctx, result, c, refProvider)
+		printTable(ctx, result, c, refProvider, findings)
 	}
 
 	// Saved after the run so a snapshot only ever exists for a measurement
@@ -326,8 +359,8 @@ func requireCleanTree(allowDirty bool) (dirty bool, err error) {
 
 // printJSON writes the shared wire shape and nothing else to stdout, so
 // `go run ./cmd/ladder -to GHSC -json | jq` works.
-func printJSON(result *route.LadderResult, pair string) {
-	if err := encodeCorridorJSON(os.Stdout, result, pair); err != nil {
+func printJSON(result *route.LadderResult, pair string, findings *checks.Findings) {
+	if err := encodeCorridorJSON(os.Stdout, result, pair, findings); err != nil {
 		// Encoding a well-formed struct to stdout should not fail; if it
 		// does, say so on stderr rather than emitting partial JSON.
 		fmt.Fprintf(os.Stderr, "encoding result: %v\n", err)
@@ -335,26 +368,34 @@ func printJSON(result *route.LadderResult, pair string) {
 	}
 }
 
-// encodeCorridorJSON is the entire body of -json mode: it delegates to
-// route.ToCorridorJSON and encodes exactly what that returns, nothing more.
+// encodeCorridorJSON is the entire body of -json mode: it renders the shared
+// wire shape and encodes exactly what the shared composition point returns,
+// nothing more.
 //
 // Split out from printJSON so a test can capture the bytes without a pipe on
 // os.Stdout. That is also the point of the split: this function has no room
 // left in it to grow a second, independently-maintained JSON shape, which is
 // the drift TestLadderJSONMatchesToCorridorJSON exists to catch — see
-// docs/backlog.md #5 / GitHub issue #113.
-func encodeCorridorJSON(w io.Writer, result *route.LadderResult, pair string) error {
+// docs/backlog.md #5 / GitHub issue #113. Findings are attached the same way
+// the server attaches them, through route.WithFindings — the one composition
+// point — so a corridor measured by either binary carries the same facts.
+func encodeCorridorJSON(w io.Writer, result *route.LadderResult, pair string, findings *checks.Findings) error {
+	out := route.ToCorridorJSON(result, pair)
+	out = route.WithFindings(out, findings)
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(route.ToCorridorJSON(result, pair))
+	return enc.Encode(out)
 }
 
 // printTable renders the human-readable text table. This is the default
-// output and its format is unchanged from before -json existed.
-// The reference provider is passed in rather than constructed here: a second
-// construction is a second HTTP client, which would bypass a recorder and
-// leave the snapshot missing the very rate the table prints.
-func printTable(ctx context.Context, result *route.LadderResult, c corridor, ref refrate.Provider) {
+// output and its format is unchanged from before -json existed, apart from
+// one line: when checks ran, a summary of their findings is printed after
+// the reference mid, so the default-on checks are visible in the output they
+// paid for the latency of. The reference provider is passed in rather than
+// constructed here: a second construction is a second HTTP client, which
+// would bypass a recorder and leave the snapshot missing the very rate the
+// table prints.
+func printTable(ctx context.Context, result *route.LadderResult, c corridor, ref refrate.Provider, findings *checks.Findings) {
 	fmt.Printf("corridor USDC -> %s, benchmarked against USD/%s\n", c.dest.Code, c.refPair)
 	fmt.Printf("run at %s\n\n", time.Now().UTC().Format(time.RFC3339))
 	fmt.Printf("%-8s %14s %12s %9s %-10s %-11s %s\n",
@@ -401,6 +442,15 @@ func printTable(ctx context.Context, result *route.LadderResult, c corridor, ref
 	if r, err := ref.Rate(ctx, "USD", c.refPair); err == nil {
 		fmt.Printf("\nreference mid: %s USD/%s via %s, as of %s\n",
 			r.Mid.StringFixed(4), c.refPair, r.Source, r.AsOf.UTC().Format(time.RFC3339))
+	}
+	if findings != nil {
+		passed, failed, undetermined := findings.Counts()
+		fmt.Printf("checks: %d passed, %d failed, %d undetermined",
+			passed, failed, undetermined)
+		if worst, any := findings.Worst(); any {
+			fmt.Printf(" (worst: %s)", worst)
+		}
+		fmt.Println(" — pass -checks=false to skip")
 	}
 	if priced == 0 {
 		fmt.Printf("no size could be priced for USDC -> %s\n", c.dest.Code)
