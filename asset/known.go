@@ -34,6 +34,13 @@ import (
 //     issuer — but not that it is Circle's. Confirm before any mainnet
 //     execution path ships. See VerifyAgainstTOML in package anchor.
 //
+//   - NGNT   VERIFIED, 2026-08-25, read from
+//     https://cowrie.exchange/.well-known/stellar.toml. Issued by Cowrie
+//     Integrated Systems, status="live", pegged 1:1 to NGN,
+//     anchor_asset_type="fiat". NETWORK_PASSPHRASE = public mainnet.
+//     No ANCHOR_QUOTE_SERVER in the document, so the anchor publishes no
+//     machine-readable SEP-38 rate.
+//
 // The pending status on GHSC and KESC is a first-class finding, not a detail
 // to route around. Per SEP-1 only "live" means in service, and the monitor
 // reports an asset its own issuer has not launched as exactly that rather
