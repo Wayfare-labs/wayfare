@@ -538,6 +538,26 @@ func TestSEP10NotDeclaredIsUndetermined(t *testing.T) {
 	}
 }
 
+// TestSEP10NoProfileIsUndetermined covers the case that precedes "not
+// declared": no stellar.toml was resolved for the anchor at all, so there is
+// nothing to read WEB_AUTH_ENDPOINT from. This must produce the same
+// not-published verdict as a resolved profile with an empty endpoint field,
+// and for the reason that specific branch names — not the generic "check
+// panicked" a nil-pointer dereference would produce if the guard were
+// removed, which is what makes this test able to fail on that mutation.
+func TestSEP10NoProfileIsUndetermined(t *testing.T) {
+	r := Run(ctx(), SEP10EndpointResponds{}, Subject{Domain: "example.test"})
+
+	if r.Determined {
+		t.Error("no resolved profile must be undetermined, not a failure — there is " +
+			"nothing declared to probe, which differs from a declared endpoint that is dead")
+	}
+	if !strings.Contains(r.Reason, "no stellar.toml has been resolved for this anchor") {
+		t.Errorf("Reason = %q, want it to name the missing profile as the cause "+
+			"(a panic-recovery reason here would mean the nil check was removed)", r.Reason)
+	}
+}
+
 // TestSEP10DeclaredButDeadIsAFailure is the other half, and the more damning
 // one: publishing an address that does not answer.
 func TestSEP10DeclaredButDeadIsAFailure(t *testing.T) {
@@ -551,6 +571,51 @@ func TestSEP10DeclaredButDeadIsAFailure(t *testing.T) {
 	}
 	if !strings.Contains(r.Summary, "did not respond") {
 		t.Errorf("Summary = %q, want it to say the endpoint did not respond", r.Summary)
+	}
+}
+
+// TestSEP10ThreeStatesAreDistinct is the discipline issue #183 asks anchor
+// checks to hold: not published, published-and-dead, and published-and-live
+// are three different facts, and none of the three tests below may collapse
+// into another. Mutating sep10_endpoint.go to treat a dead endpoint as
+// undetermined, or an absent one as a failure, breaks this test even though
+// each half already has its own dedicated test above — this is the one place
+// all three are asserted pairwise distinct in a single run.
+func TestSEP10ThreeStatesAreDistinct(t *testing.T) {
+	notPublished := Run(ctx(), SEP10EndpointResponds{}, Subject{Profile: sep10Profile("")})
+	if notPublished.Determined {
+		t.Fatal("not-published must be undetermined")
+	}
+
+	dead := Run(ctx(), SEP10EndpointResponds{}, Subject{
+		Profile: sep10Profile("https://127.0.0.1:1/auth"),
+	})
+	if !dead.Failed() {
+		t.Fatal("published-and-dead must be a determined failure")
+	}
+
+	srv := flagServer(t, 200,
+		`{"transaction":"AAAAAgAAAABmocked","network_passphrase":"Public Global Stellar Network ; September 2015"}`)
+	live := Run(ctx(), SEP10EndpointResponds{HTTPClient: srv.Client()},
+		Subject{Profile: sep10Profile(srv.URL + "/auth")})
+	if !live.Determined || !live.Passed {
+		t.Fatal("published-and-live must be a determined pass")
+	}
+
+	// Pairwise: no two of the three share both Determined and Passed, which
+	// is what would let a reader mistake one state for another downstream.
+	states := []struct {
+		name string
+		r    CheckResult
+	}{{"not-published", notPublished}, {"dead", dead}, {"live", live}}
+	for i := range states {
+		for j := i + 1; j < len(states); j++ {
+			a, b := states[i], states[j]
+			if a.r.Determined == b.r.Determined && a.r.Passed == b.r.Passed {
+				t.Errorf("%s and %s collapsed into the same (determined, passed) pair: (%v, %v)",
+					a.name, b.name, a.r.Determined, a.r.Passed)
+			}
+		}
 	}
 }
 
@@ -895,6 +960,9 @@ func TestSpreadMetricFromRecordedBook(t *testing.T) {
 	if !r.Value.IsPositive() {
 		t.Errorf("spread = %s, want positive on a real book", r.Value)
 	}
+	if len(r.Evidence) == 0 || !strings.Contains(r.Evidence[0].Observed, "mid=") {
+		t.Errorf("spread evidence = %+v, want the independently useful book mid", r.Evidence)
+	}
 	if len(r.Evidence) == 0 {
 		t.Error("no evidence recorded")
 	}
@@ -1026,7 +1094,11 @@ func TestDepthExecutableMetric(t *testing.T) {
 	}
 }
 
-func TestDepthNoPathsProducesUndetermined(t *testing.T) {
+// TestDepthExhaustedProducesDeterminedZero pins that a book that runs out
+// at every probed size produces a determined result with zero, not an
+// undetermined one. This is the core distinction of issue #158: a measured
+// absence of liquidity is not the same as an unmeasurable one.
+func TestDepthExhaustedProducesDeterminedZero(t *testing.T) {
 	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend-empty")
 	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
 
@@ -1039,19 +1111,21 @@ func TestDepthNoPathsProducesUndetermined(t *testing.T) {
 		Receive: asset.NGNC(),
 	})
 
-	if r.Determined {
-		t.Error("no paths must produce an undetermined result")
+	if !r.Determined {
+		t.Fatalf("depth exhausted must be determined, got undetermined: %s", r.Reason)
 	}
-	want := "no path found at any of the 1 sizes probed"
-	if r.Reason != want {
-		t.Errorf("Reason = %q, want %q", r.Reason, want)
+	if !r.Value.IsZero() {
+		t.Errorf("depth exhausted value = %s, want zero", r.Value)
+	}
+	if r.Unit != UnitAmount {
+		t.Errorf("unit = %s, want amount", r.Unit)
 	}
 	if len(r.Evidence) == 0 {
-		t.Error("expected at least one evidence entry explaining the failure")
+		t.Error("expected at least one evidence entry explaining the exhaustion")
 	} else {
 		e := r.Evidence[0]
-		if !strings.Contains(e.Observed, "probed 1 sizes, no path found") {
-			t.Errorf("Evidence[0].Observed = %q, want it to contain 'probed 1 sizes, no path found'", e.Observed)
+		if !strings.Contains(e.Observed, "no path found at any size") {
+			t.Errorf("Evidence[0].Observed = %q, want it to note exhaustion", e.Observed)
 		}
 		if e.Source == "" {
 			t.Error("Evidence[0].Source is blank — a metric must name its data source")
@@ -1062,10 +1136,127 @@ func TestDepthNoPathsProducesUndetermined(t *testing.T) {
 	}
 }
 
+// TestDepthExhaustedMultipleSizes pins that exhaustion across multiple sizes
+// is still a determined result — each size was successfully queried, and the
+// answer was consistently "no path".
+func TestDepthExhaustedMultipleSizes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Every size returns an empty path list — the book is exhausted.
+		_, _ = w.Write([]byte(`{"_embedded":{"records":[]}}`))
+	}))
+	defer srv.Close()
+
+	c := &dex.Client{HorizonURL: srv.URL}
+	depth := DepthMetric{
+		DEX:   c,
+		Sizes: []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(100)},
+	}
+	r := depth.RunExecutable(ctx(), Subject{
+		Send:    asset.USDC(),
+		Receive: asset.NGNC(),
+	})
+
+	if !r.Determined {
+		t.Fatalf("depth exhausted across sizes must be determined, got undetermined: %s", r.Reason)
+	}
+	if !r.Value.IsZero() {
+		t.Errorf("depth exhausted value = %s, want zero", r.Value)
+	}
+}
+
+// TestDepthProbeErrorsRemainUndetermined pins that probe failures — the
+// request never reached an upstream — produce undetermined, not exhausted.
+func TestDepthProbeErrorsRemainUndetermined(t *testing.T) {
+	// A client pointed at nothing: every probe will fail before reaching
+	// an upstream. The result must be undetermined, not determined-zero
+	// (which would read as "measured no liquidity" rather than "could not
+	// measure at all").
+	c := &dex.Client{HorizonURL: "http://127.0.0.1:1"}
+
+	depth := DepthMetric{
+		DEX:   c,
+		Sizes: []decimal.Decimal{decimal.NewFromInt(1)},
+	}
+	r := depth.RunExecutable(ctx(), Subject{
+		Send:    asset.USDC(),
+		Receive: asset.NGNC(),
+	})
+
+	if r.Determined {
+		t.Error("probe errors must produce an undetermined result, not a determined one")
+	}
+	if r.Reason == "" {
+		t.Error("undetermined result must carry a reason")
+	}
+}
+
+// TestDepthMixedExhaustedAndErrored covers the case where some sizes priced
+// and others hit probe errors. The measured sizes give real data; the failed
+// sizes are unknown, never zero.
+func TestDepthMixedExhaustedAndErrored(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		amount := r.URL.Query().Get("source_amount")
+		d, err := decimal.NewFromString(amount)
+		if err != nil {
+			http.Error(w, "bad amount", http.StatusBadRequest)
+			return
+		}
+		// Small sizes succeed, large sizes fail
+		if d.GreaterThanOrEqual(decimal.NewFromInt(100)) {
+			http.Error(w, "internal", http.StatusInternalServerError)
+			return
+		}
+		dest := d.Mul(decimal.RequireFromString("1300"))
+		_, _ = w.Write([]byte(`{"_embedded":{"records":[{
+			"source_asset_type":"credit_alphanum4","source_asset_code":"USDC",
+			"source_amount":"` + amount + `",
+			"destination_asset_type":"credit_alphanum4","destination_asset_code":"NGNC",
+			"destination_amount":"` + dest.String() + `","path":[]}]}}`))
+	}))
+	defer srv.Close()
+
+	c := &dex.Client{HorizonURL: srv.URL}
+	depth := DepthMetric{
+		DEX:   c,
+		Sizes: []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(100)},
+	}
+	r := depth.RunExecutable(ctx(), Subject{
+		Send:    asset.USDC(),
+		Receive: asset.NGNC(),
+	})
+
+	if !r.Determined {
+		t.Fatalf("mixed exhausted+errored must be determined with measured sizes, got undetermined: %s", r.Reason)
+	}
+	if !r.Value.IsPositive() {
+		t.Errorf("executable amount = %s, want positive from the measured size", r.Value)
+	}
+	if !strings.Contains(r.Summary, "1 of 2 sizes measured") {
+		t.Errorf("Summary = %q, want it to note partial measurement", r.Summary)
+	}
+}
+
 func TestDepthMetricDescriptorIsValid(t *testing.T) {
 	d := DepthMetric{}.Describe()
 	if err := d.Validate(); err != nil {
 		t.Errorf("depth metric descriptor: %v", err)
+	}
+}
+
+// TestDepthDefaultSizesMatchLadder verifies that the depth metric's default
+// sizes are the same as dex.DefaultSizes (the shared ladder), so both the
+// route ladder and the depth metric measure the same corridor at the same
+// sizes.
+func TestDepthDefaultSizesMatchLadder(t *testing.T) {
+	if len(defaultDepthSizes) != len(dex.DefaultSizes) {
+		t.Fatalf("defaultDepthSizes has %d sizes, dex.DefaultSizes has %d",
+			len(defaultDepthSizes), len(dex.DefaultSizes))
+	}
+	for i := range defaultDepthSizes {
+		if !defaultDepthSizes[i].Equal(dex.DefaultSizes[i]) {
+			t.Errorf("defaultDepthSizes[%d] = %s, dex.DefaultSizes[%d] = %s",
+				i, defaultDepthSizes[i], i, dex.DefaultSizes[i])
+		}
 	}
 }
 
@@ -1125,7 +1316,8 @@ type depthExecutable struct{ DepthMetric }
 
 func (m depthExecutable) Describe() Descriptor {
 	return Descriptor{
-		ID: "depth.executable", Title: "executable depth",
+		ID: "depth.executable", Scope: ScopeCorridor, Venue: VenuePathfinding,
+		Title:        "executable depth",
 		CanDetermine: "see DepthMetric", CannotDetermine: "see DepthMetric",
 	}
 }
@@ -1360,6 +1552,235 @@ func TestPriceImpactMetricDescriptorIsValid(t *testing.T) {
 	d := PriceImpactMetric{}.Describe()
 	if err := d.Validate(); err != nil {
 		t.Errorf("price impact metric descriptor: %v", err)
+	}
+}
+
+// price impact curve -----------------------------------------------------------
+//
+// GitHub issue #159: PriceImpactMetric should report the full curve shape
+// across multiple sizes, not just a single degradation figure.
+
+func TestPriceImpactCurveFromRecordedPaths(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend-curve")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	impact := PriceImpactMetric{
+		DEX: c,
+		Sizes: []decimal.Decimal{
+			decimal.NewFromInt(1),
+			decimal.NewFromInt(10),
+			decimal.NewFromInt(100),
+			decimal.NewFromInt(1000),
+			decimal.NewFromInt(5000),
+		},
+	}
+	curve, r := impact.RunCurve(ctx(), Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+
+	if !r.Determined {
+		t.Fatalf("price impact curve undetermined: %s", r.Reason)
+	}
+	if curve == nil {
+		t.Fatal("RunCurve returned nil curve for a determined result")
+	}
+	if r.Unit != UnitPercent {
+		t.Errorf("unit = %s, want percent", r.Unit)
+	}
+	if r.Value.IsNegative() {
+		t.Errorf("max impact = %s, must never be negative", r.Value)
+	}
+
+	// The curve should have 5 points (all 5 sizes found paths).
+	if got := len(curve.Points); got != 5 {
+		t.Fatalf("curve points = %d, want 5", got)
+	}
+
+	// The reference rate should be the rate at the smallest size.
+	if curve.ReferenceRate.IsZero() {
+		t.Error("reference rate must not be zero")
+	}
+
+	// The first point (smallest size) should have zero impact.
+	if !curve.Points[0].ImpactPct.IsZero() {
+		t.Errorf("first point impact = %s, want 0 (reference point)", curve.Points[0].ImpactPct)
+	}
+
+	// Impact should be non-decreasing (later sizes degrade at least as
+	// much as earlier ones — the fixture is monotonic).
+	var prevImpact decimal.Decimal
+	for i, p := range curve.Points {
+		if p.ImpactPct.LessThan(prevImpact) {
+			t.Errorf("point %d impact %s < previous %s, curve is not monotonic",
+				i, p.ImpactPct, prevImpact)
+		}
+		prevImpact = p.ImpactPct
+	}
+
+	// The last point should have positive impact (the fixture degrades).
+	if curve.Points[len(curve.Points)-1].ImpactPct.IsZero() {
+		t.Error("last point has zero impact; the fixture should show degradation")
+	}
+
+	// Evidence should contain each point.
+	if len(r.Evidence) == 0 {
+		t.Error("no evidence recorded")
+	}
+	for _, p := range curve.Points {
+		if !strings.Contains(r.Evidence[0].Observed, "size="+p.Size.StringFixed(1)) {
+			t.Errorf("evidence does not mention size %s", p.Size)
+		}
+	}
+
+	if r.Summary == "" {
+		t.Error("summary is empty")
+	}
+}
+
+func TestPriceImpactCurveBackwardCompatibleProbeFull(t *testing.T) {
+	// When only ProbeSize and FullSize are set (no Sizes), the metric
+	// should behave exactly as before — a two-point comparison.
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	impact := PriceImpactMetric{
+		DEX:       c,
+		ProbeSize: decimal.NewFromInt(1),
+		FullSize:  decimal.NewFromInt(100),
+	}
+	curve, r := impact.RunCurve(ctx(), Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+
+	if !r.Determined {
+		t.Fatalf("price impact undetermined: %s", r.Reason)
+	}
+	if curve == nil {
+		t.Fatal("RunCurve returned nil curve for a determined result")
+	}
+	if got := len(curve.Points); got != 2 {
+		t.Fatalf("curve points = %d, want 2 (probe + full)", got)
+	}
+	// Both points use the same fixture → same rate → zero impact.
+	if !curve.Points[1].ImpactPct.IsZero() {
+		t.Errorf("impact = %s, want 0 when both sizes return the same rate",
+			curve.Points[1].ImpactPct)
+	}
+}
+
+func TestPriceImpactCurveFlatWhenRatesIdentical(t *testing.T) {
+	// The usdc-ngnc-strictsend snapshot returns the same body for both
+	// sizes → the curve should be flat (zero impact at every point).
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	impact := PriceImpactMetric{
+		DEX:   c,
+		Sizes: []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(100)},
+	}
+	curve, r := impact.RunCurve(ctx(), Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+
+	if !r.Determined {
+		t.Fatalf("undetermined: %s", r.Reason)
+	}
+	if curve == nil {
+		t.Fatal("nil curve")
+	}
+	for i, p := range curve.Points {
+		if !p.ImpactPct.IsZero() {
+			t.Errorf("point %d impact = %s, want 0 on a flat curve", i, p.ImpactPct)
+		}
+	}
+	if !r.Value.IsZero() {
+		t.Errorf("max impact = %s, want 0 on a flat curve", r.Value)
+	}
+}
+
+func TestPriceImpactCurveAllSizesFail(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend-empty")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	impact := PriceImpactMetric{
+		DEX:   c,
+		Sizes: []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(100)},
+	}
+	curve, r := impact.RunCurve(ctx(), Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+
+	if r.Determined {
+		t.Error("all sizes failing must produce an undetermined result")
+	}
+	if curve != nil {
+		t.Error("all sizes failing must return a nil curve")
+	}
+}
+
+func TestPriceImpactCurveNilDEX(t *testing.T) {
+	impact := PriceImpactMetric{}
+	curve, r := impact.RunCurve(ctx(), Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+	if r.Determined {
+		t.Error("nil DEX client must produce an undetermined result")
+	}
+	if curve != nil {
+		t.Error("nil DEX must return a nil curve")
+	}
+}
+
+func TestPriceImpactCurveEmptySubject(t *testing.T) {
+	impact := PriceImpactMetric{DEX: &dex.Client{HorizonURL: "http://example.invalid"}}
+	curve, r := impact.RunCurve(ctx(), Subject{})
+	if r.Determined {
+		t.Error("empty subject must produce an undetermined result")
+	}
+	if curve != nil {
+		t.Error("empty subject must return a nil curve")
+	}
+}
+
+func TestPriceImpactCurveNoMarket(t *testing.T) {
+	poisoned := &dex.Client{HorizonURL: "http://127.0.0.1:1"}
+	impact := PriceImpactMetric{DEX: poisoned}
+	curve, r := impact.RunCurve(ctx(), Subject{
+		Send: asset.USDC(), Receive: asset.KESC(), Integrity: "NO-MARKET",
+	})
+	if r.Determined {
+		t.Error("NO-MARKET corridor must not produce a determined result")
+	}
+	if curve != nil {
+		t.Error("NO-MARKET must return a nil curve")
+	}
+	if !strings.Contains(r.Reason, "NO-MARKET") {
+		t.Errorf("reason = %q, want it to name NO-MARKET", r.Reason)
+	}
+}
+
+func TestPriceImpactCurveRunMatchesRunCurve(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend-curve")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	impact := PriceImpactMetric{
+		DEX: c,
+		Sizes: []decimal.Decimal{
+			decimal.NewFromInt(1),
+			decimal.NewFromInt(100),
+		},
+	}
+
+	runResult := RunMetric(ctx(), impact, Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+	curve, curveResult := impact.RunCurve(ctx(), Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+
+	if runResult.Determined != curveResult.Determined {
+		t.Errorf("Run determined=%v, RunCurve determined=%v", runResult.Determined, curveResult.Determined)
+	}
+	if runResult.Value.Equal(curveResult.Value) {
+		// Values should match.
+	} else {
+		t.Errorf("Run value=%s, RunCurve value=%s", runResult.Value, curveResult.Value)
+	}
+	if curve == nil && runResult.Determined {
+		t.Error("RunCurve returned nil curve but Run was determined")
+	}
+}
+
+func TestPriceImpactCurveDescriptorIsValid(t *testing.T) {
+	d := PriceImpactMetric{}.Describe()
+	if err := d.Validate(); err != nil {
+		t.Errorf("price impact curve descriptor: %v", err)
 	}
 }
 

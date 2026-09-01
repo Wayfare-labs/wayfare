@@ -264,8 +264,8 @@ funnel for every Horizon call and both clients already accept an
 
 ## Related
 
-- [snapshot-record-replay.md](snapshot-record-replay.md) — how to record and
-  replay snapshots in practice
+- [docs/glossary.md](glossary.md) — every state a reader can meet (verdicts,
+  integrity, agreement, checks, freshness)
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — project invariants
 - [docs/corridor-measurements.md](corridor-measurements.md) — the published
   figures these snapshots make testable
