@@ -19,6 +19,7 @@ import (
 
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/checks"
+	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
 )
@@ -82,7 +83,39 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/assets", s.handleAssets)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.Handle("/", uiHandler())
-	return mux
+	return withCORS(mux)
+}
+
+// withCORS makes the API callable from any origin, and records the policy
+// rather than leaving it implicit (backlog #38 / issue #139).
+//
+// The decision is Access-Control-Allow-Origin: * because there is nothing
+// here to protect: the API is public, keyless and read-only, and the
+// corridor figures it serves are data this project exists to publish. A
+// wildcard origin is only unsafe when a response can carry credentials,
+// and this surface carries none — there is deliberately no
+// Access-Control-Allow-Credentials header, so a browser cannot attach
+// cookies or stored auth to a cross-origin request even if one existed.
+// If the API ever grows a write path or credentials, this middleware is
+// the single place that policy must change.
+//
+// Preflight (OPTIONS) is answered here so a client that adds custom
+// headers can still call the API; the methods list is exactly what the
+// mux supports.
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+			if reqHeaders := r.Header.Get("Access-Control-Request-Headers"); reqHeaders != "" {
+				w.Header().Set("Access-Control-Allow-Headers", reqHeaders)
+			}
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handlers -------------------------------------------------------------------
@@ -242,7 +275,58 @@ func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok",
+		"data":   s.healthData(r.Context()),
+	})
+}
+
+// healthData returns the newest stored run per corridor and its age, or nil
+// when no history exists to describe.
+//
+// A health probe answers two different questions: is the process alive, and
+// is the data it serves current? /healthz has always answered the first; the
+// second is the one at risk on a -history-first deployment, whose served
+// history is as old as the image it was built from. nil (JSON null) is the
+// explicit unknown — no store, or no stored run — never a fabricated zero or
+// "now".
+func (s *Server) healthData(ctx context.Context) map[string]healthCorridorJSON {
+	if s.Store == nil {
+		return nil
+	}
+	corridors, err := s.Store.Corridors(ctx)
+	if err != nil || len(corridors) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	out := make(map[string]healthCorridorJSON, len(corridors))
+	for _, c := range corridors {
+		rec, err := s.Store.Latest(ctx, c)
+		if err != nil || rec == nil {
+			continue
+		}
+		age := now.Sub(rec.RecordedAt.UTC())
+		if age < 0 {
+			age = 0
+		}
+		out[c] = healthCorridorJSON{
+			RecordedAt: rec.RecordedAt.UTC().Format(time.RFC3339),
+			AgeSeconds: int64(age.Seconds()),
+			AgeHuman:   humanAge(age),
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// healthCorridorJSON is one corridor's newest stored run, as reported on
+// /healthz.
+type healthCorridorJSON struct {
+	RecordedAt string `json:"recorded_at"`
+	AgeSeconds int64  `json:"age_seconds"`
+	AgeHuman   string `json:"age_human"`
 }
 
 // helpers --------------------------------------------------------------------
@@ -335,6 +419,16 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 		ReferenceSecondaryMid:    rec.Reference.SecondaryMid,
 		ReferenceSecondarySource: rec.Reference.SecondarySource,
 		ReferenceDivergencePct:   rec.Reference.DivergencePct,
+		// ReferenceAgreement and Scored are reconstructed from the stored
+		// record rather than dropped. The record's reference block is the same
+		// state refrate.reconcile produced, persisted: a secondary implies
+		// two providers answered, and the recorded divergence and as-of
+		// moments decide which agreement band they fell into. ScoredAgainst
+		// records that verdicts were actually derived, so scored is faithful
+		// to measurement time instead of defaulting to false. See
+		// staleAgreement and staleScored.
+		ReferenceAgreement: staleAgreement(&rec.Reference),
+		Scored:             staleScored(&rec.Reference),
 		// ReferenceFetchedAt is carried from the record so a reader can tell
 		// how old the benchmark was when the reading was taken — recorded
 		// from the live path since Version 3, and absent on an older record
@@ -369,6 +463,10 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 		}
 		if r.Priced {
 			rj.Quote = &route.QuoteJSON{
+				// Hardcoded for the same reason Source is: runstore.Rung
+				// carries no kind of its own, and every record in the store
+				// today was priced on-chain. See route.QuoteJSON.Kind.
+				Kind:          string(route.KindDEX),
 				Description:   r.Path,
 				Source:        "stellar-dex",
 				ReceiveAmount: r.ReceiveAmount,
@@ -386,6 +484,7 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 	// stale path, the recommendation the monitor refused to make live.
 	if rec.Recommended != nil {
 		out.Recommended = &route.QuoteJSON{
+			Kind:          string(route.KindDEX),
 			Description:   rec.Recommended.Path,
 			Source:        "stellar-dex",
 			ReceiveAmount: rec.Recommended.ReceiveAmount,
@@ -404,6 +503,85 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 		out.Findings = f
 	}
 	return out
+}
+
+// staleScored reconstructs the wire's scored bool from a stored record.
+//
+// A corridor is scored exactly when verdicts were derived against one of the
+// reference mids, which the record captures as ScoredAgainst (empty when the
+// rate was unscorable — see FromCorridorJSON's scoredAgainst). So faithfulness
+// is checking whether a scored-against source was recorded, not reproducing the
+// refrate band calculation: recording it is what made it scorable.
+func staleScored(ref *runstore.Reference) bool {
+	return ref.ScoredAgainst != ""
+}
+
+// staleAgreement reconstructs the wire's reference_agreement from a stored
+// record the way refrate.reconcile originally classified it, rather than
+// dropping it.
+//
+// The record's reference block is the state reconcile produced, persisted:
+//   - No secondary implies only one provider answered: SINGLE.
+//   - Otherwise the recorded DivergencePct and as-of moments reproduce the
+//     band reconcile assigned at measurement time: beyond the malfunction
+//     threshold is MALFUNCTION, as-of moments far apart in time is STALE, and
+//     below the agree ceiling is AGREE, with DISAGREE between the two. This
+//     is the same classification order refrate.reconcile used, so a corridor
+//     whose providers agreed does not read back as scored:false, and one that
+//     malformed reads back as MALFUNCTION rather than as a plausible band.
+//   - Where the stored record genuinely cannot answer — a divergence that was
+//     never recorded, or one that is not a number — the honest output is the
+//     explicit UNKNOWN below rather than "" or a guessed band.
+func staleAgreement(ref *runstore.Reference) string {
+	if ref.SecondaryMid == "" && ref.SecondarySource == "" {
+		// Only one provider answered: uncorroborated by construction.
+		return refrate.AgreementSingle.String()
+	}
+
+	d, err := decimal.NewFromString(ref.DivergencePct)
+	if err != nil {
+		// Divergence was never recorded, or is not a number on this build.
+		// Older records predate the cross-check, or the field is corrupted —
+		// the stored record genuinely cannot answer, so an explicit UNKNOWN
+		// is the honest output rather than "" or a guessed band.
+		return "UNKNOWN"
+	}
+
+	// A divergence past the malfunction threshold is a broken feed, exactly
+	// as reconcile judged it at measurement time.
+	if d.GreaterThan(refrate.DivergenceMalfunction) {
+		return refrate.AgreementMalfunction.String()
+	}
+	// Two providers answering quotes far enough apart in time that their
+	// difference measured lag rather than disagreement is STALE, again
+	// reconstructed from the stored as-of moments the way reconcile did.
+	// Below the malfunction threshold and not stale, the band is decided by
+	// whether the recorded divergence crosses the agreement ceiling.
+	if asOfGap(ref) > refrate.StaleGap {
+		return refrate.AgreementStale.String()
+	}
+	if d.GreaterThan(refrate.DivergenceAgree) {
+		return refrate.AgreementDisagree.String()
+	}
+	return refrate.AgreementAgree.String()
+}
+
+// asOfGap returns how far apart two providers' as-of moments were, or zero
+// when either stamp is absent or unreadable. A missing stamp is treated as no
+// gap (not stale): the record that lacks the times cannot claim STALE on
+// reconstruction, and the bordering divergences (AGREE/DISAGREE) still answer
+// faithfully from the recorded numbers alone.
+func asOfGap(ref *runstore.Reference) time.Duration {
+	a, errA := time.Parse(time.RFC3339, ref.AsOf)
+	b, errB := time.Parse(time.RFC3339, ref.SecondaryAsOf)
+	if errA != nil || errB != nil {
+		return 0
+	}
+	gap := a.Sub(b)
+	if gap < 0 {
+		gap = -gap
+	}
+	return gap
 }
 
 // storedFindingsJSON rebuilds the wire findings block from a stored record,

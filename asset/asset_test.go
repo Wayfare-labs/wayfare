@@ -146,3 +146,37 @@ func TestIsNative(t *testing.T) {
 		t.Error("fiat coded XLM must not be native")
 	}
 }
+
+// TestIdentifiable pins which assets carry enough identity to render a
+// meaningful SEP38 wire form. An issued Stellar asset with no issuer is the
+// case that matters most: SEP38() would still return a string for it
+// ("stellar:CODE:"), and that string looks complete without actually naming
+// an issuer — exactly the kind of guessed identity a caller must not publish.
+func TestIdentifiable(t *testing.T) {
+	cases := []struct {
+		name string
+		a    Asset
+		want bool
+	}{
+		{"issued Stellar asset", USDC(), true},
+		{"native XLM", Native(), true},
+		{"fiat", Fiat("NGN"), true},
+		{"issued Stellar asset with no issuer", Stellar("USDC", ""), false},
+		{"zero-value asset", Asset{}, false},
+		{"fiat with no code", Asset{Kind: KindFiat}, false},
+		// An unrecognised Kind must not fall through to the Stellar case:
+		// SEP38()'s own default branch renders one as "stellar:CODE:ISSUER"
+		// regardless of Kind, so Identifiable has to refuse it explicitly
+		// rather than let a future Kind value be identified as Stellar by
+		// accident.
+		{"unknown Kind", Asset{Kind: Kind(99), Code: "USDC", Issuer: "GISSUER"}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.a.Identifiable(); got != tc.want {
+				t.Errorf("Identifiable() = %v, want %v for %+v", got, tc.want, tc.a)
+			}
+		})
+	}
+}

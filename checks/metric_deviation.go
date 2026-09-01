@@ -65,6 +65,7 @@ func (DeviationMetric) Describe() Descriptor {
 		ID:    "deviation.book-vs-reference",
 		Scope: ScopeCorridor,
 		Cost:  CostOneRequest,
+		Venue: VenueOrderBook,
 		Title: "Deviation of the direct book mid from the reference mid",
 		CanDetermine: "The signed percentage gap between the mid implied by the " +
 			"corridor's direct order book and an independent reference mid, with " +
@@ -147,8 +148,7 @@ func (m DeviationMetric) Run(ctx context.Context, s Subject) MetricResult {
 		return MetricUndetermined(d, s, reason, bookEvidence, refEvidence)
 	}
 
-	bookMid := h.BestBid.Add(h.BestAsk).Div(decimal.NewFromInt(2))
-	if bookMid.IsZero() {
+	if h.Mid.IsZero() {
 		bookEvidence := Evidence{
 			Source:     bookSource("/order_book", s, sell, buy, substituted),
 			Observed:   fmt.Sprintf("bid=%s, ask=%s", h.BestBid, h.BestAsk),
@@ -160,18 +160,18 @@ func (m DeviationMetric) Run(ctx context.Context, s Subject) MetricResult {
 	// Signed: positive means the book prices Buy richer against Sell than
 	// the reference does, negative means cheaper. Never blended with the
 	// reference — both mids are reported so a reader can recompute this.
-	deviation := bookMid.Sub(m.Reference.Mid).Div(m.Reference.Mid).Mul(decimal.NewFromInt(100))
+	deviation := h.Mid.Sub(m.Reference.Mid).Div(m.Reference.Mid).Mul(decimal.NewFromInt(100))
 
 	bookEvidence := Evidence{
 		Source: bookSource("/order_book", s, sell, buy, substituted),
 		Observed: fmt.Sprintf("book_mid=%s, bid=%s, ask=%s, bids=%d, asks=%d",
-			bookMid, h.BestBid, h.BestAsk, h.BidLevels, h.AskLevels),
+			h.Mid, h.BestBid, h.BestAsk, h.BidLevels, h.AskLevels),
 		ObservedAt: at,
 	}
 
 	summary := fmt.Sprintf(
 		"book mid %s deviates %s%% from reference mid %s (%s)",
-		bookMid.StringFixed(6), deviation.StringFixed(4), m.Reference.Mid.StringFixed(6), m.Reference.Source)
+		h.Mid.StringFixed(6), deviation.StringFixed(4), m.Reference.Mid.StringFixed(6), m.Reference.Source)
 
 	return MetricValue(d, s, deviation, UnitPercent, summary, bookEvidence, refEvidence)
 }
