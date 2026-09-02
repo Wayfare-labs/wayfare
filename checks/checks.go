@@ -203,6 +203,19 @@ type Subject struct {
 	// NGNC. A book metric that measures Underlying instead of Receive must
 	// say so explicitly in its evidence; the substitution is never silent.
 	Underlying asset.Asset
+
+	// ReferenceAgreement records how two reference providers related on the
+	// pair that would score this corridor. "MALFUNCTION" means the two
+	// disagreed so far apart that neither is trustworthy, and no derived
+	// quantity (verdict, price impact, deviation) may be computed against
+	// either. The string follows refrate.Agreement.String() by convention;
+	// duplicated rather than imported: checks cannot import refrate without
+	// creating a cycle.
+	//
+	// Empty means unknown. Metrics that depend on a scorable reference
+	// treat unknown the same as scorable — absent information is not
+	// evidence of malfunction.
+	ReferenceAgreement string
 }
 
 // Label renders the subject for a reader.

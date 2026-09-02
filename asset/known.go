@@ -34,6 +34,13 @@ import (
 //     issuer — but not that it is Circle's. Confirm before any mainnet
 //     execution path ships. See VerifyAgainstTOML in package anchor.
 //
+//   - NGNT   VERIFIED, 2026-08-25, read from
+//     https://cowrie.exchange/.well-known/stellar.toml. Issued by Cowrie
+//     Integrated Systems, status="live", pegged 1:1 to NGN,
+//     anchor_asset_type="fiat". NETWORK_PASSPHRASE = public mainnet.
+//     No ANCHOR_QUOTE_SERVER in the document, so the anchor publishes no
+//     machine-readable SEP-38 rate.
+//
 // The pending status on GHSC and KESC is a first-class finding, not a detail
 // to route around. Per SEP-1 only "live" means in service, and the monitor
 // reports an asset its own issuer has not launched as exactly that rather
@@ -294,10 +301,10 @@ var (
 )
 
 func init() {
+	if err := validateRegistry(registry); err != nil {
+		panic(fmt.Sprintf("asset: %v", err))
+	}
 	for _, e := range registry {
-		if err := ValidateEntry(e); err != nil {
-			panic(fmt.Sprintf("asset: invalid registry entry %q: %v", e.Code, err))
-		}
 		a := Stellar(e.Code, e.Issuer)
 		known[e.Code] = a
 		if e.Peg != "" {
@@ -308,6 +315,25 @@ func init() {
 		}
 		entries[e.Code+":"+e.Issuer] = e
 	}
+}
+
+// validateRegistry checks that every entry is individually valid and that no
+// two entries share a code with a different issuer. The second condition is
+// the property issue #137 exists to enforce: asset.Lookup resolves by code,
+// so two assets sharing a code but differing by issuer must never be silently
+// conflated.
+func validateRegistry(entries []Entry) error {
+	seen := make(map[string]string) // code → first issuer
+	for _, e := range entries {
+		if err := ValidateEntry(e); err != nil {
+			return fmt.Errorf("entry %q: %w", e.Code, err)
+		}
+		if prev, dup := seen[e.Code]; dup && prev != e.Issuer {
+			return fmt.Errorf("code %q registered with issuer %q and %q — two assets sharing a code with different issuers must not be conflated", e.Code, prev, e.Issuer)
+		}
+		seen[e.Code] = e.Issuer
+	}
+	return nil
 }
 
 // USDC is the settlement asset senders start from.

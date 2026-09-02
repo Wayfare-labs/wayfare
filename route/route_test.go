@@ -2,8 +2,10 @@ package route
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
+	"github.com/Wayfare-labs/wayfare/snapshot"
 )
 
 // liveStrictSendResponse is the actual body Horizon returned for
@@ -232,6 +235,36 @@ func TestGoodRouteIsRecommended(t *testing.T) {
 	}
 }
 
+// TestDEXQuoteIsTaggedWithKind pins that a quote priced through Horizon
+// pathfinding is always tagged KindDEX, never left zero-valued. This is the
+// domain-side half of distinguishing on-chain DEX execution from an anchor's
+// own SEP-38 rails — see QuoteJSON.Kind for the wire-side half. The two price
+// the same pair differently, and conflating them would misattribute the loss
+// to the wrong rail.
+func TestDEXQuoteIsTaggedWithKind(t *testing.T) {
+	srv := horizonStub(t, liveStrictSendResponse)
+	defer srv.Close()
+
+	e := &Engine{DEX: &dex.Client{HorizonURL: srv.URL}, RefRate: usdToNGN("660")}
+	res, err := e.Quote(context.Background(), ngnRequest("100"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+
+	if len(res.Quotes) == 0 {
+		t.Fatal("expected at least one priced quote")
+	}
+	if res.Quotes[0].Kind != KindDEX {
+		t.Errorf("Quotes[0].Kind = %q, want %q", res.Quotes[0].Kind, KindDEX)
+	}
+	if res.Recommended == nil {
+		t.Fatal("expected a recommended quote")
+	}
+	if res.Recommended.Kind != KindDEX {
+		t.Errorf("Recommended.Kind = %q, want %q", res.Recommended.Kind, KindDEX)
+	}
+}
+
 // TestTokenDeliveryIsDisclosed ensures the user is told the on-chain leg ends
 // in NGNC rather than naira in a bank account.
 //
@@ -305,6 +338,137 @@ func TestVerdictThresholds(t *testing.T) {
 		if got := verdictFor(decimal.RequireFromString(c.loss)); got != c.want {
 			t.Errorf("verdictFor(%s) = %s, want %s", c.loss, got, c.want)
 		}
+	}
+}
+
+// TestVerdictThresholdBoundaries pins the three grade bands at the exact
+// edge documented in the Verdict constants, immediately below it, and
+// immediately above it.
+//
+// verdictFor uses LessThanOrEqual, so "within 3%" means 3.0% is GOOD and
+// 3.000001% is FAIR -- that is the intended reading of "<= 3%", and nothing
+// else in this suite fails if a refactor quietly swaps LessThanOrEqual for
+// LessThan. These nine values, expressed as decimals rather than floats so
+// no binary rounding can nudge a value across a boundary before it is even
+// compared, make that swap fail here instead.
+func TestVerdictThresholdBoundaries(t *testing.T) {
+	cases := []struct {
+		loss           string
+		wantVerdict    Verdict
+		wantAcceptable bool
+	}{
+		// ThresholdGood = 3
+		{"2.999", VerdictGood, true},
+		{"3.0", VerdictGood, true},
+		{"3.001", VerdictFair, true},
+		// ThresholdFair = 8
+		{"7.999", VerdictFair, true},
+		{"8.0", VerdictFair, true},
+		{"8.001", VerdictPoor, true},
+		// ThresholdPoor = 20
+		{"19.999", VerdictPoor, true},
+		{"20.0", VerdictPoor, true},
+		{"20.001", VerdictUnusable, false},
+	}
+	for _, c := range cases {
+		loss := decimal.RequireFromString(c.loss)
+		got := verdictFor(loss)
+		if got != c.wantVerdict {
+			t.Errorf("verdictFor(%s) = %s, want %s", c.loss, got, c.wantVerdict)
+		}
+		if gotAcceptable := got.Acceptable(); gotAcceptable != c.wantAcceptable {
+			t.Errorf("verdictFor(%s).Acceptable() = %v, want %v", c.loss, gotAcceptable, c.wantAcceptable)
+		}
+	}
+}
+
+// stubDestAmount is a strict-send Horizon fixture for a single direct
+// (path-less) route from 100 USDC to the given NGNC amount. Paired with a
+// mid of 1000 USD/NGN and a send amount of 100, the destination amount
+// determines LossPct exactly:
+//
+//	LossPct = (1000 - destAmount/100) / 1000 * 100
+//
+// which is how each case below is constructed to land precisely on or
+// beside a threshold rather than merely near it.
+func stubDestAmount(destAmount string) string {
+	return fmt.Sprintf(`{
+  "_embedded": {
+    "records": [
+      {
+        "source_asset_type": "credit_alphanum4",
+        "source_asset_code": "USDC",
+        "source_amount": "100.0000000",
+        "destination_asset_type": "credit_alphanum4",
+        "destination_asset_code": "NGNC",
+        "destination_amount": "%s",
+        "path": []
+      }
+    ]
+  }
+}`, destAmount)
+}
+
+// TestLadderRecommendationAtPoorBoundary pins the recommendation rule at
+// exactly the Poor/Unusable edge: at 20.0% loss a quote is POOR, therefore
+// Acceptable, therefore recommendable; at 20.001% it is UNUSABLE and a
+// ladder containing only that one rung must recommend nothing at all. One
+// comparison operator separates "we recommend this route" from "we
+// recommend nothing", and this test fails if verdictFor's
+// LessThanOrEqual against ThresholdPoor is weakened to LessThan.
+func TestLadderRecommendationAtPoorBoundary(t *testing.T) {
+	cases := []struct {
+		name          string
+		destAmount    string // chosen to yield exactly lossPct against a mid of 1000
+		lossPct       string
+		wantVerdict   Verdict
+		wantRecommend bool
+	}{
+		{"at_threshold_20.0_is_recommended", "80000", "20", VerdictPoor, true},
+		{"just_over_threshold_20.001_is_not_recommended", "79999", "20.001", VerdictUnusable, false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := horizonStub(t, stubDestAmount(c.destAmount))
+			defer srv.Close()
+
+			e := &Engine{DEX: &dex.Client{HorizonURL: srv.URL}, RefRate: usdToNGN("1000")}
+
+			// A ladder made of exactly one rung, at the send amount this
+			// fixture's loss was constructed against.
+			lr, err := e.Ladder(context.Background(), LadderRequest{
+				SendAsset:      asset.USDC(),
+				ReceiveAsset:   asset.NGNC(),
+				Sizes:          []decimal.Decimal{decimal.NewFromInt(100)},
+				ReferenceBase:  "USD",
+				ReferenceQuote: "NGN",
+			})
+			if err != nil {
+				t.Fatalf("Ladder: %v", err)
+			}
+			if len(lr.Rungs) != 1 || !lr.Rungs[0].Priced() {
+				t.Fatalf("expected exactly one priced rung, got %+v", lr.Rungs)
+			}
+
+			q := lr.Rungs[0].Result.Quotes[0]
+			if got := q.LossPct.String(); got != c.lossPct {
+				t.Fatalf("fixture produced loss %s, want %s -- fix the fixture, this case does not test the boundary it claims to", got, c.lossPct)
+			}
+			if q.Verdict != c.wantVerdict {
+				t.Fatalf("Verdict = %s, want %s", q.Verdict, c.wantVerdict)
+			}
+
+			if got := lr.Viable(); got != c.wantRecommend {
+				t.Errorf("Viable() = %v, want %v", got, c.wantRecommend)
+			}
+			switch {
+			case c.wantRecommend && lr.Recommended == nil:
+				t.Error("expected a recommendation at exactly the Poor threshold, got nil")
+			case !c.wantRecommend && lr.Recommended != nil:
+				t.Errorf("expected no recommendation just over the Poor threshold, got %+v", lr.Recommended)
+			}
+		})
 	}
 }
 
@@ -547,6 +711,102 @@ func TestUnknownIssuerIsNotTreatedAsFiat(t *testing.T) {
 	}
 }
 
+// malformed snapshot loading -------------------------------------------------
+
+// loadMalformedSnap opens the recorded strict-send malformed fixture set.
+//
+// The prefix is deliberately not "usdc-ngnc", so it cannot collide with the
+// corridor snapshots that integrity_snapshot_test.go matches with that prefix.
+func loadMalformedSnap(t *testing.T, prefix string) *snapshot.Manifest {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join("../testdata/snapshots", prefix+"-*"))
+	if err != nil || len(matches) == 0 {
+		t.Fatalf("no snapshot matching %q under ../testdata/snapshots (err=%v)", prefix, err)
+	}
+	m, err := snapshot.Load(matches[0])
+	if err != nil {
+		t.Fatalf("loading %s: %v", matches[0], err)
+	}
+	return m
+}
+
+// TestRecordedMalformedPayloadsReportUnknown is the layer that turns paths
+// into published verdicts, exercised against Horizon responses that parse
+// into plausible zeros.
+//
+// The failure that matters here is not a parse error — those surface loudly.
+// It is a payload that decodes cleanly into a zero or a nonsense figure and
+// would otherwise flow straight into a verdict as though it were a measured
+// price. A destination amount of "0" priced against mid renders a tidy 100%
+// loss; a negative one a loss above 100%; nine decimal places a rate the
+// asset cannot carry; and an asset type Horizon never emits names a hop that
+// was never identified. The engine's rule is that a layer-2 calculation on an
+// unavailable layer-1 fact is unknown — not a default — and each of these
+// must come back with that rule intact: no priced rung, no verdict, and no
+// zero reaching one.
+//
+// All fixtures run through snapshot.Replayer, which errors on any request it
+// was not recorded for, so these tests stay offline by construction.
+func TestRecordedMalformedPayloadsReportUnknown(t *testing.T) {
+	m := loadMalformedSnap(t, "strictsend-malformed")
+	e := &Engine{
+		DEX: &dex.Client{
+			HorizonURL: "https://horizon.stellar.org",
+			HTTPClient: m.HTTPClient(),
+		},
+		RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+			"USD/NGN": decimal.RequireFromString("1350.2568"),
+		}),
+	}
+
+	cases := []struct {
+		name   string
+		amount string
+		// reason is the specific substring the notes must carry, so a failure
+		// can be debugged from the result alone rather than guessing which
+		// shape broke.
+		reason string
+	}{
+		{"zero_destination_amount", "101", "must be positive"},
+		{"negative_destination_amount", "102", "must be positive"},
+		{"amount_more_precise_than_asset", "103", "decimal places"},
+		{"unrecognised_hop_asset_type", "104", "asset_type"},
+		{"records_array_contains_null", "105", "null path record"},
+		{"empty_200_body", "106", "decoding horizon response"},
+		{"truncated_json_body", "107", "decoding horizon response"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := e.Quote(context.Background(), ngnRequest(tc.amount))
+			if err != nil {
+				t.Fatalf("Quote: %v", err)
+			}
+
+			if res.Integrity != IntegrityUnknown {
+				t.Errorf("Integrity = %s, want UNKNOWN: a broken paywall is a failed "+
+					"measurement, not a no-market or a price", res.Integrity)
+			}
+			if len(res.Quotes) != 0 {
+				t.Errorf("got %d priced quotes, want none; a priced rung on broken data "+
+					"would publish a number the response never contained", len(res.Quotes))
+			}
+			if res.Recommended != nil {
+				t.Error("Recommended must be nil: broken data must never yield a recommendation")
+			}
+			for _, q := range res.Quotes {
+				if q.Verdict != VerdictUnknown || !q.LossPct.IsZero() {
+					t.Errorf("quote presented %s at %s%% loss instead of withholding the verdict",
+						q.Verdict, q.LossPct)
+				}
+			}
+
+			joined := strings.Join(res.Notes, " ")
+			if !strings.Contains(joined, tc.reason) {
+				t.Errorf("notes = %q, want them to name the specific reason %q",
+					res.Notes, tc.reason)
+			}
+		})
 // TestUnknownOnlyPathIsTheDocumentedFalseNegative pins the bounded
 // false-negative written down in asset/known.go: a corridor whose only hops
 // are unregistered is classified DIRECT, because an unrecognised fiat token

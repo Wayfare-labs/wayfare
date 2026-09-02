@@ -88,6 +88,14 @@ jobs:
           # Resolve which PR we are looking at. check_suite events carry the
           # PR indirectly, so fall back to querying by head SHA.
           # ---------------------------------------------------------------
+          # A CI run triggered by merge_group belongs to a queue entry, not to
+          # a pull request. Resolving it back to a PR would re-run the gate
+          # against a commit the queue already owns, so ignore those outright.
+          if [ "${{ github.event.workflow_run.event }}" = "merge_group" ]; then
+            echo "CI run came from a merge_group entry; nothing to gate"
+            exit 0
+          fi
+
           PR="${EVENT_PR:-}"
 
           # issue_comment fires for issues as well as pull requests, and only
@@ -349,8 +357,22 @@ jobs:
           # Decide.
           # ---------------------------------------------------------------
           if [ ${#reasons[@]} -eq 0 ]; then
-            echo "all gates satisfied; merging"
-            gh pr merge "$PR" --repo "$REPO" --squash --delete-branch
+            echo "all gates satisfied; handing off"
+
+            # With a merge queue required on the base branch, a direct merge is
+            # refused — the queue is the only way in. --auto enqueues instead,
+            # and where no queue is configured it merges as soon as the
+            # requirements are met, which this script has just finished
+            # verifying. One code path for both, and never two merge paths
+            # racing each other for the same pull request.
+            #
+            # --delete-branch is gone: these are fork branches, and the
+            # repository sets delete_branch_on_merge false, so it was asking
+            # for something it could not do.
+            if ! gh pr merge "$PR" --repo "$REPO" --squash --auto; then
+              echo "::error::could not enqueue PR #$PR — confirm auto-merge is enabled on the repository"
+              exit 1
+            fi
             # Describe what landed, then say plainly what was and was not
             # verified. A merge notice that only says "approved" invites a
             # reader to assume more was checked than actually was.
