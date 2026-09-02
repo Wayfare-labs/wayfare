@@ -49,9 +49,13 @@ var update = flag.Bool("update", false, "rewrite the golden files from current b
 // BOTH the fee is denominated in the sell asset. Pinning only those two would
 // exercise one branch twice and leave the buy-asset branch unpinned.
 //
-// buyAssetFee is therefore included as a third case: it is the only one where
-// fee.asset names the buy asset, and the only one where FeeInBuyAsset should
-// come back equal to the raw fee.total.
+// buyAssetFee is therefore included as a case: it is one where fee.asset
+// names the buy asset, and FeeInBuyAsset should come back equal to the raw
+// fee.total. A reversed variant exercises the same branch with the assets
+// swapped.
+//
+// feeAbsent covers the case where the anchor returns no fee at all. The
+// identity still holds: gross == buy_amount, so FeeInBuyAsset must be zero.
 
 type goldenCase struct {
 	name     string
@@ -112,6 +116,40 @@ var goldenCases = []goldenCase{
           "sell_amount": "100",
           "buy_amount": "500",
           "fee": {"total": "10", "asset": "` + brl() + `"}
+        }`,
+		sell:    asset.Stellar("USDC", asset.USDCIssuer),
+		buy:     asset.Fiat("BRL"),
+		sellAmt: "100",
+	},
+	{
+		name: "fee in buy asset, reversed",
+		file: "fee-in-buy-reversed.json",
+		note: "Same branch as fee-in-buy with the assets swapped: fee 8.4 is USDC, " +
+			"the BUY asset. price = 542/(100+8.4) = 5.0, gross = 542/5 = 108.4 USDC, " +
+			"fee = 8.4 USDC — the fee survives round-trip unchanged.",
+		response: `{
+          "total_price": "5.42",
+          "price": "5.00",
+          "sell_amount": "542",
+          "buy_amount": "100",
+          "fee": {"total": "8.4", "asset": "stellar:USDC:` + asset.USDCIssuer + `"}
+        }`,
+		sell:    asset.Fiat("BRL"),
+		buy:     asset.Stellar("USDC", asset.USDCIssuer),
+		sellAmt: "542",
+	},
+	{
+		name: "fee absent",
+		file: "fee-absent.json",
+		note: "No fee at all. gross = sell/price = 100/0.2 = 500 BRL, which equals " +
+			"buy_amount exactly, so FeeInBuyAsset must be zero — not absent, not " +
+			"NaN, zero.",
+		response: `{
+          "total_price": "0.2",
+          "price": "0.2",
+          "sell_amount": "100",
+          "buy_amount": "500",
+          "fee": {"total": "0", "asset": ""}
         }`,
 		sell:    asset.Stellar("USDC", asset.USDCIssuer),
 		buy:     asset.Fiat("BRL"),
@@ -195,7 +233,7 @@ func TestGoldenFeeDenomination(t *testing.T) {
 // edit that dropped the buy-asset case would leave one branch of the identity
 // unpinned while still looking like it covered both.
 func TestGoldenCoversBothDenominations(t *testing.T) {
-	var sawSellFee, sawBuyFee bool
+	var sawSellFee, sawBuyFee, sawNoFee bool
 
 	for _, tc := range goldenCases {
 		var wire struct {
@@ -212,6 +250,8 @@ func TestGoldenCoversBothDenominations(t *testing.T) {
 			sawSellFee = true
 		case tc.buy.SEP38():
 			sawBuyFee = true
+		case "":
+			sawNoFee = true
 		default:
 			t.Errorf("%s: fee.asset %q is neither the sell nor the buy asset",
 				tc.name, wire.Fee.Asset)
@@ -224,6 +264,9 @@ func TestGoldenCoversBothDenominations(t *testing.T) {
 	if !sawBuyFee {
 		t.Error("no golden case denominates the fee in the buy asset; " +
 			"the branch where FeeInBuyAsset equals fee.total is unpinned")
+	}
+	if !sawNoFee {
+		t.Error("no golden case has an absent fee; the zero-fee path is unpinned")
 	}
 }
 

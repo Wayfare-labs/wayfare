@@ -63,14 +63,26 @@
     background: var(--panel); border: 1px solid var(--border);
     border-radius: 10px; padding: 1.15rem 1.25rem; margin-bottom: 1.25rem;
   }
+  .integrity-card { display: grid; grid-template-columns: auto 1fr; gap: .75rem 1rem; align-items: start; margin-bottom: .35rem; }
   .badge {
-    display: inline-block; font: 600 .72rem/1 var(--mono); letter-spacing: .06em;
-    padding: .4rem .6rem; border-radius: 5px; border: 1px solid currentColor;
-    text-transform: uppercase;
+    display: inline-flex; align-items: center; gap: .45rem; width: fit-content;
+    font: 700 .78rem/1 var(--mono); letter-spacing: .06em;
+    padding: .55rem .7rem; border-radius: 7px; border: 2px solid currentColor;
+    text-transform: uppercase; white-space: nowrap;
   }
-  .b-direct { color: var(--muted); }
-  .b-derivative { color: var(--warn); }
-  .b-nomarket { color: var(--bad); }
+  .badge::before { font-size: 1rem; line-height: 1; }
+  .b-direct { color: var(--ok); background: var(--ok-soft); }
+  .b-direct::before { content: "◆"; }
+  .b-derivative { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--panel)); }
+  .b-derivative::before { content: "↪"; }
+  .b-nomarket { color: var(--bad); background: var(--bad-soft); }
+  .b-nomarket::before { content: "∅"; }
+  .integrity-copy { min-width: 0; }
+  .integrity-title { font-weight: 700; margin: 0; }
+  .integrity-help { color: var(--muted); font-size: .88rem; margin: .15rem 0 0; }
+  .integrity-dependency { font-family: var(--mono); font-size: .8rem; margin: .35rem 0 0; color: var(--warn); }
+  .integrity-card .badge[title] { cursor: help; }
+  @media (max-width: 520px) { .integrity-card { grid-template-columns: 1fr; gap: .45rem; } }
   .finding { font-size: 1.02rem; margin: .85rem 0 0; }
   .rec-none {
     margin-top: .9rem; padding: .7rem .85rem; border-radius: 6px;
@@ -136,7 +148,18 @@
   .legend-item { display: flex; align-items: center; gap: .45rem; min-width: 0; }
   .legend-item span:last-child { font-size: .8rem; }
   .case { font-size: .88rem; color: var(--muted); }
+  .integrity-cell { white-space: nowrap; }
+  .integrity-cell .badge { font-size: .65rem; padding: .3rem .45rem; border-width: 1px; }
+  .integrity-cell .badge::before { font-size: .8rem; }
+  .integrity-cell .integrity-via { font-family: var(--mono); font-size: .72rem; color: var(--warn); margin-left: .35rem; }
   .case strong { color: var(--ink); font-weight: 600; }
+  .cs-info { font-size: .8rem; color: var(--muted); margin-left: .3rem; }
+  .cs-info .cs-state { font: 600 .72rem/1 var(--mono); letter-spacing: .04em;
+    padding: .15rem .4rem; border-radius: 3px; border: 1px solid currentColor;
+    vertical-align: middle; }
+  .cs-info .cs-state.cs-direct { color: var(--muted); }
+  .cs-info .cs-state.cs-derivative { color: var(--warn); }
+  .cs-info .cs-state.cs-nomarket { color: var(--bad); }
   svg { width: 100%; height: auto; display: block; }
   .axis { fill: var(--muted); font: 10px var(--mono); }
   .trend-legend { display: flex; gap: 1.1rem; margin-top: .4rem;
@@ -186,11 +209,10 @@
 
   <div class="controls">
     <label for="to">Corridor</label>
-    <select id="to">
-      <option value="NGNC">USDC &rarr; NGNC (naira)</option>
-      <option value="GHSC">USDC &rarr; GHSC (cedi)</option>
-      <option value="KESC">USDC &rarr; KESC (shilling)</option>
+    <select id="to" aria-label="Select a corridor to measure">
+      <option value="" disabled selected>Loading corridors…</option>
     </select>
+    <span id="cs-detail" class="cs-info"></span>
     <button id="run">Measure live</button>
     <button id="trend">Show trend</button>
     <span id="status" class="sub"></span>
@@ -223,13 +245,139 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, c => (
   {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+// formatPct rounds a loss percentage string to 2 decimal places for display.
+// The server publishes full-precision decimals (per issue #83) so the verdict
+// always reconciles with the published number; the UI rounds for readability.
+const formatPct = (s) => {
+  const n = parseFloat(s);
+  return isNaN(n) ? s : n.toFixed(2);
+};
+
 const badgeClass = (i) =>
   i === 'NO-MARKET' ? 'b-nomarket' : i === 'DERIVATIVE' ? 'b-derivative' : 'b-direct';
+
+const integrityInfo = (state, dependsOn = []) => {
+  if (state === 'NO-MARKET') return {
+    title: 'No market exists',
+    help: 'No path exists at the tested size. This is the absence of a price — not a bad price.',
+    tooltip: 'NO-MARKET means no path exists at all: there is no loss percentage to compute.'
+  };
+  if (state === 'DERIVATIVE') {
+    const via = dependsOn.length ? dependsOn.map(a => a.code || a).join(' and ') : 'another fiat token';
+    return {
+      title: 'Depends on an upstream corridor',
+      help: `Every path routes through ${via}; there is no independent market.`,
+      dependency: `depends on ${via}`,
+      tooltip: `DERIVATIVE means every available path traverses another fiat-pegged token, so this corridor inherits its liquidity and failure modes.`
+    };
+  }
+  return {
+    title: 'Independent market found',
+    help: 'At least one path reaches the destination without another fiat token in between.',
+    tooltip: 'DIRECT means an independent market exists: at least one path reaches the destination without routing through another fiat token.'
+  };
+};
+
+function integrityElement(state, dependsOn = '') {
+  const info = integrityInfo(state, Array.isArray(dependsOn) ? dependsOn : []);
+  const dependency = info.dependency ? `<p class="integrity-dependency">${esc(info.dependency)}</p>` : '';
+  return `<div class="integrity-card">
+    <span class="badge ${badgeClass(state)}" title="${esc(info.tooltip)}" aria-label="${esc(state)}: ${esc(info.tooltip)}">${esc(state)}</span>
+    <div class="integrity-copy"><p class="integrity-title">${esc(info.title)}</p><p class="integrity-help">${esc(info.help)}</p>${dependency}</div>
+  </div>`;
+}
+
+// Compact form for table cells: the state badge plus a short dependency
+// note, with the full explanation kept in the hover tooltip. The headline
+// and trend views carry the complete card; inside a nowrap table cell the
+// card's description would overflow the row.
+function integrityCell(state, dependsOn = []) {
+  const info = integrityInfo(state, Array.isArray(dependsOn) ? dependsOn : []);
+  const tip = info.tooltip + (info.dependency ? ' — ' + info.dependency : '');
+  const dependency = info.dependency
+    ? `<span class="integrity-via">${esc(info.dependency)}</span>` : '';
+  return `<span class="badge ${badgeClass(state)}" title="${esc(tip)}"
+    aria-label="${esc(state)}: ${esc(tip)}">${esc(state)}</span>${dependency}`;
+}
 
 const verdictClass = (v) => 'v-' + String(v).toLowerCase();
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// --- Asset / corridor selector -----------------------------------------------
+
+const CORRIDOR_NAMES = {
+  NGNC: 'NGNC (naira)', GHSC: 'GHSC (cedi)', KESC: 'KESC (shilling)',
+};
+
+let assetData = null; // cached /api/assets response
+
+async function loadAssets() {
+  try {
+    const r = await fetch('/api/assets');
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    assetData = data;
+    buildSelector(data);
+  } catch (e) {
+    // Fallback: keep the loading placeholder so the user sees the
+    // corridor is unavailable rather than silently defaulting.
+    const sel = $('to');
+    sel.innerHTML = '<option value="" disabled selected>Could not load corridors</option>';
+  }
+}
+
+function buildSelector(data) {
+  const sel = $('to');
+  const assets = (data.assets || []).filter(a => a.can_be_destination);
+  // Sort: corridors with history first, then alphabetically.
+  assets.sort((a, b) => {
+    const ah = a.state && a.state.has_history ? 0 : 1;
+    const bh = b.state && b.state.has_history ? 0 : 1;
+    if (ah !== bh) return ah - bh;
+    return a.code.localeCompare(b.code);
+  });
+
+  sel.innerHTML = assets.map((a, i) => {
+    const label = CORRIDOR_NAMES[a.code] || a.code;
+    const note = a.state && a.state.has_history
+      ? ` [${a.state.last_integrity}]` : '';
+    return `<option value="${esc(a.code)}"${i === 0 ? ' selected' : ''}>` +
+      `USDC \u2192 ${esc(label)}${esc(note)}</option>`;
+  }).join('');
+
+  // Show the detail line for the initially selected corridor.
+  updateCorridorDetail(sel.value);
+  sel.addEventListener('change', () => updateCorridorDetail(sel.value));
+}
+
+function updateCorridorDetail(code) {
+  const el = $('cs-detail');
+  if (!assetData || !code) { el.innerHTML = ''; return; }
+  const asset = assetData.assets.find(a => a.code === code);
+  if (!asset || !asset.state) { el.innerHTML = ''; return; }
+  const st = asset.state;
+  if (!st.has_history) {
+    el.innerHTML = '<span class="case">No measurements yet</span>';
+    return;
+  }
+  const stateClass = {
+    'DIRECT': 'cs-direct', 'DERIVATIVE': 'cs-derivative', 'NO-MARKET': 'cs-nomarket',
+  }[st.last_integrity] || '';
+  const when = st.last_measured ? fmtISOTime(st.last_measured) : '';
+  el.innerHTML = `<span class="cs-state ${stateClass}">${esc(st.last_integrity)}</span>` +
+    (when ? ` <span class="case">measured ${esc(when)}</span>` : '');
+}
+
+function fmtISOTime(v) {
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return String(v);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${MONTHS[d.getUTCMonth()]} ${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`;
+}
+
+// --- Measurement -------------------------------------------------------------
 
 async function measure() {
   const to = $('to').value;
@@ -261,7 +409,7 @@ function render(d) {
 
   // Headline: integrity state and the finding, before any numbers.
   parts.push(`${provenance}<div class="panel">
-    <span class="badge ${badgeClass(d.integrity)}">${esc(d.integrity)}</span>
+    ${integrityElement(d.integrity, d.depends_on || [])}
     <p class="finding">${esc(d.finding)}</p>
     ${d.scored ? recommendationBlock(d) : unscoredBlock(d)}
     <p class="meta">Reference ${esc(d.reference_pair)} mid
@@ -274,7 +422,7 @@ function render(d) {
     parts.push(`<div class="panel"><h2>Loss against mid, by size</h2>${curve(priced)}</div>`);
   }
 
-  parts.push(`<div class="panel"><h2>Measurements</h2><div class="scroll">${table(d.rungs, d.scored)}</div></div>`);
+  parts.push(`<div class="panel"><h2>Measurements</h2><div class="scroll">${table(d.rungs, d.scored, d.depends_on || [])}</div></div>`);
 
   if (d.scored) parts.push(legend());
 
@@ -312,7 +460,7 @@ function recommendationBlock(d) {
   }
   const q = d.recommended;
   return `<div class="rec-some">Recommended at ${esc(d.recommended_size)}
-    ${esc(d.send_asset.code)}: ${esc(q.description)} &mdash; ${esc(q.loss_pct)}%
+    ${esc(d.send_asset.code)}: ${esc(q.description)} &mdash; ${formatPct(q.loss_pct)}%
     below mid, graded ${esc(q.verdict)}.</div>`;
 }
 
@@ -339,7 +487,7 @@ function curve(rungs) {
 
   const dots = xs.map((x, i) =>
     `<circle cx="${sx(x).toFixed(1)}" cy="${sy(ys[i]).toFixed(1)}" r="3"
-       fill="var(--bad)"><title>${esc(rungs[i].send_amount)} → ${esc(rungs[i].quote.loss_pct)}% loss</title></circle>`).join('');
+       fill="var(--bad)"><title>${esc(rungs[i].send_amount)} → ${formatPct(rungs[i].quote.loss_pct)}% loss</title></circle>`).join('');
 
   const labels = rungs.map((r, i) =>
     (i === 0 || i === rungs.length - 1 || i === Math.floor(rungs.length / 2))
@@ -355,20 +503,24 @@ function curve(rungs) {
   </svg>`;
 }
 
-function table(rungs, scored) {
+function table(rungs, scored, depends) {
   const rows = rungs.map(r => {
     if (!r.priced) {
       const why = r.error ? esc(r.error)
         : r.integrity === 'NO-MARKET' ? 'no path exists at this size'
         : 'not priced';
+      // An unpriced rung still reports the corridor's structural state, so a
+      // DERIVATIVE rung names what it routes through; the compact cell keeps
+      // the row from overflowing the table.
+      const cell = integrityCell(r.integrity, depends);
       if (scored) {
         return `<tr><td class="num">${esc(r.send_amount)}</td>
           <td colspan="4" class="err">${why}</td>
-          <td>${esc(r.integrity)}</td></tr>`;
+          <td class="integrity-cell">${cell}</td></tr>`;
       }
       return `<tr><td class="num">${esc(r.send_amount)}</td>
         <td colspan="2" class="err">${why}</td>
-        <td>${esc(r.integrity)}</td></tr>`;
+        <td class="integrity-cell">${cell}</td></tr>`;
     }
     const q = r.quote;
     if (scored) {
@@ -376,7 +528,7 @@ function table(rungs, scored) {
         <td class="num">${esc(r.send_amount)}</td>
         <td class="num">${esc(q.receive_amount)}</td>
         <td class="num">${esc(q.effective_rate)}</td>
-        <td class="num ${verdictClass(q.verdict)}">${esc(q.loss_pct)}%</td>
+        <td class="num ${verdictClass(q.verdict)}">${formatPct(q.loss_pct)}%</td>
         <td class="${verdictClass(q.verdict)}">${esc(q.verdict)}</td>
         <td>${esc(q.description)}</td>
       </tr>`;
@@ -615,7 +767,7 @@ function renderTrend() {
   const latest = runs[runs.length - 1];
   parts.push(`<div class="panel">
     <h2>Trend &mdash; ${esc(d.corridor)}</h2>
-    <span class="badge ${badgeClass(latest.integrity)}">${esc(latest.integrity)}</span>
+    ${integrityElement(latest.integrity, latest.depends_on || [])}
     <span class="case">&nbsp; latest of ${runs.length} stored run(s) &middot;
     ${esc(fmtRunTime(runs[0].recorded_at))} &rarr; ${esc(fmtRunTime(latest.recorded_at))} UTC</span>
     <p class="meta">${referenceSummary(runs)}${integritySummary(runs)}</p>
@@ -757,7 +909,7 @@ function trendChart(d, size) {
     const r = p.run, ref = r.reference || {};
     const title = [
       `run #${r.seq} · ${r.recorded_at}`,
-      `${esc(p.rung.loss_pct)}% loss (${esc(p.rung.verdict)}) at ${esc(size)} ${esc(sendCode)}`,
+      `${formatPct(p.rung.loss_pct)}% loss (${esc(p.rung.verdict)}) at ${esc(size)} ${esc(sendCode)}`,
       `reference mid ${esc(ref.mid || 'n/a')} via ${esc(ref.scored_against || ref.source || 'unknown')}`,
       `integrity ${esc(r.integrity)}${(r.depends_on || []).length ? ' via ' + esc(r.depends_on.join(', ')) : ''}`,
     ].join('<br/>');
@@ -822,16 +974,14 @@ function runsTable(runs) {
   const rows = runs.slice().reverse().map(r => {
     const ref = r.reference || {};
     const src = ref.scored_against || ref.source || 'unknown';
-    const via = (r.depends_on || []).length
-      ? ` <span class="case">via ${esc(r.depends_on.join(', '))}</span>` : '';
     const div = ref.divergence_pct
       ? ` <span class="case">div ${esc(ref.divergence_pct)}%</span>` : '';
     return `<tr>
       <td class="num">${esc(r.recorded_at)}</td>
       <td class="num">${r.seq}</td>
-      <td><span class="badge ${badgeClass(r.integrity)}">${esc(r.integrity)}</span>${via}</td>
       <td class="num">${esc(r.floor_loss_pct)}%</td>
       <td class="num">${esc(r.worst_loss_pct)}%</td>
+      <td class="integrity-cell">${integrityCell(r.integrity, r.depends_on || [])}</td>
       <td>${esc(src)}${div}</td>
     </tr>`;
   }).join('');

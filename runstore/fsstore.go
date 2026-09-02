@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"path"
 	"sort"
 	"strings"
 )
@@ -43,7 +44,12 @@ func OpenFS(fsys fs.FS, dir string) (*ReadOnly, error) {
 		}
 		corridor := strings.ToUpper(strings.TrimSuffix(e.Name(), FileExt))
 
-		records, err := readChain(fsys, dir+"/"+e.Name(), corridor)
+		// path.Join rather than string concatenation: fs.ValidPath rejects
+		// "." elements, so a dir of "." must yield "USDC-NGNC.ndjson", not
+		// "./USDC-NGNC.ndjson" — the concatenated form can never be opened
+		// by an fs.FS and would make every chain under a "." root fail to
+		// load.
+		records, err := readChain(fsys, path.Join(dir, e.Name()), corridor)
 		if err != nil {
 			return nil, err
 		}

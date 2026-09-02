@@ -35,11 +35,14 @@ func (ConcentrationMetric) Describe() Descriptor {
 		ID:    "concentration.liquidity",
 		Scope: ScopeCorridor,
 		Cost:  CostOneRequest,
+		Venue: VenueOrderBook,
 		Title: "Liquidity concentration across price levels",
 		CanDetermine: "How concentrated the order book is across price levels, " +
 			"measured as the Herfindahl-Hirschman Index (HHI).",
 		CannotDetermine: "Account-level concentration — Horizon's /order_book " +
-			"does not expose the offering account.",
+			"does not expose the offering account — and any concentration among " +
+			"AMM liquidity pools, which the venue does not observe. See " +
+			"docs/liquidity-venues.md.",
 	}
 }
 

@@ -31,6 +31,14 @@ const (
 	integrityNoMarket   = "NO-MARKET"
 )
 
+// ReferenceAgreement string constants, matching refrate.Agreement.String()
+// by convention. Duplicated rather than imported: checks imports refrate
+// indirectly through asset (which it needs for bookPair), but the
+// string comparison avoids coupling to the enum.
+const (
+	referenceAgreementMalfunction = "MALFUNCTION"
+)
+
 // structuralUndetermined reports the structural reason a book metric cannot
 // even attempt a fetch, before any network call: the corridor has no direct
 // pair by construction. ok is false when the caller should proceed to fetch
