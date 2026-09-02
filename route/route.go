@@ -560,6 +560,7 @@ func unknownHopNote(unknown []asset.Asset) []string {
 			"asset registry. An unrecognised hop is currently treated as having an "+
 			"independent market; see asset/known.go for the bounded false-negative.",
 		strings.Join(names, ", "))}
+}
 
 // describeChainStatus renders the measured integrity of each dependency
 // for a human-readable warning.
@@ -663,22 +664,25 @@ func classify(paths []dex.Path, dest asset.Asset) (Integrity, []asset.Asset, []a
 // into any newly discovered fiat intermediaries — building a tree whose
 // depth reflects how many layers of fiat-to-fiat routing exist.
 //
-// The visited set prevents cycles: if A depends on B and B depends on A,
-// the second encounter stops recursion and reports the link as unmeasured.
-// The depth cap (maxDependencyDepth) prevents unbounded fan-out from a
-// corrupted registry.
+// ancestors names the assets already on the path from the corridor's
+// destination down to the node currently being expanded. Each dependency
+// branch works from its own copy, so a dependency shared between siblings is
+// measured once per branch rather than mislabelled as a cycle — only a node
+// already on the current root-to-leaf path is a true cycle, and the second
+// encounter of one reports the link as unmeasured. The depth cap
+// (maxDependencyDepth) prevents unbounded fan-out from a corrupted registry.
 //
-// Each Horizon call is one StrictSendPaths round trip. The total cost per
-// call to measureChain is at most len(deps) × maxDependencyDepth, which
-// with the current registry (4 fiat tokens) and protocol cap (5 hops) is
-// at most 20 calls. In practice, corridors depend on 1-2 intermediaries,
-// so the cost is 1-2 extra Horizon calls per rung.
+// Each Horizon call is one StrictSendPaths round trip. Per node the cost is
+// bounded by len(deps) × maxDependencyDepth calls, and sharing a dependency
+// between branches re-measures it rather than looping; with the current
+// registry (4 fiat tokens) and protocol cap (5 hops) a corridor request
+// stays within a handful of extra calls.
 func (e *Engine) measureChain(
 	ctx context.Context,
 	sendAsset asset.Asset,
 	sendAmount decimal.Decimal,
 	deps []asset.Asset,
-	visited map[string]bool,
+	ancestors map[string]bool,
 	depth int,
 ) []DependencyNode {
 	if depth >= maxDependencyDepth {
@@ -696,7 +700,16 @@ func (e *Engine) measureChain(
 	nodes := make([]DependencyNode, 0, len(deps))
 	for _, dep := range deps {
 		key := dep.Code + ":" + dep.Issuer
-		if visited[key] {
+
+		// Each branch copies the ancestor path before adding itself, so
+		// siblings never see each other's progress. The cycle check is
+		// therefore "is this dependency already on the path from the
+		// destination to here", which is the only true cycle.
+		path := make(map[string]bool, len(ancestors)+1)
+		for k := range ancestors {
+			path[k] = true
+		}
+		if path[key] {
 			nodes = append(nodes, DependencyNode{
 				Asset:    dep,
 				Reason:   "cycle detected",
@@ -704,8 +717,7 @@ func (e *Engine) measureChain(
 			})
 			continue
 		}
-
-		visited[key] = true
+		path[key] = true
 
 		depPaths, err := e.DEX.StrictSendPaths(ctx, sendAsset, sendAmount, dep)
 		if err != nil {
@@ -726,7 +738,7 @@ func (e *Engine) measureChain(
 
 		if depIntegrity == IntegrityDerivative && len(depFiatHops) > 0 {
 			node.Dependencies = e.measureChain(
-				ctx, sendAsset, sendAmount, depFiatHops, visited, depth+1)
+				ctx, sendAsset, sendAmount, depFiatHops, path, depth+1)
 		}
 
 		nodes = append(nodes, node)

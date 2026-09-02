@@ -93,8 +93,10 @@ type LadderResult struct {
 
 	// Chain is the full dependency tree when the corridor is derivative.
 	// It is the union across all rungs: if any rung discovered additional
-	// dependencies, they appear here. Nil when the corridor is not
-	// derivative.
+	// dependencies, they appear here, and when the same dependency was
+	// measured on some rungs but unmeasured on others the measured node
+	// wins — one rung's failed request never erases another's finding.
+	// Nil when the corridor is not derivative.
 	Chain []DependencyNode
 
 	ReferenceMid    decimal.Decimal
@@ -371,7 +373,16 @@ func (l *LadderResult) summarise() {
 				deps[d.Code+":"+d.Issuer] = d
 			}
 			for _, c := range r.Result.Chain {
-				chainMap[c.Asset.Code+":"+c.Asset.Issuer] = c
+				// A rung that failed to measure a dependency reports it
+				// unmeasured. That must never overwrite a real measurement
+				// from another rung: the union across rungs keeps the
+				// strongest evidence for each dependency, so a measured
+				// node only ever replaces an unmeasured placeholder.
+				key := c.Asset.Code + ":" + c.Asset.Issuer
+				existing, ok := chainMap[key]
+				if !ok || (c.Measured && !existing.Measured) {
+					chainMap[key] = c
+				}
 			}
 		case IntegrityNoMarket:
 			// leaves allNoMarket intact
