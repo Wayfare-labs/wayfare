@@ -151,9 +151,20 @@ type wirePathRecord struct {
 
 type wirePathsResponse struct {
 	Embedded struct {
-		Records []wirePathRecord `json:"records"`
+		// Records are kept as raw messages rather than decoded structs so a
+		// null element — a record that is present-and-nothing at once — can
+		// be told apart from a well-formed one before it decodes into a
+		// zero-valued path and parses as a plausible "0".
+		Records []json.RawMessage `json:"records"`
 	} `json:"_embedded"`
 }
+
+// stellarMaxScale is the largest number of decimal places a Stellar move can
+// carry. Every asset — native XLM and credit assets alike — prices to at most
+// 7 decimals, and Horizon is expected to round to that. An amount with more
+// digits has been invented or mangled upstream, and silently trimming it would
+// manufacture a price none of the recorded liquidity supports.
+const stellarMaxScale = -7
 
 // StrictSendPaths asks Horizon what a fixed send amount can buy.
 //
@@ -164,6 +175,9 @@ type wirePathsResponse struct {
 //
 // Results are returned in Horizon's order, best first.
 func (c *Client) StrictSendPaths(ctx context.Context, source asset.Asset, amount decimal.Decimal, dest asset.Asset) ([]Path, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	q := url.Values{}
 	for k, v := range source.HorizonParams("source") {
 		q.Set(k, v)
@@ -177,7 +191,19 @@ func (c *Client) StrictSendPaths(ctx context.Context, source asset.Asset, amount
 	}
 
 	paths := make([]Path, 0, len(body.Embedded.Records))
-	for _, r := range body.Embedded.Records {
+	for _, raw := range body.Embedded.Records {
+		// A null record is the payload's way of saying "a path was expected
+		// here and there is nothing", which is a corruption, not a zero price.
+		// It must surface as a corrupted response rather than decode into a
+		// zero-valued path that parses as a plausible "0".
+		if strings.TrimSpace(string(raw)) == "null" {
+			return nil, fmt.Errorf("dex: strict-send response lists a null path record")
+		}
+		var r wirePathRecord
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return nil, fmt.Errorf("dex: decoding path record: %w", err)
+		}
+
 		srcAmt, err := decimal.NewFromString(r.SourceAmount)
 		if err != nil {
 			return nil, fmt.Errorf("dex: parsing source_amount %q: %w", r.SourceAmount, err)
@@ -186,6 +212,24 @@ func (c *Client) StrictSendPaths(ctx context.Context, source asset.Asset, amount
 		if err != nil {
 			return nil, fmt.Errorf("dex: parsing destination_amount %q: %w", r.DestinationAmount, err)
 		}
+		// A non-positive destination amount is a broken answer, not a bad
+		// price. Horizon never returns "you get zero or less"; when it does,
+		// pricing it against mid would render a plausible-looking 100% loss
+		// from a response that meant "no path" or "corrupted".
+		if !dstAmt.IsPositive() {
+			return nil, fmt.Errorf(
+				"dex: destination_amount %q must be positive; a non-positive amount is a "+
+					"corrupted response, not a price", r.DestinationAmount)
+		}
+		// More decimal places than a Stellar asset can carry means the amount
+		// was invented or mangled upstream. Trimming it would manufacture a
+		// price no recorded liquidity supports.
+		if dstAmt.Exponent() < stellarMaxScale {
+			return nil, fmt.Errorf(
+				"dex: destination_amount %q has %d decimal places, more than the 7 a "+
+					"Stellar asset supports", r.DestinationAmount, -dstAmt.Exponent())
+		}
+
 		p := Path{
 			SourceAsset:  source,
 			SourceAmount: srcAmt,
@@ -193,10 +237,16 @@ func (c *Client) StrictSendPaths(ctx context.Context, source asset.Asset, amount
 			DestAmount:   dstAmt,
 		}
 		for _, h := range r.Path {
-			if h.AssetType == "native" {
+			switch h.AssetType {
+			case "native":
 				p.Hops = append(p.Hops, asset.Native())
-			} else {
+			case "credit_alphanum4", "credit_alphanum12":
 				p.Hops = append(p.Hops, asset.Stellar(h.AssetCode, h.AssetIssuer))
+			default:
+				// An asset type Horizon does not emit is upstream corruption.
+				// Treating it as a hop would name a token that the recorded
+				// response never actually identified.
+				return nil, fmt.Errorf("dex: path hop has unrecognised asset_type %q", h.AssetType)
 			}
 		}
 		paths = append(paths, p)
