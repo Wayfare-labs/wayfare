@@ -34,11 +34,15 @@ embedded in the binary at build time. Every response carries `live: false` and a
 records are written by `.github/workflows/measure.yml` and committed to `data/`.
 That workflow is currently unable to push ([#63](https://github.com/Wayfare-labs/wayfare/issues/63)),
 so the served history is older than its six-hour cadence implies. Read
-`stale.age_human` rather than assuming.
+`stale.age_human` rather than assuming. The mechanism — history embedded at
+build time, so freshness advances by redeploy rather than by scheduler — is
+[documented in full](docs/embedded-history.md).
 
 **It sleeps.** The free instance sleeps after fifteen minutes without traffic,
 so the first request after a quiet period may take several seconds or fail
-outright before the instance wakes. Retry once.
+outright before the instance wakes. Retry once. The checked observation and
+the boundary between manual retry and built behavior are recorded in
+**[docs/cold-start-reliability.md](docs/cold-start-reliability.md)**.
 
 It runs the current system, and only the current system. Nothing in the v2–v6
 roadmap below is deployed there.
@@ -46,6 +50,8 @@ roadmap below is deployed there.
 To reproduce it locally, `go run ./cmd/wayfared` and open
 `http://127.0.0.1:8080/` — that measures live against mainnet rather than
 serving history. Deployment details: **[docs/deployment.md](docs/deployment.md)**.
+How the deployed instance serves its embedded history:
+**[docs/embedded-history.md](docs/embedded-history.md)**.
 
 ---
 
@@ -191,12 +197,17 @@ history exactly where nobody was looking.
 corridor depends on and are attached to the result; nothing they report can
 alter an integrity state or a verdict. See the composition rule below.
 
+Significant architectural decisions are recorded as ADRs in
+**[docs/adr/](docs/adr/)**.
+
 ---
 
 ## Shared contracts
 
 These are the agreements other code and other people depend on. **Changing any
 of them is a breaking change**, not a refactor.
+
+A glossary of every state a reader can meet: **[docs/glossary.md](docs/glossary.md)**
 
 ### Verdict thresholds — breaking if altered
 
@@ -214,6 +225,17 @@ Established remittance corridors run a total cost of 3–8%, so `GOOD` means
 "as good as what already exists" rather than "good for a DEX". Anchoring to
 on-chain norms instead would have graded this project's own findings as
 acceptable.
+
+### Verdict reconciliation — the published number always matches the grade
+
+The server publishes `loss_pct` as a full-precision decimal string, not
+rounded. The verdict is computed against the same full-precision value, so
+the two always reconcile: a loss of 20.001% publishes as `"20.001"` and is
+graded `UNUSABLE`, never as `"20.00"` graded `UNUSABLE`. The UI rounds for
+display, but the wire contract is unambiguous.
+
+`TestLossPctReconcilesWithVerdict` asserts this at every threshold boundary
+(2.999, 3.0, 3.001, 7.999, 8.0, 8.001, 19.999, 20.0, 20.001).
 
 ### The recommendation rule — breaking if altered
 
@@ -246,6 +268,8 @@ was learned" from "nothing exists", which matters because both produce
 identical zero-valued figures.
 
 ### Reference agreement — breaking if altered
+
+The architectural decision behind this contract is documented in **[ADR: reference mids are never averaged](docs/adr-reference-mids.md)**.
 
 Two providers are queried per measurement. Rates are **never averaged**: a
 blended mid names no provider, and every figure has to be traceable to a source
@@ -294,6 +318,7 @@ pass/fail discards the number that carries the meaning. Thresholding a metric
 into a verdict is maintainer-owned.
 
 Full spec: **[docs/checks.md](docs/checks.md)**
+Methodology: **[docs/metrics.md](docs/metrics.md)**
 
 ### Asset identity — breaking if altered
 
@@ -301,7 +326,13 @@ An asset code identifies nothing; **the issuer account is the identity.**
 Anyone can issue a token called `USDC`. Every issuer is read from the issuer's
 own `stellar.toml` per SEP-1, with the verification date recorded, because
 issuers rotate. Wire form is `stellar:CODE:ISSUER`, `stellar:native`, or
-`iso4217:CODE`.
+`iso4217:CODE` — the same SEP-38 asset identification format used everywhere
+else in this project. Every asset object on the wire (`send_asset`,
+`receive_asset`, `depends_on` entries) carries this form in its `asset`
+field, alongside the separate `code` and `issuer` fields for a reader who
+wants one or the other. `asset` is omitted when the producer has only a bare
+code to work from and cannot verify the asset's kind or issuer — never
+guessed at.
 
 ### Money on the wire — breaking if altered
 
@@ -334,6 +365,8 @@ old its benchmark was when the reading was taken.
 
 Full spec: **[docs/run-store.md](docs/run-store.md)**
 
+What verification looks like — including broken-chain output: **[docs/verify-store.md](docs/verify-store.md)**
+
 ---
 
 ## Packages
@@ -342,7 +375,7 @@ Full spec: **[docs/run-store.md](docs/run-store.md)**
 |:---|:---|
 | `asset` | Corridor endpoints, verified issuers, the fiat-peg registry |
 | `refrate` | Reference mid-market rates: two providers, cached, cross-checked |
-| `anchor` | SEP-1 discovery — can this anchor be priced at all? |
+| `anchor` | SEP-1 discovery — can this anchor be priced at all, and which SEPs does it advertise? |
 | `sep38` | Anchor RFQ client, with the fee-denomination identity |
 | `dex` | On-chain pricing via Horizon pathfinding, plus market health |
 | `route` | Ladder sweep, verdicts, integrity, and the shared wire shape |
@@ -354,6 +387,13 @@ Full spec: **[docs/run-store.md](docs/run-store.md)**
 | `cmd/ladder` | Measurement CLI |
 | `cmd/wayfared` | Server and scheduler |
 
+`anchor.Profile.SEPs()` returns the numbers of the SEPs an anchor advertises
+in its `stellar.toml` — SEP-1 (the document itself), 6, 10, 12, 24, 31, 38 —
+derived from the same fields `Priceable`, `SEP24`, `SEP31`, `SEP6`, `SEP10`
+and `SEP12` already read, so the capability picture is legible in one call
+rather than six separate booleans read by hand. `SEPCapabilities()` renders
+the same list with a short name per SEP, and `Explain()` includes it.
+
 ---
 
 ## Running it
@@ -362,11 +402,19 @@ Full spec: **[docs/run-store.md](docs/run-store.md)**
 make run                        # measure USDC -> NGNC against live mainnet
 go run ./cmd/ladder -to GHSC    # any verified corridor
 go run ./cmd/ladder -to GHSC -json | jq
+go run ./cmd/ladder -checks=false    # skip counterparty checks (no findings block)
 
 go run ./cmd/wayfared                       # serve + measure every 6h
 go run ./cmd/wayfared -serve=false          # scheduler only, no HTTP
 go run ./cmd/wayfared -verify-store -data ./data
 ```
+
+Every `cmd/ladder` run also runs the same counterparty checks the server runs
+(anchor toml, SEP-10/SEP-24, issuer flags), so `-json` output and
+`/api/corridor` carry the same `findings` block for the same corridor.
+`-checks=false` skips them when the extra latency is unwanted, and the JSON
+then carries no findings block — the difference is a flag the operator chose,
+not an accident of which binary produced the document.
 
 Go 1.22+. Dependencies: `shopspring/decimal` and `BurntSushi/toml`. Both
 binaries need live network access — there are no cached figures to fall back
@@ -376,13 +424,41 @@ Deployment, cost and backup: **[docs/deployment.md](docs/deployment.md)**
 
 ### HTTP API
 
-```
-GET /api/corridor?to=NGNC[&from=USDC][&sizes=1,10,100]
-GET /api/corridor/trend?to=NGNC[&from=USDC][&limit=100]
-GET /api/assets
-GET /healthz
-GET /                            single-file UI, no build step
-```
+- [GET /healthz](docs/api.md#get-healthz)
+- [GET /api/assets](docs/api.md#get-api-assets)
+- [GET /api/corridor](docs/api.md#get-apicorridor)
+- [GET /api/corridor/trend](docs/api.md#get-apicorridortrend)
+- `GET /` single-file UI, no build step
+
+Beyond the contracts above, two fields to know. **`live`** is on every
+response: `false` means the reading came from history because a live
+measurement failed, and `stale` then carries its age. With no stored run, the
+request errors — nothing is ever synthesised to fill the gap.
+
+Every quote also carries **`kind`** — `"dex"` for value settled entirely
+on-chain through path payments, or `"anchor-sep38"` for a priced quote from an
+anchor's own RFQ endpoint. The two can price the same pair differently, and a
+client that conflated them would misattribute the loss to the wrong rail.
+Every quote in a response is `"dex"` today — live pathfinding is the only
+thing this project prices — but the field is on the wire from the start so a
+caller never has to guess which rail a figure came from once anchor pricing
+lands (a live SEP-38 round-trip has never been performed — see
+[#180](https://github.com/Wayfare-labs/wayfare/issues/180)).
+The API is public, keyless and read-only, and answers cross-origin requests
+from any origin (`Access-Control-Allow-Origin: *`), so browser consumers on
+another origin can call it directly. No credentials are ever attached to a
+cross-origin read.
+
+The `sizes` parameter overrides the default ladder (0.1 → 5000 USDC across
+12 rungs). The default sizes and the rationale for each rung are documented
+in **[docs/ladder-sizes.md](docs/ladder-sizes.md)**.
+
+**`/healthz`** answers liveness and data age. `status` is process liveness;
+`data` reports each corridor's newest stored record and its age
+(`recorded_at`, `age_seconds`, `age_human`) — the thing actually at risk on a
+`-history-first` deployment, whose served history is only as fresh as its last
+deploy. `data` is `null` when no history exists to describe: unknown, never a
+fabricated age.
 
 Beyond the contracts above, one field to know: **`live`** is on every response.
 `false` means the reading came from history because a live measurement failed,
@@ -398,6 +474,16 @@ named times and says so. An empty history is a `200` with zero runs, not an
 error: a missing history is the answer, and the first day of a deployment is
 exactly when a monitor is most read. `limit` (default 100, max 500) keeps the
 most recent runs; the store is read, never measured.
+
+The response also carries `divergence_stats`: how far the corridor's two
+reference providers have disagreed across those same runs — a fact about the
+**benchmark**, not the corridor, and it never feeds back into any run's
+verdict or integrity state above. A run scored against a single provider has
+no divergence to report and is excluded from the sample rather than counted
+as zero. Below the documented minimum sample size (30 observations —
+[docs/glossary.md](docs/glossary.md#metric-determination) has the general
+rule), `determined` is `false` and `reason` says why; `mean_pct`, `stddev_pct`
+and the trend fields are then absent rather than a precise-looking number.
 
 ---
 
@@ -536,7 +622,7 @@ These keep the project shippable and legal for a small team:
 | Recorded snapshots | Hash-verified on load; provenance refuses a dirty tree |
 | SEP-38 fee identity | Verified against SEP-0038 spec text, pinned in golden files |
 | USDC issuer is Circle's | **Not yet verified** against circle.com stellar.toml |
-| Live SEP-38 round-trip | **Not done** — no anchor on this corridor publishes a quote server |
+| Live SEP-38 round-trip | **Verified** — recorded fixture from testanchor.stellar.org in `sep38/testdata/live/` |
 | Public deployment | Running at [wayfare-cdb9.onrender.com](https://wayfare-cdb9.onrender.com/); `/healthz` verified 200 on 2026-08-24 |
 | Continuous measurement | **Not currently running** — the measure workflow cannot push ([#63](https://github.com/Wayfare-labs/wayfare/issues/63)), so the served history is frozen at its last successful sweep |
 

@@ -40,7 +40,16 @@ type MetricJSON struct {
 	Reason     string `json:"reason,omitempty"`
 	Value      string `json:"value,omitempty"`
 	Unit       string `json:"unit"`
-	Summary    string `json:"summary"`
+
+	// Venue names the liquidity source the metric observed —
+	// "order-book" or "pathfinding". A consumer must never reconcile two
+	// figures with different venues by arithmetic: the book excludes AMM
+	// liquidity while pathfinding includes it, so the two describe different
+	// markets. See docs/liquidity-venues.md for the reconciliation rule.
+	// Empty for anchor and asset metrics.
+	Venue string `json:"venue,omitempty"`
+
+	Summary string `json:"summary"`
 
 	Evidence   []EvidenceJSON `json:"evidence"`
 	ObservedAt string         `json:"observed_at"`
@@ -108,6 +117,7 @@ func (f *Findings) ToJSON() FindingsJSON {
 				Determined: m.Determined,
 				Reason:     m.Reason,
 				Unit:       string(m.Unit),
+				Venue:      string(m.Venue),
 				Summary:    m.Summary,
 				Evidence:   make([]EvidenceJSON, 0, len(m.Evidence)),
 				ObservedAt: m.At.UTC().Format(time.RFC3339),

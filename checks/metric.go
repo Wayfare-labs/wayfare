@@ -55,7 +55,7 @@ func RunMetric(ctx context.Context, m Metric, s Subject) (res MetricResult) {
 
 	d = m.Describe()
 
-	if err := d.Validate(); err != nil {
+	if err := d.ValidateAsMetric(); err != nil {
 		return metricUndetermined(d, s, err.Error())
 	}
 	if err := ctx.Err(); err != nil {
@@ -110,6 +110,7 @@ func metricUndetermined(d Descriptor, s Subject, reason string, ev ...Evidence) 
 			ID: d.ID, Scope: d.Scope, Subject: s.Label(),
 			At: time.Now().UTC(), Determined: false, Reason: reason, Evidence: ev,
 		},
+		Venue:   d.Venue,
 		Summary: "could not determine: " + reason,
 	}
 }
@@ -123,6 +124,7 @@ func MetricValue(d Descriptor, s Subject, value decimal.Decimal, unit Unit, summ
 		},
 		Value:   value,
 		Unit:    unit,
+		Venue:   d.Venue,
 		Summary: summary,
 	}
 }
