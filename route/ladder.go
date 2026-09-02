@@ -91,6 +91,14 @@ type LadderResult struct {
 	Integrity Integrity
 	DependsOn []asset.Asset
 
+	// Chain is the full dependency tree when the corridor is derivative.
+	// It is the union across all rungs: if any rung discovered additional
+	// dependencies, they appear here, and when the same dependency was
+	// measured on some rungs but unmeasured on others the measured node
+	// wins — one rung's failed request never erases another's finding.
+	// Nil when the corridor is not derivative.
+	Chain []DependencyNode
+
 	ReferenceMid    decimal.Decimal
 	ReferenceSource string
 
@@ -330,6 +338,7 @@ func (l *LadderResult) summarise() {
 		anyDirect   bool
 		allNoMarket = true
 		deps        = map[string]asset.Asset{}
+		chainMap    = map[string]DependencyNode{}
 		firstErr    error
 	)
 
@@ -362,6 +371,18 @@ func (l *LadderResult) summarise() {
 			allNoMarket = false
 			for _, d := range r.Result.DependsOn {
 				deps[d.Code+":"+d.Issuer] = d
+			}
+			for _, c := range r.Result.Chain {
+				// A rung that failed to measure a dependency reports it
+				// unmeasured. That must never overwrite a real measurement
+				// from another rung: the union across rungs keeps the
+				// strongest evidence for each dependency, so a measured
+				// node only ever replaces an unmeasured placeholder.
+				key := c.Asset.Code + ":" + c.Asset.Issuer
+				existing, ok := chainMap[key]
+				if !ok || (c.Measured && !existing.Measured) {
+					chainMap[key] = c
+				}
 			}
 		case IntegrityNoMarket:
 			// leaves allNoMarket intact
@@ -410,6 +431,13 @@ func (l *LadderResult) summarise() {
 		sort.Slice(l.DependsOn, func(i, j int) bool {
 			return l.DependsOn[i].Code < l.DependsOn[j].Code
 		})
+		l.Chain = make([]DependencyNode, 0, len(chainMap))
+		for _, c := range chainMap {
+			l.Chain = append(l.Chain, c)
+		}
+		sort.Slice(l.Chain, func(i, j int) bool {
+			return l.Chain[i].Asset.Code < l.Chain[j].Asset.Code
+		})
 	default:
 		l.Integrity = IntegrityUnknown
 	}
@@ -447,11 +475,19 @@ func (l *LadderResult) finding(anyPriced bool, firstErr error) string {
 
 	var prefix string
 	if l.Integrity == IntegrityDerivative {
-		prefix = fmt.Sprintf(
-			"Derivative corridor: every path from %s to %s routes through %s, so "+
-				"%s has no independent market and these figures compound %s's cost "+
-				"with its own. ",
-			send, recv, describeAssets(l.DependsOn), recv, describeAssets(l.DependsOn))
+		if allMeasured(l.Chain) {
+			prefix = fmt.Sprintf(
+				"Derivative corridor: every path from %s to %s routes through %s, so "+
+					"%s has no independent market and these figures inherit %s's "+
+					"liquidity and failure modes. ",
+				send, recv, describeAssets(l.DependsOn), recv, describeAssets(l.DependsOn))
+		} else {
+			prefix = fmt.Sprintf(
+				"Derivative corridor: every path from %s to %s routes through %s, so "+
+					"%s has no independent market. Their own integrity was not fully "+
+					"measured, so these figures may compound an unmeasured loss. ",
+				send, recv, describeAssets(l.DependsOn), recv)
+		}
 	}
 
 	var body string

@@ -68,6 +68,9 @@ func FromCorridorJSON(c route.CorridorJSON) *Record {
 	for _, d := range c.DependsOn {
 		r.DependsOn = append(r.DependsOn, d.Code)
 	}
+	if c.DependencyChain != nil {
+		r.DependencyChain = c.DependencyChain
+	}
 
 	for _, rung := range c.Rungs {
 		out := Rung{

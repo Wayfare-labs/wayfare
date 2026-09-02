@@ -763,3 +763,70 @@ func TestUnknownOnlyPathIsTheDocumentedFalseNegative(t *testing.T) {
 		t.Errorf("expected the note to surface BLND, got notes: %v", res.Notes)
 	}
 }
+
+// TestAllMeasuredAndChainDepth are unit tests for the helper functions.
+func TestAllMeasuredAndChainDepth(t *testing.T) {
+	t.Run("all measured", func(t *testing.T) {
+		nodes := []DependencyNode{
+			{Asset: asset.NGNC(), Measured: true, Integrity: IntegrityDirect},
+		}
+		if !allMeasured(nodes) {
+			t.Error("expected all measured")
+		}
+		if chainDepth(nodes) != 1 {
+			t.Errorf("depth = %d, want 1", chainDepth(nodes))
+		}
+	})
+
+	t.Run("unmeasured node", func(t *testing.T) {
+		nodes := []DependencyNode{
+			{Asset: asset.NGNC(), Measured: false, Reason: "cycle detected"},
+		}
+		if allMeasured(nodes) {
+			t.Error("should not be all measured")
+		}
+	})
+
+	t.Run("nested depth", func(t *testing.T) {
+		nodes := []DependencyNode{
+			{
+				Asset:     asset.GHSC(),
+				Measured:  true,
+				Integrity: IntegrityDerivative,
+				Dependencies: []DependencyNode{
+					{Asset: asset.NGNC(), Measured: true, Integrity: IntegrityDirect},
+				},
+			},
+		}
+		if !allMeasured(nodes) {
+			t.Error("expected all measured")
+		}
+		if chainDepth(nodes) != 2 {
+			t.Errorf("depth = %d, want 2", chainDepth(nodes))
+		}
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		if !allMeasured(nil) {
+			t.Error("nil should be all measured")
+		}
+		if chainDepth(nil) != 0 {
+			t.Errorf("depth = %d, want 0", chainDepth(nil))
+		}
+	})
+}
+
+// TestDescribeChainStatus verifies the human-readable chain status rendering.
+func TestDescribeChainStatus(t *testing.T) {
+	nodes := []DependencyNode{
+		{Asset: asset.NGNC(), Measured: true, Integrity: IntegrityDirect},
+		{Asset: asset.KESC(), Measured: false, Reason: "Horizon error: timeout"},
+	}
+	got := describeChainStatus(nodes)
+	if !strings.Contains(got, "NGNC (DIRECT, independent market exists)") {
+		t.Errorf("expected NGNC DIRECT status, got: %s", got)
+	}
+	if !strings.Contains(got, "KESC (not measured: Horizon error: timeout)") {
+		t.Errorf("expected KESC unmeasured status, got: %s", got)
+	}
+}

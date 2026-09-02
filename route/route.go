@@ -172,6 +172,29 @@ func (i Integrity) Priceable() bool {
 	return i == IntegrityDirect || i == IntegrityDerivative
 }
 
+// maxDependencyDepth bounds recursive dependency measurement. The Stellar
+// protocol caps path length at 5 intermediate hops (XDR Asset path<5>),
+// so the real depth can never exceed that. The cap exists to prevent a
+// corrupted or expanded registry from turning one corridor request into
+// unbounded Horizon fan-out.
+const maxDependencyDepth = 5
+
+// DependencyNode is one link in a dependency chain. It is a tree, not a
+// flat list: a dependency can itself depend on other fiat tokens.
+//
+// Measured reports whether the node's Integrity was determined by an actual
+// Horizon query. When Measured is false, Integrity is the zero value
+// (IntegrityUnknown) and Reason explains why measurement did not happen.
+// A consumer must never present an unmeasured node as though its integrity
+// were a finding.
+type DependencyNode struct {
+	Asset        asset.Asset
+	Integrity    Integrity
+	Measured     bool
+	Reason       string
+	Dependencies []DependencyNode
+}
+
 // Kind identifies how a route delivers value.
 type Kind string
 
@@ -307,6 +330,12 @@ type Result struct {
 	// is IntegrityDerivative. Empty otherwise.
 	DependsOn []asset.Asset
 
+	// Chain is the full dependency tree when Integrity is
+	// IntegrityDerivative. Each node carries the dependency's own measured
+	// integrity (or an explicit "not measured" state). Nil when Integrity
+	// is not DERIVATIVE.
+	Chain []DependencyNode
+
 	// Notes record corridor-level facts that no single quote captures.
 	Notes []string
 }
@@ -379,6 +408,7 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 		default:
 			res.Integrity = d.integrity
 			res.DependsOn = d.dependsOn
+			res.Chain = d.chain
 			res.Notes = append(res.Notes, unknownHopNote(d.unknownHops)...)
 			if d.quote != nil {
 				res.Quotes = append(res.Quotes, *d.quote)
@@ -393,12 +423,18 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 				"This is the absence of a price, not a bad one.",
 			req.SendAsset.Code, req.ReceiveAsset.Code))
 	case IntegrityDerivative:
-		res.Notes = append(res.Notes, fmt.Sprintf(
-			"Derivative corridor: every available path to %s routes through %s. "+
-				"There is no independent market, so this corridor carries %s's "+
-				"liquidity and failure modes in addition to its own.",
-			req.ReceiveAsset.Code, describeAssets(res.DependsOn),
-			describeAssets(res.DependsOn)))
+		if allMeasured(res.Chain) {
+			res.Notes = append(res.Notes, fmt.Sprintf(
+				"Derivative corridor: every available path to %s routes through %s. "+
+					"There is no independent market, so this corridor carries their "+
+					"liquidity and failure modes in addition to its own.",
+				req.ReceiveAsset.Code, describeAssets(res.DependsOn)))
+		} else {
+			res.Notes = append(res.Notes, fmt.Sprintf(
+				"Derivative corridor: every available path to %s routes through %s, "+
+					"but their own integrity was not fully measured.",
+				req.ReceiveAsset.Code, describeAssets(res.DependsOn)))
+		}
 	}
 
 	sort.SliceStable(res.Quotes, func(i, j int) bool {
@@ -450,6 +486,7 @@ func (e *Engine) unscored(ctx context.Context, req Request, ref refrate.Rate) (*
 		if d, err := e.quoteDEX(ctx, req, ref); err == nil {
 			res.Integrity = d.integrity
 			res.DependsOn = d.dependsOn
+			res.Chain = d.chain
 			res.Notes = append(res.Notes, unknownHopNote(d.unknownHops)...)
 			if d.quote != nil {
 				// Carried for its route description and receive amount;
@@ -481,6 +518,7 @@ type dexResult struct {
 	quote     *Quote
 	integrity Integrity
 	dependsOn []asset.Asset
+	chain     []DependencyNode
 
 	// unknownHops are the intermediate assets pathfinding routed through
 	// that are neither native XLM nor registered in the asset registry. They
@@ -522,6 +560,37 @@ func unknownHopNote(unknown []asset.Asset) []string {
 			"asset registry. An unrecognised hop is currently treated as having an "+
 			"independent market; see asset/known.go for the bounded false-negative.",
 		strings.Join(names, ", "))}
+}
+
+// describeChainStatus renders the measured integrity of each dependency
+// for a human-readable warning.
+func describeChainStatus(nodes []DependencyNode) string {
+	parts := make([]string, len(nodes))
+	for i, n := range nodes {
+		switch {
+		case !n.Measured:
+			parts[i] = fmt.Sprintf("%s (not measured: %s)", n.Asset.Code, n.Reason)
+		case n.Integrity == IntegrityDirect:
+			parts[i] = fmt.Sprintf("%s (DIRECT, independent market exists)", n.Asset.Code)
+		case n.Integrity == IntegrityDerivative:
+			parts[i] = fmt.Sprintf("%s (DERIVATIVE, depends on %s)",
+				n.Asset.Code, describeAssets(fiatAssets(n.Dependencies)))
+		case n.Integrity == IntegrityNoMarket:
+			parts[i] = fmt.Sprintf("%s (NO-MARKET)", n.Asset.Code)
+		default:
+			parts[i] = fmt.Sprintf("%s (UNKNOWN)", n.Asset.Code)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// fiatAssets extracts the asset from each DependencyNode.
+func fiatAssets(nodes []DependencyNode) []asset.Asset {
+	out := make([]asset.Asset, len(nodes))
+	for i, n := range nodes {
+		out[i] = n.Asset
+	}
+	return out
 }
 
 // classify determines corridor integrity from the complete set of paths.
@@ -588,6 +657,124 @@ func classify(paths []dex.Path, dest asset.Asset) (Integrity, []asset.Asset, []a
 	return IntegrityDerivative, deps, unknownList
 }
 
+// measureChain recursively determines the integrity of each fiat dependency.
+//
+// For every dependency returned by classify, it queries Horizon for paths
+// from sendAsset to that dependency, classifies those paths, and recurses
+// into any newly discovered fiat intermediaries — building a tree whose
+// depth reflects how many layers of fiat-to-fiat routing exist.
+//
+// ancestors names the assets already on the path from the corridor's
+// destination down to the node currently being expanded. Each dependency
+// branch works from its own copy, so a dependency shared between siblings is
+// measured once per branch rather than mislabelled as a cycle — only a node
+// already on the current root-to-leaf path is a true cycle, and the second
+// encounter of one reports the link as unmeasured. The depth cap
+// (maxDependencyDepth) prevents unbounded fan-out from a corrupted registry.
+//
+// Each Horizon call is one StrictSendPaths round trip. Per node the cost is
+// bounded by len(deps) × maxDependencyDepth calls, and sharing a dependency
+// between branches re-measures it rather than looping; with the current
+// registry (4 fiat tokens) and protocol cap (5 hops) a corridor request
+// stays within a handful of extra calls.
+func (e *Engine) measureChain(
+	ctx context.Context,
+	sendAsset asset.Asset,
+	sendAmount decimal.Decimal,
+	deps []asset.Asset,
+	ancestors map[string]bool,
+	depth int,
+) []DependencyNode {
+	if depth >= maxDependencyDepth {
+		nodes := make([]DependencyNode, len(deps))
+		for i, d := range deps {
+			nodes[i] = DependencyNode{
+				Asset:    d,
+				Reason:   "depth cap exceeded",
+				Measured: false,
+			}
+		}
+		return nodes
+	}
+
+	nodes := make([]DependencyNode, 0, len(deps))
+	for _, dep := range deps {
+		key := dep.Code + ":" + dep.Issuer
+
+		// Each branch copies the ancestor path before adding itself, so
+		// siblings never see each other's progress. The cycle check is
+		// therefore "is this dependency already on the path from the
+		// destination to here", which is the only true cycle.
+		path := make(map[string]bool, len(ancestors)+1)
+		for k := range ancestors {
+			path[k] = true
+		}
+		if path[key] {
+			nodes = append(nodes, DependencyNode{
+				Asset:    dep,
+				Reason:   "cycle detected",
+				Measured: false,
+			})
+			continue
+		}
+		path[key] = true
+
+		depPaths, err := e.DEX.StrictSendPaths(ctx, sendAsset, sendAmount, dep)
+		if err != nil {
+			nodes = append(nodes, DependencyNode{
+				Asset:    dep,
+				Reason:   fmt.Sprintf("Horizon error: %v", err),
+				Measured: false,
+			})
+			continue
+		}
+
+		depIntegrity, depFiatHops, _ := classify(depPaths, dep)
+		node := DependencyNode{
+			Asset:     dep,
+			Integrity: depIntegrity,
+			Measured:  true,
+		}
+
+		if depIntegrity == IntegrityDerivative && len(depFiatHops) > 0 {
+			node.Dependencies = e.measureChain(
+				ctx, sendAsset, sendAmount, depFiatHops, path, depth+1)
+		}
+
+		nodes = append(nodes, node)
+	}
+
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].Asset.Code < nodes[j].Asset.Code
+	})
+	return nodes
+}
+
+// chainDepth returns the maximum depth of a dependency tree.
+func chainDepth(nodes []DependencyNode) int {
+	max := 0
+	for _, n := range nodes {
+		d := chainDepth(n.Dependencies)
+		if d+1 > max {
+			max = d + 1
+		}
+	}
+	return max
+}
+
+// allMeasured reports whether every node in the tree was actually measured.
+func allMeasured(nodes []DependencyNode) bool {
+	for _, n := range nodes {
+		if !n.Measured {
+			return false
+		}
+		if !allMeasured(n.Dependencies) {
+			return false
+		}
+	}
+	return true
+}
+
 // quoteDEX prices the on-chain leg via Horizon pathfinding, and classifies
 // the corridor's structure from the same set of paths.
 func (e *Engine) quoteDEX(ctx context.Context, req Request, ref refrate.Rate) (*dexResult, error) {
@@ -599,6 +786,14 @@ func (e *Engine) quoteDEX(ctx context.Context, req Request, ref refrate.Rate) (*
 	integrity, dependsOn, unknownHops := classify(paths, req.ReceiveAsset)
 	if integrity == IntegrityNoMarket {
 		return &dexResult{integrity: integrity}, nil
+	}
+
+	var chain []DependencyNode
+	if integrity == IntegrityDerivative {
+		visited := map[string]bool{
+			req.ReceiveAsset.Code + ":" + req.ReceiveAsset.Issuer: true,
+		}
+		chain = e.measureChain(ctx, req.SendAsset, req.SendAmount, dependsOn, visited, 0)
 	}
 
 	// Horizon generally returns its best path first, but that is not a
@@ -640,10 +835,18 @@ func (e *Engine) quoteDEX(ctx context.Context, req Request, ref refrate.Rate) (*
 	// quote as well as the result means a caller rendering a single route
 	// cannot present the number without the dependency attached to it.
 	if integrity == IntegrityDerivative {
-		q.Warnings = append(q.Warnings, fmt.Sprintf(
-			"derivative corridor: every path routes through %s, so this rate "+
-				"compounds %s's loss with this corridor's own",
-			describeAssets(dependsOn), describeAssets(dependsOn)))
+		if allMeasured(chain) {
+			q.Warnings = append(q.Warnings, fmt.Sprintf(
+				"derivative corridor: every path routes through %s (measured: %s), "+
+					"so this corridor inherits their liquidity and failure modes",
+				describeAssets(dependsOn), describeChainStatus(chain)))
+		} else {
+			q.Warnings = append(q.Warnings, fmt.Sprintf(
+				"derivative corridor: every path routes through %s, but their "+
+					"own integrity was not fully measured — this rate may compound "+
+					"an unmeasured loss",
+				describeAssets(dependsOn)))
+		}
 	}
 
 	probe := e.ProbeAmount
@@ -659,5 +862,5 @@ func (e *Engine) quoteDEX(ctx context.Context, req Request, ref refrate.Rate) (*
 			}
 		}
 	}
-	return &dexResult{quote: q, integrity: integrity, dependsOn: dependsOn, unknownHops: unknownHops}, nil
+	return &dexResult{quote: q, integrity: integrity, dependsOn: dependsOn, chain: chain, unknownHops: unknownHops}, nil
 }

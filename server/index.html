@@ -173,6 +173,41 @@
     font-size: .85rem; color: var(--muted);
     border-left: 3px solid var(--border); padding-left: .7rem;
   }
+  @media (max-width: 640px) {
+    html, body { overflow-x: hidden; }
+    .wrap { padding: 1.5rem 1rem 3rem; max-width: 100%; }
+    .controls select { flex: 1 1 0; min-height: 44px; font-size: 1rem; }
+    .controls button { flex: 1 1 calc(50% - .3rem); min-height: 44px; font-size: 1rem; }
+    .panel { padding: .9rem 1rem; }
+    .scroll table { border: 0; }
+    .scroll table thead {
+      clip: rect(0 0 0 0); height: 1px; margin: -1px;
+      overflow: hidden; position: absolute; width: 1px;
+    }
+    .scroll table tr {
+      display: block; margin-bottom: .75rem;
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: .6rem .7rem; background: var(--panel);
+    }
+    .scroll table td {
+      display: flex; justify-content: space-between; align-items: baseline;
+      padding: .3rem .15rem; border-bottom: 1px solid var(--grid);
+      text-align: right; font-size: .85rem;
+    }
+    .scroll table td:last-child { border-bottom: 0; }
+    .scroll table td::before {
+      content: attr(data-label); font-weight: 550; text-align: left;
+      color: var(--muted); font-size: .72rem; text-transform: uppercase;
+      letter-spacing: .04em; flex-shrink: 0; margin-right: .75rem;
+    }
+    .scroll table td:first-child {
+      display: block; text-align: left; font-weight: 600; font-size: .95rem;
+      border-bottom: 1px solid var(--grid); padding-bottom: .45rem; margin-bottom: .1rem;
+    }
+    .legend-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .finding-row { flex-wrap: wrap; gap: .4rem; }
+    .f-state { min-width: auto; }
+  }
 </style>
 </head>
 <body>
@@ -370,33 +405,33 @@ function table(rungs, scored) {
         : r.integrity === 'NO-MARKET' ? 'no path exists at this size'
         : 'not priced';
       if (scored) {
-        return `<tr><td class="num">${esc(r.send_amount)}</td>
-          <td colspan="4" class="err">${why}</td>
-          <td>${esc(r.integrity)}</td></tr>`;
+        return `<tr><td class="num" data-label="Send">${esc(r.send_amount)}</td>
+          <td colspan="4" class="err" data-label="Status">${why}</td>
+          <td data-label="Integrity">${esc(r.integrity)}</td></tr>`;
       }
-      return `<tr><td class="num">${esc(r.send_amount)}</td>
-        <td colspan="2" class="err">${why}</td>
-        <td>${esc(r.integrity)}</td></tr>`;
+      return `<tr><td class="num" data-label="Send">${esc(r.send_amount)}</td>
+        <td colspan="2" class="err" data-label="Status">${why}</td>
+        <td data-label="Integrity">${esc(r.integrity)}</td></tr>`;
     }
     const q = r.quote;
     if (scored) {
       return `<tr>
-        <td class="num">${esc(r.send_amount)}</td>
-        <td class="num">${esc(q.receive_amount)}</td>
-        <td class="num">${esc(q.effective_rate)}</td>
-        <td class="num ${verdictClass(q.verdict)}">${formatPct(q.loss_pct)}%</td>
-        <td class="${verdictClass(q.verdict)}">${esc(q.verdict)}</td>
-        <td>${esc(q.description)}</td>
+        <td class="num" data-label="Send">${esc(r.send_amount)}</td>
+        <td class="num" data-label="Receive">${esc(q.receive_amount)}</td>
+        <td class="num" data-label="Rate">${esc(q.effective_rate)}</td>
+        <td class="num ${verdictClass(q.verdict)}" data-label="Loss">${formatPct(q.loss_pct)}%</td>
+        <td class="${verdictClass(q.verdict)}" data-label="Verdict">${esc(q.verdict)}</td>
+        <td data-label="Path">${esc(q.description)}</td>
       </tr>`;
     }
     // When not scored, show structural facts only: send, receive, rate, path.
     // Loss and verdict are omitted — they are derived from a benchmark the
     // engine refused to stand behind.
     return `<tr>
-      <td class="num">${esc(r.send_amount)}</td>
-      <td class="num">${esc(q.receive_amount)}</td>
-      <td class="num">${esc(q.effective_rate)}</td>
-      <td>${esc(q.description)}</td>
+      <td class="num" data-label="Send">${esc(r.send_amount)}</td>
+      <td class="num" data-label="Receive">${esc(q.receive_amount)}</td>
+      <td class="num" data-label="Rate">${esc(q.effective_rate)}</td>
+      <td data-label="Path">${esc(q.description)}</td>
     </tr>`;
   }).join('');
 
@@ -835,12 +870,12 @@ function runsTable(runs) {
     const div = ref.divergence_pct
       ? ` <span class="case">div ${esc(ref.divergence_pct)}%</span>` : '';
     return `<tr>
-      <td class="num">${esc(r.recorded_at)}</td>
-      <td class="num">${r.seq}</td>
-      <td><span class="badge ${badgeClass(r.integrity)}">${esc(r.integrity)}</span>${via}</td>
-      <td class="num">${esc(r.floor_loss_pct)}%</td>
-      <td class="num">${esc(r.worst_loss_pct)}%</td>
-      <td>${esc(src)}${div}</td>
+      <td class="num" data-label="Recorded">${esc(r.recorded_at)}</td>
+      <td class="num" data-label="#">${r.seq}</td>
+      <td data-label="Integrity"><span class="badge ${badgeClass(r.integrity)}">${esc(r.integrity)}</span>${via}</td>
+      <td class="num" data-label="Floor loss">${esc(r.floor_loss_pct)}%</td>
+      <td class="num" data-label="Worst loss">${esc(r.worst_loss_pct)}%</td>
+      <td data-label="Reference">${esc(src)}${div}</td>
     </tr>`;
   }).join('');
 
