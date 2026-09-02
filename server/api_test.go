@@ -447,8 +447,10 @@ func TestUIScoredFalseSuppressesVerdicts(t *testing.T) {
 		t.Error("loss curve is not gated on d.scored; it would render when unscored")
 	}
 
-	// The table function must accept a scored parameter.
-	if !strings.Contains(page, "function table(rungs, scored)") {
+	// The table function must accept a scored parameter and the corridor's
+	// dependencies (so an unpriced DERIVATIVE rung can name what it routes
+	// through without overflowing the row).
+	if !strings.Contains(page, "function table(rungs, scored, depends)") {
 		t.Error("table() does not accept a scored parameter")
 	}
 

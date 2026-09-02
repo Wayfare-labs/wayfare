@@ -151,6 +151,7 @@
   .integrity-cell { white-space: nowrap; }
   .integrity-cell .badge { font-size: .65rem; padding: .3rem .45rem; border-width: 1px; }
   .integrity-cell .badge::before { font-size: .8rem; }
+  .integrity-cell .integrity-via { font-family: var(--mono); font-size: .72rem; color: var(--warn); margin-left: .35rem; }
   .case strong { color: var(--ink); font-weight: 600; }
   svg { width: 100%; height: auto; display: block; }
   .axis { fill: var(--muted); font: 10px var(--mono); }
@@ -280,6 +281,19 @@ function integrityElement(state, dependsOn = '') {
   </div>`;
 }
 
+// Compact form for table cells: the state badge plus a short dependency
+// note, with the full explanation kept in the hover tooltip. The headline
+// and trend views carry the complete card; inside a nowrap table cell the
+// card's description would overflow the row.
+function integrityCell(state, dependsOn = []) {
+  const info = integrityInfo(state, Array.isArray(dependsOn) ? dependsOn : []);
+  const tip = info.tooltip + (info.dependency ? ' — ' + info.dependency : '');
+  const dependency = info.dependency
+    ? `<span class="integrity-via">${esc(info.dependency)}</span>` : '';
+  return `<span class="badge ${badgeClass(state)}" title="${esc(tip)}"
+    aria-label="${esc(state)}: ${esc(tip)}">${esc(state)}</span>${dependency}`;
+}
+
 const verdictClass = (v) => 'v-' + String(v).toLowerCase();
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -328,7 +342,7 @@ function render(d) {
     parts.push(`<div class="panel"><h2>Loss against mid, by size</h2>${curve(priced)}</div>`);
   }
 
-  parts.push(`<div class="panel"><h2>Measurements</h2><div class="scroll">${table(d.rungs, d.scored)}</div></div>`);
+  parts.push(`<div class="panel"><h2>Measurements</h2><div class="scroll">${table(d.rungs, d.scored, d.depends_on || [])}</div></div>`);
 
   if (d.scored) parts.push(legend());
 
@@ -409,20 +423,24 @@ function curve(rungs) {
   </svg>`;
 }
 
-function table(rungs, scored) {
+function table(rungs, scored, depends) {
   const rows = rungs.map(r => {
     if (!r.priced) {
       const why = r.error ? esc(r.error)
         : r.integrity === 'NO-MARKET' ? 'no path exists at this size'
         : 'not priced';
+      // An unpriced rung still reports the corridor's structural state, so a
+      // DERIVATIVE rung names what it routes through; the compact cell keeps
+      // the row from overflowing the table.
+      const cell = integrityCell(r.integrity, depends);
       if (scored) {
         return `<tr><td class="num">${esc(r.send_amount)}</td>
           <td colspan="4" class="err">${why}</td>
-          <td class="integrity-cell">${integrityElement(r.integrity)}</td></tr>`;
+          <td class="integrity-cell">${cell}</td></tr>`;
       }
       return `<tr><td class="num">${esc(r.send_amount)}</td>
         <td colspan="2" class="err">${why}</td>
-        <td class="integrity-cell">${integrityElement(r.integrity)}</td></tr>`;
+        <td class="integrity-cell">${cell}</td></tr>`;
     }
     const q = r.quote;
     if (scored) {
@@ -876,8 +894,6 @@ function runsTable(runs) {
   const rows = runs.slice().reverse().map(r => {
     const ref = r.reference || {};
     const src = ref.scored_against || ref.source || 'unknown';
-    const via = (r.depends_on || []).length
-      ? ` <span class="case">via ${esc(r.depends_on.join(', '))}</span>` : '';
     const div = ref.divergence_pct
       ? ` <span class="case">div ${esc(ref.divergence_pct)}%</span>` : '';
     return `<tr>
@@ -885,7 +901,7 @@ function runsTable(runs) {
       <td class="num">${r.seq}</td>
       <td class="num">${esc(r.floor_loss_pct)}%</td>
       <td class="num">${esc(r.worst_loss_pct)}%</td>
-      <td class="integrity-cell">${integrityElement(r.integrity, (r.depends_on || []).map(a => ({code: a})))}${via}</td>
+      <td class="integrity-cell">${integrityCell(r.integrity, r.depends_on || [])}</td>
       <td>${esc(src)}${div}</td>
     </tr>`;
   }).join('');
