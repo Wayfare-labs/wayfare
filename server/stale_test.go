@@ -387,6 +387,73 @@ func TestStaleShapeMatchesLiveShape(t *testing.T) {
 	}
 }
 
+// TestStaleQuoteCarriesDEXKind pins that a stored quote's kind survives the
+// stale path, both for a priced rung and for the recommendation, matching
+// route.QuoteJSON.Kind on the live path. See issue #181: conflating an
+// anchor's own rails with on-chain DEX execution would misattribute the
+// loss, and a stale reading dropping the distinction would be exactly that.
+func TestStaleQuoteCarriesDEXKind(t *testing.T) {
+	dir := t.TempDir()
+	st, err := runstore.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC().Add(-3 * time.Hour)
+	rec := &runstore.Record{
+		RecordedAt: at,
+		Corridor:   "USDC-NGNC",
+		Integrity:  "DIRECT",
+		Reference: runstore.Reference{
+			Mid: "1350.2568", Source: "currency-api",
+			AsOf: at.Format(time.RFC3339), ScoredAgainst: "currency-api",
+		},
+		FloorLossPct: "4.46", FloorSize: "100",
+		WorstLossPct: "4.46", WorstSize: "100",
+		RecommendedSize: "100",
+		Finding:         "USDC to NGNC prices directly.",
+		Rungs: []runstore.Rung{{
+			SendAmount: "100", Priced: true, Integrity: "DIRECT",
+			ReceiveAmount: "129000", EffectiveRate: "1290",
+			LossPct: "4.46", Verdict: "FAIR", Path: "USDC -> NGNC",
+		}},
+		Recommended: &runstore.Rung{
+			SendAmount: "100", Priced: true, Integrity: "DIRECT",
+			ReceiveAmount: "129000", EffectiveRate: "1290",
+			LossPct: "4.46", Verdict: "FAIR", Path: "USDC -> NGNC",
+		},
+	}
+	if err := st.Append(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := deadServer(t, st)
+	status, body := getJSON(t, srv.URL+"/api/corridor?to=NGNC&sizes=100")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %v", status, body)
+	}
+
+	rungs, _ := body["rungs"].([]any)
+	if len(rungs) == 0 {
+		t.Fatal("expected at least one rung")
+	}
+	rung, _ := rungs[0].(map[string]any)
+	quote, _ := rung["quote"].(map[string]any)
+	if quote == nil {
+		t.Fatal("expected the rung to carry a quote")
+	}
+	if quote["kind"] != "dex" {
+		t.Errorf(`rung quote kind = %v, want "dex"`, quote["kind"])
+	}
+
+	recommended, _ := body["recommended"].(map[string]any)
+	if recommended == nil {
+		t.Fatal("expected a recommended quote")
+	}
+	if recommended["kind"] != "dex" {
+		t.Errorf(`recommended kind = %v, want "dex"`, recommended["kind"])
+	}
+}
+
 // TestHumanAge covers the rendering directly, including the boundaries.
 func TestHumanAge(t *testing.T) {
 	cases := map[time.Duration]string{

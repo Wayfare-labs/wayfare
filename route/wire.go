@@ -17,6 +17,16 @@ import (
 // rounding bug this project refuses internally.
 
 type QuoteJSON struct {
+	// Kind is "dex" or "anchor-sep38" — see route.Kind. On-chain DEX
+	// liquidity and an anchor's own RFQ rails are two different markets
+	// that can price the same pair differently, and Source alone (a free
+	// -form domain or "stellar-dex") makes a client re-derive that
+	// distinction from a string it was never guaranteed to parse. Every
+	// quote in a response is "dex" today — see route.KindAnchorSEP38 — but
+	// the field is on the wire from the start so a caller never has to
+	// guess which rail a figure came from, and the two are never silently
+	// conflated into one number.
+	Kind          string   `json:"kind"`
 	Description   string   `json:"description"`
 	Source        string   `json:"source"`
 	ReceiveAmount string   `json:"receive_amount"`
@@ -194,6 +204,7 @@ func ToQuoteJSON(q *Quote) *QuoteJSON {
 		w = []string{}
 	}
 	return &QuoteJSON{
+		Kind:          string(q.Kind),
 		Description:   q.Description,
 		Source:        q.Source,
 		ReceiveAmount: q.ReceiveAmount.String(),
