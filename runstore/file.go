@@ -104,7 +104,13 @@ func (s *FileStore) readAll(corridor string) ([]*Record, error) {
 		if err := json.Unmarshal([]byte(raw), &r); err != nil {
 			return nil, fmt.Errorf("runstore: %s line %d: %w", corridor, line, err)
 		}
-		if r.Version != 1 && r.Version != Version {
+		// Versions 1, 2 and 3 are all loadable: each migration added its
+		// fields with omitempty after every earlier field, so older records
+		// encode byte-for-byte as they did when they were written and
+		// verify unchanged (see Record and docs/run-store.md). Any other
+		// version is a schema this build does not understand and must be
+		// refused, never guessed at.
+		if r.Version != 1 && r.Version != 2 && r.Version != Version {
 			return nil, fmt.Errorf(
 				"runstore: %s line %d has record version %d, this build understands %d; "+
 					"refusing to guess at a schema it does not know",
@@ -186,11 +192,35 @@ func (s *FileStore) Append(ctx context.Context, r *Record) error {
 		return fmt.Errorf("runstore: encoding record: %w", err)
 	}
 
-	f, err := os.OpenFile(s.path(corridor), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(s.path(corridor), os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
 		return fmt.Errorf("runstore: opening %s for append: %w", corridor, err)
 	}
 	defer f.Close()
+
+	// The chain file's last line must be newline-terminated before we
+	// append. A kill between the record bytes and their newline — or a
+	// tool that omits final newlines — leaves a complete, verifiable
+	// record whose line simply lacks its terminator; appending straight
+	// onto it would fuse the new record into the previous line and
+	// corrupt the chain. The separator newline sits outside every
+	// record's preimage, so writing it changes no hash and the chain
+	// stays verifiable.
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("runstore: stat %s: %w", corridor, err)
+	}
+	if fi.Size() > 0 {
+		var last [1]byte
+		if _, err := f.ReadAt(last[:], fi.Size()-1); err != nil {
+			return fmt.Errorf("runstore: reading the tail of %s: %w", corridor, err)
+		}
+		if last[0] != '\n' {
+			if _, err := f.Write([]byte{'\n'}); err != nil {
+				return fmt.Errorf("runstore: terminating the final line of %s: %w", corridor, err)
+			}
+		}
+	}
 
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		return fmt.Errorf("runstore: appending to %s: %w", corridor, err)
