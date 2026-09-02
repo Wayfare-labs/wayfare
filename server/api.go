@@ -275,7 +275,58 @@ func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok",
+		"data":   s.healthData(r.Context()),
+	})
+}
+
+// healthData returns the newest stored run per corridor and its age, or nil
+// when no history exists to describe.
+//
+// A health probe answers two different questions: is the process alive, and
+// is the data it serves current? /healthz has always answered the first; the
+// second is the one at risk on a -history-first deployment, whose served
+// history is as old as the image it was built from. nil (JSON null) is the
+// explicit unknown — no store, or no stored run — never a fabricated zero or
+// "now".
+func (s *Server) healthData(ctx context.Context) map[string]healthCorridorJSON {
+	if s.Store == nil {
+		return nil
+	}
+	corridors, err := s.Store.Corridors(ctx)
+	if err != nil || len(corridors) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	out := make(map[string]healthCorridorJSON, len(corridors))
+	for _, c := range corridors {
+		rec, err := s.Store.Latest(ctx, c)
+		if err != nil || rec == nil {
+			continue
+		}
+		age := now.Sub(rec.RecordedAt.UTC())
+		if age < 0 {
+			age = 0
+		}
+		out[c] = healthCorridorJSON{
+			RecordedAt: rec.RecordedAt.UTC().Format(time.RFC3339),
+			AgeSeconds: int64(age.Seconds()),
+			AgeHuman:   humanAge(age),
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// healthCorridorJSON is one corridor's newest stored run, as reported on
+// /healthz.
+type healthCorridorJSON struct {
+	RecordedAt string `json:"recorded_at"`
+	AgeSeconds int64  `json:"age_seconds"`
+	AgeHuman   string `json:"age_human"`
 }
 
 // helpers --------------------------------------------------------------------
@@ -412,6 +463,10 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 		}
 		if r.Priced {
 			rj.Quote = &route.QuoteJSON{
+				// Hardcoded for the same reason Source is: runstore.Rung
+				// carries no kind of its own, and every record in the store
+				// today was priced on-chain. See route.QuoteJSON.Kind.
+				Kind:          string(route.KindDEX),
 				Description:   r.Path,
 				Source:        "stellar-dex",
 				ReceiveAmount: r.ReceiveAmount,
@@ -429,6 +484,7 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 	// stale path, the recommendation the monitor refused to make live.
 	if rec.Recommended != nil {
 		out.Recommended = &route.QuoteJSON{
+			Kind:          string(route.KindDEX),
 			Description:   rec.Recommended.Path,
 			Source:        "stellar-dex",
 			ReceiveAmount: rec.Recommended.ReceiveAmount,

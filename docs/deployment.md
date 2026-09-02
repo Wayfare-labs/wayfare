@@ -246,6 +246,8 @@ and one asserting a missing one is an error rather than a plausible number.
 
 ## Related
 
+- [cold-start-reliability.md](cold-start-reliability.md) — observed free-tier
+    wake-up behavior and current retry boundary
 - [embedded-history.md](embedded-history.md) — the deployed instance serves history embedded at build time; freshness depends on redeploys, not the scheduler
 - [upstream-failures.md](upstream-failures.md) — what each upstream failure shape means
 - [run-store.md](run-store.md) — the chain, and what verification proves

@@ -6,6 +6,7 @@
 //
 //	go run ./cmd/ladder                  # USDC -> NGNC
 //	go run ./cmd/ladder -to GHSC         # USDC -> GHSC, benchmarked against GHS
+//	go run ./cmd/ladder -to NGNT         # USDC -> NGNT, benchmarked against NGN
 //	go run ./cmd/ladder -to GHSC -json   # same, as JSON on stdout
 //	go run ./cmd/ladder -checks=false    # same, without counterparty checks
 //
@@ -51,11 +52,12 @@ var corridors = map[string]corridor{
 	"NGNC": {asset.NGNC(), "NGN"},
 	"GHSC": {asset.GHSC(), "GHS"},
 	"KESC": {asset.KESC(), "KES"},
+	"NGNT": {asset.NGNT(), "NGN"},
 }
 
 func main() {
 	var (
-		to        = flag.String("to", "NGNC", "destination asset code (NGNC, GHSC, KESC)")
+		to        = flag.String("to", "NGNC", "destination asset code (NGNC, GHSC, KESC, NGNT)")
 		sizesFlag = flag.String("sizes", "0.1,1,5,10,25,50,100,250,500,1000,2500,5000",
 			"comma-separated send amounts in USDC")
 		jsonOut = flag.Bool("json", false, "emit JSON on stdout instead of the text table")
@@ -74,7 +76,7 @@ func main() {
 
 	c, ok := corridors[strings.ToUpper(*to)]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "unknown destination %q; known: NGNC, GHSC, KESC\n", *to)
+		fmt.Fprintf(os.Stderr, "unknown destination %q; known: NGNC, GHSC, KESC, NGNT\n", *to)
 		os.Exit(2)
 	}
 

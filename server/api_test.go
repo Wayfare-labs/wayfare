@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
+	"github.com/Wayfare-labs/wayfare/runstore"
 )
 
 // liveNGNCPaths is the real Horizon strict-send body for USDC -> NGNC,
@@ -285,6 +287,107 @@ func TestHealthz(t *testing.T) {
 	status, body := getJSON(t, srv.URL+"/healthz")
 	if status != http.StatusOK || body["status"] != "ok" {
 		t.Errorf("healthz = %d %v", status, body)
+	}
+	// No store configured: data must be null — the age of the data is
+	// unknown, never a fabricated zero or "now".
+	if data, ok := body["data"]; !ok || data != nil {
+		t.Errorf("data = %v, want null when no history is configured", data)
+	}
+}
+
+// TestHealthzReportsDataAge is the A6 contract: on a -history-first
+// deployment the thing at risk is the age of the data, and /healthz must say
+// it. Each corridor's newest record is reported with its recorded_at and age;
+// a corridor with no history is absent rather than guessed.
+func TestHealthzReportsDataAge(t *testing.T) {
+	base := time.Now().UTC().Add(-6 * time.Hour).Truncate(time.Second)
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendHealthRecord(t, st, "USDC-NGNC", base)
+	appendHealthRecord(t, st, "USDC-GHSC", base.Add(-1*time.Hour))
+
+	srv := trendServer(t, st)
+	status, body := getJSON(t, srv.URL+"/healthz")
+	if status != http.StatusOK || body["status"] != "ok" {
+		t.Fatalf("healthz = %d %v", status, body)
+	}
+
+	data, _ := body["data"].(map[string]any)
+	if data == nil {
+		t.Fatal("data is null; the age of the data must be reported on a history-first deployment")
+	}
+
+	ngnc, _ := data["USDC-NGNC"].(map[string]any)
+	if ngnc == nil {
+		t.Fatalf("data lacks USDC-NGNC: %v", data)
+	}
+	if ngnc["recorded_at"] != base.Format(time.RFC3339) {
+		t.Errorf("recorded_at = %v, want %s", ngnc["recorded_at"], base.Format(time.RFC3339))
+	}
+	age, _ := ngnc["age_seconds"].(float64)
+	if age < 6*3600 || age > 6*3600+60 {
+		t.Errorf("age_seconds = %v, want roughly 6h", age)
+	}
+	if ngnc["age_human"] != "6h ago" {
+		t.Errorf("age_human = %v, want 6h ago", ngnc["age_human"])
+	}
+
+	ghsc, _ := data["USDC-GHSC"].(map[string]any)
+	if ghsc == nil {
+		t.Fatalf("data lacks USDC-GHSC: %v", data)
+	}
+	ageGHSC, _ := ghsc["age_seconds"].(float64)
+	if ageGHSC < 7*3600 || ageGHSC > 7*3600+60 {
+		t.Errorf("GHSC age_seconds = %v, want roughly 7h", ageGHSC)
+	}
+	if ghsc["age_human"] != "7h ago" {
+		t.Errorf("GHSC age_human = %v, want 7h ago", ghsc["age_human"])
+	}
+}
+
+// TestHealthzEmptyStoreIsUnknown is the other half of the unknown case: a
+// store exists but holds nothing. The age must be null, never a fabricated
+// zero or "now" — an unavailable quantity is unknown, never a default.
+func TestHealthzEmptyStoreIsUnknown(t *testing.T) {
+	empty, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := trendServer(t, empty)
+	status, body := getJSON(t, srv.URL+"/healthz")
+	if status != http.StatusOK {
+		t.Fatalf("healthz = %d %v", status, body)
+	}
+	if data, ok := body["data"]; !ok || data != nil {
+		t.Errorf("data = %v, want null when the store is empty", data)
+	}
+}
+
+// appendHealthRecord appends one record for the given corridor and time.
+func appendHealthRecord(t *testing.T, st runstore.Store, corridor string, at time.Time) {
+	t.Helper()
+	rec := &runstore.Record{
+		RecordedAt: at,
+		Corridor:   corridor,
+		Integrity:  "DIRECT",
+		Reference: runstore.Reference{
+			Mid: "1350.2568", Source: "currency-api",
+			AsOf: at.UTC().Format(time.RFC3339), ScoredAgainst: "currency-api",
+		},
+		FloorLossPct: "25.02", FloorSize: "0.1",
+		WorstLossPct: "97.68", WorstSize: "5000",
+		Recommended: nil,
+		Finding:     "No usable size.",
+		Rungs: []runstore.Rung{{
+			SendAmount: "0.1", Priced: true, Integrity: "DIRECT",
+			ReceiveAmount: "102.78", EffectiveRate: "1027.84",
+			LossPct: "24.65", Verdict: "UNUSABLE", Path: "USDC -> " + corridor,
+		}},
+	}
+	if err := st.Append(context.Background(), rec); err != nil {
+		t.Fatal(err)
 	}
 }
 

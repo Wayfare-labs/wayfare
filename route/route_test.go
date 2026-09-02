@@ -233,6 +233,36 @@ func TestGoodRouteIsRecommended(t *testing.T) {
 	}
 }
 
+// TestDEXQuoteIsTaggedWithKind pins that a quote priced through Horizon
+// pathfinding is always tagged KindDEX, never left zero-valued. This is the
+// domain-side half of distinguishing on-chain DEX execution from an anchor's
+// own SEP-38 rails — see QuoteJSON.Kind for the wire-side half. The two price
+// the same pair differently, and conflating them would misattribute the loss
+// to the wrong rail.
+func TestDEXQuoteIsTaggedWithKind(t *testing.T) {
+	srv := horizonStub(t, liveStrictSendResponse)
+	defer srv.Close()
+
+	e := &Engine{DEX: &dex.Client{HorizonURL: srv.URL}, RefRate: usdToNGN("660")}
+	res, err := e.Quote(context.Background(), ngnRequest("100"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+
+	if len(res.Quotes) == 0 {
+		t.Fatal("expected at least one priced quote")
+	}
+	if res.Quotes[0].Kind != KindDEX {
+		t.Errorf("Quotes[0].Kind = %q, want %q", res.Quotes[0].Kind, KindDEX)
+	}
+	if res.Recommended == nil {
+		t.Fatal("expected a recommended quote")
+	}
+	if res.Recommended.Kind != KindDEX {
+		t.Errorf("Recommended.Kind = %q, want %q", res.Recommended.Kind, KindDEX)
+	}
+}
+
 // TestTokenDeliveryIsDisclosed ensures the user is told the on-chain leg ends
 // in NGNC rather than naira in a bank account.
 //
