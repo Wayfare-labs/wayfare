@@ -264,6 +264,8 @@ funnel for every Horizon call and both clients already accept an
 
 ## Related
 
+- [docs/glossary.md](glossary.md) — every state a reader can meet (verdicts,
+  integrity, agreement, checks, freshness)
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — project invariants
 - [docs/corridor-measurements.md](corridor-measurements.md) — the published
   figures these snapshots make testable
