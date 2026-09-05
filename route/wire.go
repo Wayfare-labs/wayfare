@@ -60,6 +60,20 @@ type CostBlockJSON struct {
 	TotalLossPct string         `json:"total_loss_pct"`
 }
 
+type ExecutionRatePointJSON struct {
+	Size   string `json:"size"`
+	Rate   string `json:"rate,omitempty"`
+	Priced bool   `json:"priced"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type ExecutionRateCurveJSON struct {
+	Points           []ExecutionRatePointJSON `json:"points"`
+	PricedCount      int                      `json:"priced_count"`
+	ObservationCount int                      `json:"observation_count"`
+	NonMonotonic     bool                     `json:"non_monotonic"`
+}
+
 type RungJSON struct {
 	SendAmount   string         `json:"send_amount"`
 	MarginalCost string         `json:"marginal_cost,omitempty"`
@@ -145,9 +159,10 @@ type CorridorJSON struct {
 	// and nothing here feeds back into either.
 	Findings *checks.FindingsJSON `json:"findings,omitempty"`
 
-	Finding    string     `json:"finding"`
-	Rungs      []RungJSON `json:"rungs"`
-	MeasuredAt string     `json:"measured_at"`
+	Finding    string                  `json:"finding"`
+	Curve      *ExecutionRateCurveJSON `json:"curve"`
+	Rungs      []RungJSON              `json:"rungs"`
+	MeasuredAt string                  `json:"measured_at"`
 }
 
 // StaleJSON labels a reading served from history rather than measured now.
@@ -289,6 +304,22 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 	if l.Recommended != nil {
 		out.RecommendedSize = l.RecommendedSize.String()
 	}
+	if l.Curve != nil {
+		out.Curve = &ExecutionRateCurveJSON{
+			Points:           make([]ExecutionRatePointJSON, 0, len(l.Curve.Points)),
+			PricedCount:      l.Curve.PricedCount,
+			ObservationCount: l.Curve.ObservationCount,
+			NonMonotonic:     l.Curve.NonMonotonic,
+		}
+		for _, p := range l.Curve.Points {
+			point := ExecutionRatePointJSON{Size: p.Size.String(), Priced: p.Priced, Reason: p.Reason}
+			if p.Priced {
+				point.Rate = p.Rate.String()
+			}
+			out.Curve.Points = append(out.Curve.Points, point)
+		}
+	}
+
 	for _, d := range l.DependsOn {
 		out.DependsOn = append(out.DependsOn, ToAssetJSON(d))
 	}
