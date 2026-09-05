@@ -1,17 +1,12 @@
 package route
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/shopspring/decimal"
-
-	"github.com/Wayfare-labs/wayfare/asset"
 )
 
+func TestDecomposeExpectedFailureCostUndetermined(t *testing.T) {
 func testUSDC() asset.Asset { return asset.USDC() }
 func testNGNC() asset.Asset { return asset.NGNC() }
 
@@ -99,18 +94,12 @@ func TestCostDecomposeSplitsCorrectly(t *testing.T) {
 
 func TestCostDecomposeZeroLoss(t *testing.T) {
 	q := Quote{
-		Kind:          KindDEX,
-		SendAsset:     testUSDC(),
-		SendAmount:    decimal.NewFromInt(100),
-		ReceiveAsset:  testNGNC(),
-		ReceiveAmount: decimal.NewFromInt(150000),
-		EffectiveRate: decimal.NewFromInt(1500),
-		ReferenceMid:  decimal.NewFromInt(1500),
-		LossPct:       decimal.Zero,
-		LossAmount:    decimal.Zero,
-		Verdict:       VerdictGood,
+		LossPct:    decimal.NewFromFloat(1.25),
+		LossAmount: decimal.NewFromFloat(0.50),
 	}
+	mid := decimal.NewFromFloat(100.0)
 
+	decomp := Decompose(q, mid)
 	d := Decompose(q, decimal.NewFromInt(1500))
 	if !d.TotalLossPct.IsZero() {
 		t.Errorf("TotalLossPct = %s, want zero", d.TotalLossPct)
@@ -496,6 +485,8 @@ func TestCostNoDeterminedComponentDefaultsToZero(t *testing.T) {
 			if !p.Determined {
 				t.Error("fx_loss is computed from observed rates and must be determined")
 			}
+			if part.Reason == "" {
+				t.Error("expected_failure component must provide a reason why it is undetermined, but reason is empty")
 		case CostNetworkFees, CostAnchorFee, CostSlippage, CostExpectedFailure:
 			if p.Determined {
 				t.Errorf(
@@ -506,5 +497,9 @@ func TestCostNoDeterminedComponentDefaultsToZero(t *testing.T) {
 				t.Errorf("undetermined %s must name what would determine it", p.Component)
 			}
 		}
+	}
+
+	if !found {
+		t.Fatal("CostDecomposition missing expected_failure component")
 	}
 }
