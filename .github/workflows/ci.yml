@@ -6,8 +6,31 @@ on:
   pull_request:
     branches: [main]
 
+  # A merge queue builds each candidate against the projected result of
+  # everything ahead of it, and branch protection waits for these same four
+  # contexts on that build. Without this trigger the checks never run for a
+  # queued entry, so every pull request that enters the queue sits there until
+  # it times out — the queue would look broken when it is simply unanswered.
+  merge_group:
+    branches: [main]
+
 permissions:
   contents: read
+
+# The Go toolchain, in one place.
+#
+# It lived in three separate job definitions and drifted: 4a49804 meant to put
+# 1.26 on the lint job so golangci-lint v2 would build, and landed it on
+# "build and test" instead — so that job compiled and tested on 1.26 while lint
+# and the offline tests stayed on 1.22, and lint passed on 1.22 regardless.
+#
+# A construct accepted by one toolchain and rejected by another would have
+# shown up as a job disagreeing with its neighbours for reasons unrelated to
+# the change under test. Defining it once removes that failure mode, and keeps
+# CI honest about go.mod (go 1.22.2), the Dockerfile (golang:1.22-alpine) and
+# the "Go 1.22+" both README.md and CONTRIBUTING.md promise.
+env:
+  GO_VERSION: "1.22"
 
 jobs:
   build:
@@ -20,6 +43,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.22"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: gofmt
@@ -50,7 +74,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.22"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
       # v7 of the action is the first that installs golangci-lint v2, which
@@ -77,7 +101,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.22"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
       # Only the modules need fetching. Compilation itself never touches the

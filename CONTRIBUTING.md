@@ -65,6 +65,10 @@ fetch. That fact is reported. It is never filled in with a plausible number.
 
 The project's claims are all reproducible measurements, so:
 
+**Breadth follows evidence.** A corridor, metric, or score is added only when
+its underlying observation can be reproduced, evidenced, and evaluated under
+the project's measurement contract.
+
 **Verify against live sources; do not encode remembered values.** Issuer
 accounts are read from the issuer's own `stellar.toml` per SEP-1, not from a
 block explorer or a blog post. Asset code alone never identifies an asset —

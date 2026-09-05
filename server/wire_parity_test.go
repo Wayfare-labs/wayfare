@@ -151,15 +151,14 @@ func fieldSet(t *testing.T, v any) map[string]bool {
 //
 // This is a known, named gap in the run-record layout, not an oversight: see
 // CONTRIBUTING.md and runstore.Record's own field-addition rule. Widening
-// Record to carry the parallel block or a reference fetch timestamp is a
-// schema migration with its own review bar — exactly the kind of change the
-// issue this test covers says to stop and flag rather than fold in here.
+// Record to carry the parallel block is a schema migration with its own
+// review bar — exactly the kind of change the issue this test covers says to
+// stop and flag rather than fold in here.
+//
+// reference_fetched_at was on this list until Version 3 gave the record a
+// home for it (Reference.FetchedAt); it now round-trips like every other
+// field and is asserted in TestLiveAndStaleAgreeOnReferenceCrossCheckValues.
 var liveOnlyFields = map[string]bool{
-	// runstore.Reference has no field for when a rate was fetched, only
-	// when it was as-of. Flag: add ReferenceFetchedAt to Reference and to
-	// FromCorridorJSON/staleJSON, behind a Record Version bump.
-	"reference_fetched_at": true,
-
 	// runstore.Reference has no field for the cross-check's prose note
 	// either. Flag: add a Note field alongside DivergencePct, behind a
 	// Record Version bump.
@@ -383,6 +382,38 @@ func checkResult(id string, sev checks.Severity, passed, determined bool, summar
 	return r
 }
 
+// TestLiveAndStaleAgreeOnDependsOnIdentity is the value-level complement to
+// the field-set test for depends_on (backlog #8). The field-set test only
+// proves both documents carry a depends_on key; this one proves the stale
+// document carries the same dependency identity the live document did —
+// code, issuer and peg — instead of rebuilding the list from stored codes
+// alone, which would strip the issuer from every history-served reading.
+func TestLiveAndStaleAgreeOnDependsOnIdentity(t *testing.T) {
+	lr := wellPopulatedLadderResult()
+	lr.Integrity = route.IntegrityDerivative
+	lr.DependsOn = []asset.Asset{asset.NGNC()}
+	pair := "USD/GHS"
+
+	live := route.ToCorridorJSON(lr, pair)
+	if len(live.DependsOn) != 1 || live.DependsOn[0].Issuer == "" {
+		t.Fatalf("test setup is wrong: live depends_on = %+v, want one dependency "+
+			"carrying an issuer", live.DependsOn)
+	}
+
+	rec := runstore.FromCorridorJSON(live)
+	stale := staleJSON(rec, pair, time.Now().UTC())
+
+	if len(stale.DependsOn) != len(live.DependsOn) {
+		t.Fatalf("stale depends_on = %v, want %v", stale.DependsOn, live.DependsOn)
+	}
+	for i := range live.DependsOn {
+		if stale.DependsOn[i] != live.DependsOn[i] {
+			t.Errorf("stale depends_on[%d] = %+v, want the live identity %+v",
+				i, stale.DependsOn[i], live.DependsOn[i])
+		}
+	}
+}
+
 // TestLiveAndStaleAgreeOnReferenceCrossCheckValues goes one step further than
 // the field set: for the fields that do round-trip, the values must survive
 // too. A field present on both sides with a silently different value is a
@@ -415,5 +446,9 @@ func TestLiveAndStaleAgreeOnReferenceCrossCheckValues(t *testing.T) {
 	if stale.ReferenceDivergencePct != live.ReferenceDivergencePct {
 		t.Errorf("stale ReferenceDivergencePct = %q, want %q",
 			stale.ReferenceDivergencePct, live.ReferenceDivergencePct)
+	}
+	if stale.ReferenceFetchedAt != live.ReferenceFetchedAt {
+		t.Errorf("stale ReferenceFetchedAt = %q, want %q (the live value, carried through storage)",
+			stale.ReferenceFetchedAt, live.ReferenceFetchedAt)
 	}
 }

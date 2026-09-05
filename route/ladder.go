@@ -10,31 +10,14 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
 )
 
 // DefaultSizes is the ladder used when a caller does not specify one.
-//
-// It spans four orders of magnitude deliberately. The bottom rung exists to
-// isolate the structural floor: at 0.1 units price impact is negligible, so
-// whatever loss remains is the corridor's spread rather than its depth. The
-// top rung exists to expose exhaustion. A ladder covering only realistic
-// remittance sizes would show a bad number without showing which of the two
-// causes produced it.
-var DefaultSizes = []decimal.Decimal{
-	decimal.RequireFromString("0.1"),
-	decimal.NewFromInt(1),
-	decimal.NewFromInt(5),
-	decimal.NewFromInt(10),
-	decimal.NewFromInt(25),
-	decimal.NewFromInt(50),
-	decimal.NewFromInt(100),
-	decimal.NewFromInt(250),
-	decimal.NewFromInt(500),
-	decimal.NewFromInt(1000),
-	decimal.NewFromInt(2500),
-	decimal.NewFromInt(5000),
-}
+// It is defined in the dex package and shared with the depth metric so
+// both measure the same corridor at the same sizes.
+var DefaultSizes = dex.DefaultSizes
 
 // ladderConcurrency bounds parallel pricing. Horizon is a shared public
 // service and a ladder is a burst of identical queries, so this stays low
@@ -57,6 +40,11 @@ type LadderRequest struct {
 type Rung struct {
 	SendAmount decimal.Decimal
 	Result     *Result
+
+	// MarginalCost is the change in effective receive-asset cost from the
+	// previous valid priced rung to this rung. It is absent for the first
+	// valid rung or when no previous valid rung exists.
+	MarginalCost *MarginalCost
 
 	// Decomposition breaks the rung's effective transfer cost into its
 	// components. It is populated when the rung priced; an unpriced rung
@@ -90,6 +78,15 @@ func (r Rung) Unmeasured() bool {
 type LadderResult struct {
 	Request LadderRequest
 	Rungs   []Rung
+
+	// Curve is the measured effective-rate relationship across priced and
+	// unpriced rungs. Unpriced rungs remain explicit holes; no interpolation
+	// or monotonicity assumption is applied.
+	Curve *ExecutionRateCurve
+	// MarginalClassification describes whether adjacent marginal costs are
+	// improving, flat, or worsening. It is undetermined when fewer than two
+	// valid priced points exist.
+	MarginalClassification MarginalClassification
 
 	// Integrity is the corridor's structural state across the whole ladder,
 	// which can be stronger than any single rung's. A corridor with no path
@@ -134,6 +131,64 @@ type LadderResult struct {
 
 // Viable reports whether any size produced a recommendable route.
 func (l *LadderResult) Viable() bool { return l.Recommended != nil }
+
+// ExecutionRatePoint is one measured ladder rung. Rate is present only when
+// the rung priced; an unpriced point is represented by a hole and its reason.
+type ExecutionRatePoint struct {
+	Size   decimal.Decimal
+	Rate   decimal.Decimal
+	Priced bool
+	Reason string
+}
+
+// ExecutionRateCurve publishes the effective rate by measured size.
+type ExecutionRateCurve struct {
+	Points           []ExecutionRatePoint
+	PricedCount      int
+	ObservationCount int
+	NonMonotonic     bool
+}
+
+// buildCurve preserves the measured ladder faithfully. Rates are compared in
+// ascending size order; a missing rung neither contributes a zero nor breaks
+// the non-monotonicity check between adjacent priced observations.
+func (l *LadderResult) buildCurve() *ExecutionRateCurve {
+	curve := &ExecutionRateCurve{Points: make([]ExecutionRatePoint, 0, len(l.Rungs))}
+	var previous decimal.Decimal
+	var havePrevious bool
+	for _, r := range l.Rungs {
+		point := ExecutionRatePoint{Size: r.SendAmount, Reason: rungReason(r)}
+		if r.Priced() {
+			point.Priced = true
+			point.Rate = r.Result.Quotes[0].EffectiveRate
+			curve.PricedCount++
+			if havePrevious && point.Rate.GreaterThan(previous) {
+				curve.NonMonotonic = true
+			}
+			previous = point.Rate
+			havePrevious = true
+		}
+		curve.Points = append(curve.Points, point)
+	}
+	curve.ObservationCount = curve.PricedCount
+	if curve.PricedCount < 2 {
+		return nil
+	}
+	return curve
+}
+
+func rungReason(r Rung) string {
+	if r.Err != nil {
+		return r.Err.Error()
+	}
+	if r.Result == nil {
+		return "no result"
+	}
+	if len(r.Result.Notes) > 0 {
+		return strings.Join(r.Result.Notes, "; ")
+	}
+	return "no quote priced"
+}
 
 // Failed reports that no size was measured at all, because every request
 // failed before reaching an upstream.
@@ -267,7 +322,70 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 	return out, nil
 }
 
-// summarise derives the ladder-level facts from the individual rungs.
+// MarginalClassification describes the direction of marginal cost as size
+// increases.
+type MarginalClassification string
+
+const (
+	MarginalImproving    MarginalClassification = "improving"
+	MarginalFlat         MarginalClassification = "flat"
+	MarginalWorsening    MarginalClassification = "worsening"
+	MarginalUndetermined MarginalClassification = "undetermined"
+)
+
+// MarginalCost is the effective cost difference between adjacent valid points.
+type MarginalCost struct {
+	From decimal.Decimal
+	To   decimal.Decimal
+	Cost decimal.Decimal
+}
+
+// computeMarginalCosts computes adjacent costs without treating missing
+// rungs as zero. The first valid point establishes the baseline; each later
+// valid point is compared with it, even when invalid points occur between them.
+func (l *LadderResult) computeMarginalCosts() {
+	var previous *Rung
+	var previousCost decimal.Decimal
+	var marginal []decimal.Decimal
+	for i := range l.Rungs {
+		r := &l.Rungs[i]
+		if !r.Priced() {
+			continue
+		}
+		cost := r.SendAmount.Mul(l.ReferenceMid).Sub(r.Result.Quotes[0].ReceiveAmount)
+		if previous != nil {
+			r.MarginalCost = &MarginalCost{From: previous.SendAmount, To: r.SendAmount, Cost: cost.Sub(previousCost)}
+			marginal = append(marginal, r.MarginalCost.Cost)
+		}
+		previous = r
+		previousCost = cost
+	}
+	if len(marginal) == 0 {
+		l.MarginalClassification = MarginalUndetermined
+		return
+	}
+	const tolerance = "0.0000001"
+	tol := decimal.RequireFromString(tolerance)
+	improving, worsening := false, false
+	for i := 1; i < len(marginal); i++ {
+		delta := marginal[i].Sub(marginal[i-1])
+		if delta.LessThan(tol.Neg()) {
+			improving = true
+		}
+		if delta.GreaterThan(tol) {
+			worsening = true
+		}
+	}
+	switch {
+	case improving && !worsening:
+		l.MarginalClassification = MarginalImproving
+	case worsening && !improving:
+		l.MarginalClassification = MarginalWorsening
+	default:
+		l.MarginalClassification = MarginalFlat
+	}
+}
+
 func (l *LadderResult) summarise() {
 	var (
 		anyPriced   bool
@@ -358,6 +476,8 @@ func (l *LadderResult) summarise() {
 		l.Integrity = IntegrityUnknown
 	}
 
+	l.Curve = l.buildCurve()
+	l.computeMarginalCosts()
 	l.Finding = l.finding(anyPriced, firstErr)
 }
 

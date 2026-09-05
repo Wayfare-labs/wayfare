@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/checks"
+	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
 )
@@ -82,7 +84,39 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/assets", s.handleAssets)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.Handle("/", uiHandler())
-	return mux
+	return withCORS(mux)
+}
+
+// withCORS makes the API callable from any origin, and records the policy
+// rather than leaving it implicit (backlog #38 / issue #139).
+//
+// The decision is Access-Control-Allow-Origin: * because there is nothing
+// here to protect: the API is public, keyless and read-only, and the
+// corridor figures it serves are data this project exists to publish. A
+// wildcard origin is only unsafe when a response can carry credentials,
+// and this surface carries none — there is deliberately no
+// Access-Control-Allow-Credentials header, so a browser cannot attach
+// cookies or stored auth to a cross-origin request even if one existed.
+// If the API ever grows a write path or credentials, this middleware is
+// the single place that policy must change.
+//
+// Preflight (OPTIONS) is answered here so a client that adds custom
+// headers can still call the API; the methods list is exactly what the
+// mux supports.
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+			if reqHeaders := r.Header.Get("Access-Control-Request-Headers"); reqHeaders != "" {
+				w.Header().Set("Access-Control-Allow-Headers", reqHeaders)
+			}
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handlers -------------------------------------------------------------------
@@ -91,7 +125,11 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "only GET is supported")
+		writeError(w, r, http.StatusMethodNotAllowed, "only GET is supported")
+		return
+	}
+	if err := checkParams(r, "from", "to", "sizes", "live"); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -100,14 +138,14 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 
 	sendAsset, ok := asset.Lookup(from)
 	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
 			"unknown send asset %q; verified assets are %s",
 			from, strings.Join(asset.KnownCodes(), ", ")))
 		return
 	}
 	recvAsset, ok := asset.Lookup(to)
 	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
 			"unknown receive asset %q; verified assets are %s",
 			to, strings.Join(asset.KnownCodes(), ", ")))
 		return
@@ -115,7 +153,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 
 	pegQuote, ok := asset.FiatPeg(recvAsset)
 	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
 			"no verified fiat peg for %s, so there is no independent rate to score it against",
 			recvAsset.Code))
 		return
@@ -127,7 +165,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 
 	sizes, err := parseSizes(r.URL.Query().Get("sizes"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -137,7 +175,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	if s.HistoryFirst && r.URL.Query().Get("live") == "" {
 		if stale, ok := s.staleFor(r.Context(), sendAsset.Code, recvAsset.Code,
 			pegBase+"/"+pegQuote); ok {
-			writeJSON(w, http.StatusOK, stale)
+			writeJSON(w, r, http.StatusOK, stale)
 			log().Info("corridor measured",
 				"method", r.Method,
 				"path", r.URL.Path,
@@ -178,7 +216,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		// project, by returning a plausible number instead of admitting
 		// it does not currently know.
 		if stale, ok := s.staleFor(ctx, sendAsset.Code, recvAsset.Code, pegBase+"/"+pegQuote); ok {
-			writeJSON(w, http.StatusOK, stale)
+			writeJSON(w, r, http.StatusOK, stale)
 			log().Info("corridor measured",
 				"method", r.Method,
 				"path", r.URL.Path,
@@ -194,7 +232,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, context.DeadlineExceeded) {
 			status = http.StatusGatewayTimeout
 		}
-		writeError(w, status, "measuring corridor: "+err.Error())
+		writeError(w, r, status, "measuring corridor: "+err.Error())
 		return
 	}
 
@@ -207,7 +245,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		out = route.WithFindings(out, s.Checks.ForAsset(ctx, recvAsset))
 	}
 
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, r, http.StatusOK, out)
 
 	// Request log: corridor, sizes, duration, and status. Upstream attribution
 	// happens inside the engine; this boundary log attributes the overall
@@ -228,26 +266,114 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
+	if err := checkParams(r); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	type entry struct {
 		route.AssetJSON
-		Corridor bool `json:"can_be_destination"`
+		Corridor bool           `json:"can_be_destination"`
+		State    *corridorState `json:"state,omitempty"`
 	}
+
+	// Build a set of corridor keys that have stored history, so we can
+	// annotate each asset in O(1) per lookup. When the store is not
+	// configured, historySet stays nil and state is omitted from every
+	// entry — the UI renders "No measurements yet" rather than a
+	// fabricated false.
+	historySet, storeAvail := (map[string]bool)(nil), false
+	if s.Store != nil {
+		corridors, err := s.Store.Corridors(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError,
+				"listing stored corridors: "+err.Error())
+			return
+		}
+		historySet = make(map[string]bool, len(corridors))
+		for _, c := range corridors {
+			historySet[c] = true
+		}
+		storeAvail = true
+	}
+
 	out := make([]entry, 0)
 	for _, code := range asset.KnownCodes() {
 		a, _ := asset.Lookup(code)
 		_, hasPeg := asset.FiatPeg(a)
-		out = append(out, entry{AssetJSON: route.ToAssetJSON(a), Corridor: hasPeg})
+		e := entry{AssetJSON: route.ToAssetJSON(a), Corridor: hasPeg}
+
+		// For corridor destinations, check whether USDC → CODE has been
+		// priced before. The store key uses the same CorridorKey format
+		// as the monitor and the measurement workflow.
+		if hasPeg && storeAvail {
+			key := runstore.CorridorKey("USDC", code)
+			st := &corridorState{HasHistory: historySet[key]}
+			if st.HasHistory {
+				rec, err := s.Store.Latest(r.Context(), key)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError,
+						fmt.Sprintf("loading history for %s: %v", code, err))
+					return
+				}
+				if rec != nil {
+					st.LastIntegrity = rec.Integrity
+					st.LastMeasured = rec.RecordedAt.UTC().Format(time.RFC3339)
+				}
+			}
+			e.State = st
+		}
+
+		out = append(out, e)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"assets": out})
+	writeJSON(w, r, http.StatusOK, map[string]any{"assets": out})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if err := checkParams(r); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // helpers --------------------------------------------------------------------
 
 const maxSizes = 24
+
+// checkParams rejects any query parameter outside the endpoint's allow-list.
+//
+// A typo like ?tp=NGNC used to be silently ignored — the request then
+// measured the default corridor and answered with a confident body that was
+// not what was asked for. Strict handling turns that silent wrong answer
+// into an explicit error, which is the whole point of the API-surface
+// hardening: a client that asks the wrong question is told so, not given a
+// plausible answer to a different question.
+func checkParams(r *http.Request, allowed ...string) error {
+	ok := make(map[string]bool, len(allowed))
+	for _, a := range allowed {
+		ok[a] = true
+	}
+	var unknown []string
+	for k := range r.URL.Query() {
+		if !ok[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	quoted := make([]string, len(unknown))
+	for i, k := range unknown {
+		quoted[i] = fmt.Sprintf("%q", k)
+	}
+	if len(allowed) == 0 {
+		return fmt.Errorf("unknown query parameter(s): %s; this endpoint accepts none",
+			strings.Join(quoted, ", "))
+	}
+	return fmt.Errorf("unknown query parameter(s): %s; supported parameters are %s",
+		strings.Join(quoted, ", "), strings.Join(allowed, ", "))
+}
 
 func param(r *http.Request, key, fallback string) string {
 	if v := strings.TrimSpace(r.URL.Query().Get(key)); v != "" {
@@ -286,16 +412,40 @@ func parseSizes(raw string) ([]decimal.Decimal, error) {
 	return out, nil
 }
 
-func writeJSON(w http.ResponseWriter, status int, body any) {
+// wantsPretty reports whether the request asked for an indented JSON body
+// via ?pretty=1 (or ?pretty=true, or a bare ?pretty). The default is
+// compact: an indented body roughly doubles the payload for consumers that
+// only parse it, so the readable form is opt-in rather than the price every
+// programmatic caller pays.
+//
+// Presence and value are read separately because a bare ?pretty is a
+// request and an absent parameter is not, and url.Values.Get collapses the
+// two into the same empty string.
+func wantsPretty(r *http.Request) bool {
+	raw, ok := r.URL.Query()["pretty"]
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(raw[0])) {
+	case "", "1", "true":
+		return true
+	default:
+		return false
+	}
+}
+
+func writeJSON(w http.ResponseWriter, r *http.Request, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
+	if wantsPretty(r) {
+		enc.SetIndent("", "  ")
+	}
 	_ = enc.Encode(body)
 }
 
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+func writeError(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	writeJSON(w, r, status, map[string]string{"error": msg})
 }
 
 // staleFor returns the most recent stored run for a corridor, labelled as
@@ -337,14 +487,29 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 		ReferenceSecondarySource: rec.Reference.SecondarySource,
 		ReferenceSecondaryAsOf:   rec.Reference.SecondaryAsOf,
 		ReferenceDivergencePct:   rec.Reference.DivergencePct,
-		Floor:                    rec.FloorLossPct,
-		FloorSize:                rec.FloorSize,
-		WorstLoss:                rec.WorstLossPct,
-		WorstSize:                rec.WorstSize,
-		RecommendedSize:          rec.RecommendedSize,
-		Finding:                  rec.Finding,
-		Rungs:                    make([]route.RungJSON, 0, len(rec.Rungs)),
-		MeasuredAt:               rec.RecordedAt.UTC().Format(time.RFC3339),
+		// ReferenceAgreement and Scored are reconstructed from the stored
+		// record rather than dropped. The record's reference block is the same
+		// state refrate.reconcile produced, persisted: a secondary implies
+		// two providers answered, and the recorded divergence and as-of
+		// moments decide which agreement band they fell into. ScoredAgainst
+		// records that verdicts were actually derived, so scored is faithful
+		// to measurement time instead of defaulting to false. See
+		// staleAgreement and staleScored.
+		ReferenceAgreement: staleAgreement(&rec.Reference),
+		Scored:             staleScored(&rec.Reference),
+		// ReferenceFetchedAt is carried from the record so a reader can tell
+		// how old the benchmark was when the reading was taken — recorded
+		// from the live path since Version 3, and absent on an older record
+		// that predates it, which is the honest "unknown" rather than a guess.
+		ReferenceFetchedAt: rec.Reference.FetchedAt,
+		Floor:              rec.FloorLossPct,
+		FloorSize:          rec.FloorSize,
+		WorstLoss:          rec.WorstLossPct,
+		WorstSize:          rec.WorstSize,
+		RecommendedSize:    rec.RecommendedSize,
+		Finding:            rec.Finding,
+		Rungs:              make([]route.RungJSON, 0, len(rec.Rungs)),
+		MeasuredAt:         rec.RecordedAt.UTC().Format(time.RFC3339),
 
 		Live: false,
 		Stale: &route.StaleJSON{
@@ -354,8 +519,12 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 		},
 	}
 
+	// DependsOn entries are stored as codes alone, but an asset code
+	// identifies nothing — the issuer is the identity — so each is resolved
+	// back through the verified registry to carry the same identity the
+	// live document did. See assetFromStoredCode.
 	for _, code := range rec.DependsOn {
-		out.DependsOn = append(out.DependsOn, route.AssetJSON{Code: code})
+		out.DependsOn = append(out.DependsOn, assetFromStoredCode(code))
 	}
 	for _, r := range rec.Rungs {
 		rj := route.RungJSON{
@@ -366,6 +535,10 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 		}
 		if r.Priced {
 			rj.Quote = &route.QuoteJSON{
+				// Hardcoded for the same reason Source is: runstore.Rung
+				// carries no kind of its own, and every record in the store
+				// today was priced on-chain. See route.QuoteJSON.Kind.
+				Kind:          string(route.KindDEX),
 				Description:   r.Path,
 				Source:        "stellar-dex",
 				ReceiveAmount: r.ReceiveAmount,
@@ -383,6 +556,7 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 	// stale path, the recommendation the monitor refused to make live.
 	if rec.Recommended != nil {
 		out.Recommended = &route.QuoteJSON{
+			Kind:          string(route.KindDEX),
 			Description:   rec.Recommended.Path,
 			Source:        "stellar-dex",
 			ReceiveAmount: rec.Recommended.ReceiveAmount,
@@ -401,6 +575,85 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 		out.Findings = f
 	}
 	return out
+}
+
+// staleScored reconstructs the wire's scored bool from a stored record.
+//
+// A corridor is scored exactly when verdicts were derived against one of the
+// reference mids, which the record captures as ScoredAgainst (empty when the
+// rate was unscorable — see FromCorridorJSON's scoredAgainst). So faithfulness
+// is checking whether a scored-against source was recorded, not reproducing the
+// refrate band calculation: recording it is what made it scorable.
+func staleScored(ref *runstore.Reference) bool {
+	return ref.ScoredAgainst != ""
+}
+
+// staleAgreement reconstructs the wire's reference_agreement from a stored
+// record the way refrate.reconcile originally classified it, rather than
+// dropping it.
+//
+// The record's reference block is the state reconcile produced, persisted:
+//   - No secondary implies only one provider answered: SINGLE.
+//   - Otherwise the recorded DivergencePct and as-of moments reproduce the
+//     band reconcile assigned at measurement time: beyond the malfunction
+//     threshold is MALFUNCTION, as-of moments far apart in time is STALE, and
+//     below the agree ceiling is AGREE, with DISAGREE between the two. This
+//     is the same classification order refrate.reconcile used, so a corridor
+//     whose providers agreed does not read back as scored:false, and one that
+//     malformed reads back as MALFUNCTION rather than as a plausible band.
+//   - Where the stored record genuinely cannot answer — a divergence that was
+//     never recorded, or one that is not a number — the honest output is the
+//     explicit UNKNOWN below rather than "" or a guessed band.
+func staleAgreement(ref *runstore.Reference) string {
+	if ref.SecondaryMid == "" && ref.SecondarySource == "" {
+		// Only one provider answered: uncorroborated by construction.
+		return refrate.AgreementSingle.String()
+	}
+
+	d, err := decimal.NewFromString(ref.DivergencePct)
+	if err != nil {
+		// Divergence was never recorded, or is not a number on this build.
+		// Older records predate the cross-check, or the field is corrupted —
+		// the stored record genuinely cannot answer, so an explicit UNKNOWN
+		// is the honest output rather than "" or a guessed band.
+		return "UNKNOWN"
+	}
+
+	// A divergence past the malfunction threshold is a broken feed, exactly
+	// as reconcile judged it at measurement time.
+	if d.GreaterThan(refrate.DivergenceMalfunction) {
+		return refrate.AgreementMalfunction.String()
+	}
+	// Two providers answering quotes far enough apart in time that their
+	// difference measured lag rather than disagreement is STALE, again
+	// reconstructed from the stored as-of moments the way reconcile did.
+	// Below the malfunction threshold and not stale, the band is decided by
+	// whether the recorded divergence crosses the agreement ceiling.
+	if asOfGap(ref) > refrate.StaleGap {
+		return refrate.AgreementStale.String()
+	}
+	if d.GreaterThan(refrate.DivergenceAgree) {
+		return refrate.AgreementDisagree.String()
+	}
+	return refrate.AgreementAgree.String()
+}
+
+// asOfGap returns how far apart two providers' as-of moments were, or zero
+// when either stamp is absent or unreadable. A missing stamp is treated as no
+// gap (not stale): the record that lacks the times cannot claim STALE on
+// reconstruction, and the bordering divergences (AGREE/DISAGREE) still answer
+// faithfully from the recorded numbers alone.
+func asOfGap(ref *runstore.Reference) time.Duration {
+	a, errA := time.Parse(time.RFC3339, ref.AsOf)
+	b, errB := time.Parse(time.RFC3339, ref.SecondaryAsOf)
+	if errA != nil || errB != nil {
+		return 0
+	}
+	gap := a.Sub(b)
+	if gap < 0 {
+		gap = -gap
+	}
+	return gap
 }
 
 // storedFindingsJSON rebuilds the wire findings block from a stored record,
@@ -474,16 +727,29 @@ func severityName(rank int) string {
 	}
 }
 
+// assetFromStoredCode resolves a stored asset code to its verified wire
+// identity, or reports the bare code when the registry does not know it.
+//
+// Backlog #8: a code identifies nothing, and the issuer is the identity, so
+// a document rebuilt from storage must carry the issuer the live one did.
+// Resolving through the registry is reconstruction, not synthesis: a code
+// only reaches DependsOn by being a registered fiat token — classify()
+// counts exactly those — so this recovers the identity that was measured.
+// A code the registry does not know stays a bare code; no issuer is guessed.
+func assetFromStoredCode(code string) route.AssetJSON {
+	if a, ok := asset.Lookup(code); ok {
+		return route.ToAssetJSON(a)
+	}
+	return route.AssetJSON{Code: code}
+}
+
 // assetFromCode splits a stored corridor key like "USDC-NGNC".
 func assetFromCode(corridor string, idx int) route.AssetJSON {
 	parts := strings.SplitN(corridor, "-", 2)
 	if idx >= len(parts) {
 		return route.AssetJSON{}
 	}
-	if a, ok := asset.Lookup(parts[idx]); ok {
-		return route.ToAssetJSON(a)
-	}
-	return route.AssetJSON{Code: parts[idx]}
+	return assetFromStoredCode(parts[idx])
 }
 
 // humanAge renders a duration the way a reader thinks about staleness.

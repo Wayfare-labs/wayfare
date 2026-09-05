@@ -198,10 +198,26 @@ The README says there is a test at the boundary; extend it to walk the stale
 document and the CLI document, not only the live one.
 `V1` `area:tests` `good first issue` `difficulty:easy` `ready`
 
+> **Implemented.** `route.MoneyStrings` is now the single walk over the wire
+> shape — mirroring its omitempty semantics so an empty field that would
+> reach the wire still fails parsing — and the boundary tests feed it for all
+> three producers: `TestMoneyCrossesTheWireAsStrings` (live),
+> `TestStaleDocumentMoneyFieldsParse` (stale) and
+> `TestLadderDocumentMoneyFieldsParse` (cmd/ladder -json). Each fails if a
+> producer renders money as a JSON number or a non-parseable string.
+
 **#7 — reference_fetched_at is dropped on the stale path** *(filed: [#115](https://github.com/Wayfare-labs/wayfare/issues/115))*
 `staleJSON` never sets it, so a reader cannot tell how old the benchmark behind
 a stored reading was when it was taken.
 `V1` `area:pricing` `difficulty:easy` `ready`
+
+> **Implemented.** This entry's fix required a run-record layout change — the
+> record had nowhere to store the fetch timestamp — so it was done as the
+> Version 3 migration it names as its own review bar: `runstore.Reference`
+> gained `fetched_at` (omitempty, after every Version 2 field), Version 2
+> chains still load and verify unchanged, and `staleJSON` now publishes
+> `reference_fetched_at` from the record. See `docs/run-store.md`,
+> "Migration to version 3".
 
 **#8 — depends_on loses issuer identity on the stale path** *(filed: [#116](https://github.com/Wayfare-labs/wayfare/issues/116))*
 `staleJSON` builds `route.AssetJSON{Code: code}` from stored codes alone; an

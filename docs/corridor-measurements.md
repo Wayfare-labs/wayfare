@@ -15,6 +15,49 @@ as reported.
 
 ---
 
+## Cowrie NGNT corridor, run of 2026-08-27
+
+A second issuer's naira token, verified live from
+`https://cowrie.exchange/.well-known/stellar.toml` on 2026-08-25. The document
+reported `NETWORK_PASSPHRASE = "Public Global Stellar Network ; September 2015"`
+and declared NGNT with issuer
+`GAWODAROMJ33V5YDFY3NPYTHVYQG7MJXVJ2ND3AOGIHYRWINES6ACCPD`, `status="live"`,
+`is_asset_anchored=true`, `anchor_asset_type="fiat"`, and `anchor_asset="NGN"`.
+It did not publish `ANCHOR_QUOTE_SERVER`, so only the on-chain leg is measured.
+
+- **Measured at:** 2026-08-27T08:00:38Z
+- **Pricing source:** Horizon `/paths/strict-send` (mainnet)
+- **Reference mid:** 1345.6228 USD/NGN via exchangerate-api, as of
+  2026-08-27T00:02:31Z
+- **Send asset:** USDC (`GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`)
+- **Receive asset:** NGNT (`GAWODAROMJ33V5YDFY3NPYTHVYQG7MJXVJ2ND3AOGIHYRWINES6ACCPD`)
+
+| Send (USDC) | Receive (NGNT) | Effective rate (NGN/USD) | Loss vs mid | Verdict | Integrity | Best path |
+|---:|---:|---:|---:|:---|:---|:---|
+| 0.1 | 1276.60 | 12766.03 | 0.00% | GOOD | DIRECT | USDC → LIBRE → XLM → NGNT |
+| 1 | 12594.68 | 12594.68 | 0.00% | GOOD | DIRECT | USDC → TFT → XLM → NGNT |
+| 5 | 59475.63 | 11895.13 | 0.00% | GOOD | DIRECT | USDC → EURC → XLM → NGNT |
+| 10 | 111244.23 | 11124.42 | 0.00% | GOOD | DIRECT | USDC → EURC → XLM → NGNT |
+| 25 | 232850.42 | 9314.02 | 0.00% | GOOD | DIRECT | USDC → EURC → XLM → NGNT |
+| 50 | 366336.97 | 7326.74 | 0.00% | GOOD | DIRECT | USDC → EURC → XLM → NGNT |
+| 100 | 513603.08 | 5136.03 | 0.00% | GOOD | DIRECT | USDC → XLM → NGNT |
+| 250 | 676883.64 | 2707.53 | 0.00% | GOOD | DIRECT | USDC → XLM → NGNT |
+| 500 | 890116.30 | 1780.23 | 0.00% | GOOD | DIRECT | USDC → XLM → NGNT |
+| 1000 | 1249352.68 | 1249.35 | 7.15% | FAIR | DIRECT | USDC → XLM → NGNT |
+| 2500 | 2028044.86 | 811.22 | 39.71% | UNUSABLE | DIRECT | USDC → XLM → NGNT |
+| 5000 | 2936669.79 | 587.33 | 56.35% | UNUSABLE | DIRECT | USDC → XLM → NGNT |
+
+The integrity state is **DIRECT** because every best route avoids another
+registered fiat token; XLM is the bridge asset. The curve is healthy at small
+sizes and becomes liquidity-limited: the first 9 rungs are reported GOOD, the
+1000-USDC rung is FAIR, and the final two are UNUSABLE. The displayed 0.00%
+loss values are the command's output rounded to two decimals; the effective
+rates and reference mid are retained above without flattering recalculation.
+These figures measure delivery of NGNT tokens, not redemption to a Nigerian
+bank account; Cowrie's SEP-1 file has no machine-readable SEP-38 quote server.
+
+---
+
 ## Run of 2026-08-08
 
 - **Measured at:** 2026-08-08T12:53:56Z
