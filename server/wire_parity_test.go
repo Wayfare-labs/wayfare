@@ -97,6 +97,7 @@ func wellPopulatedLadderResult() *route.LadderResult {
 			FetchedAt:       quotedAt,
 			SecondaryMid:    decimal.RequireFromString("1348.9000"),
 			SecondarySource: "currency-api",
+			SecondaryAsOf:   quotedAt,
 			DivergencePct:   decimal.RequireFromString("0.0931"),
 			Agreement:       refrate.AgreementAgree,
 			Note:            "both providers agree within tolerance",
@@ -426,6 +427,10 @@ func TestLiveAndStaleAgreeOnReferenceCrossCheckValues(t *testing.T) {
 	rec := runstore.FromCorridorJSON(live)
 	stale := staleJSON(rec, pair, time.Now().UTC())
 
+	if stale.ReferenceAsOf != live.ReferenceAsOf {
+		t.Errorf("stale ReferenceAsOf = %q, want %q",
+			stale.ReferenceAsOf, live.ReferenceAsOf)
+	}
 	if stale.ReferenceSecondaryMid != live.ReferenceSecondaryMid {
 		t.Errorf("stale ReferenceSecondaryMid = %q, want %q (the live value)",
 			stale.ReferenceSecondaryMid, live.ReferenceSecondaryMid)
@@ -433,6 +438,10 @@ func TestLiveAndStaleAgreeOnReferenceCrossCheckValues(t *testing.T) {
 	if stale.ReferenceSecondarySource != live.ReferenceSecondarySource {
 		t.Errorf("stale ReferenceSecondarySource = %q, want %q",
 			stale.ReferenceSecondarySource, live.ReferenceSecondarySource)
+	}
+	if stale.ReferenceSecondaryAsOf != live.ReferenceSecondaryAsOf {
+		t.Errorf("stale ReferenceSecondaryAsOf = %q, want %q",
+			stale.ReferenceSecondaryAsOf, live.ReferenceSecondaryAsOf)
 	}
 	if stale.ReferenceDivergencePct != live.ReferenceDivergencePct {
 		t.Errorf("stale ReferenceDivergencePct = %q, want %q",

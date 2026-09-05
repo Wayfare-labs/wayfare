@@ -481,9 +481,11 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 		DependsOn:                []route.AssetJSON{},
 		ReferenceMid:             rec.Reference.Mid,
 		ReferenceSource:          rec.Reference.Source,
+		ReferenceAsOf:            rec.Reference.AsOf,
 		ReferencePair:            pair,
 		ReferenceSecondaryMid:    rec.Reference.SecondaryMid,
 		ReferenceSecondarySource: rec.Reference.SecondarySource,
+		ReferenceSecondaryAsOf:   rec.Reference.SecondaryAsOf,
 		ReferenceDivergencePct:   rec.Reference.DivergencePct,
 		// ReferenceAgreement and Scored are reconstructed from the stored
 		// record rather than dropped. The record's reference block is the same

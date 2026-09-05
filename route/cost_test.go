@@ -261,6 +261,8 @@ func TestCostBlockJSONShape(t *testing.T) {
 		}
 	}
 
+	// The one determined component carries amount and pct as strings; the
+	// three undetermined ones carry none, only a reason.
 	// The only determined component (fx_loss) carries amount and pct as
 	// strings; the three undetermined ones carry none, only a reason.
 	// Only fx_loss is determined — it is computed from the observed effective
@@ -280,6 +282,7 @@ func TestCostBlockJSONShape(t *testing.T) {
 	}
 	assertDeterminedDecimalStrings(t, parts[0], "fx_loss")
 
+	for _, idx := range []int{1, 2, 3} {
 	for _, idx := range []int{1, 2, 3, 4} {
 		p := parts[idx]
 		if got := componentOf(t, p); got == string(CostFXLoss) {

@@ -468,10 +468,10 @@ Query parameters are strict: a parameter an endpoint does not recognise is a
 `400`, so a typo like `?tp=NGNC` fails loudly instead of silently measuring
 the default corridor.
 
-Beyond the contracts above, one field to know: **`live`** is on every response.
-`false` means the reading came from history because a live measurement failed,
-and `stale` then carries its age. With no stored run, the request errors —
-nothing is ever synthesised to fill the gap.
+Beyond the contracts above, key reference timestamps and fields on corridor responses include:
+- **`live`**: present on every response. `false` means the reading came from history because a live measurement failed, and `stale` then carries its age. With no stored run, the request errors — nothing is ever synthesised to fill the gap.
+- **`reference_as_of`** and **`reference_secondary_as_of`**: RFC3339 timestamps from the primary and secondary reference rate providers indicating when their respective rate was established by the upstream source. Completely omitted if the provider supplied no timestamp.
+- **`reference_fetched_at`**: RFC3339 timestamp indicating when Wayfare last obtained the rate from the provider.
 
 **The trend endpoint** answers "is this getting worse?" from the stored runs:
 every run comes back oldest first, each carrying its integrity state, its

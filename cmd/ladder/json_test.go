@@ -102,6 +102,7 @@ func sampleLadderResult() *route.LadderResult {
 			FetchedAt:       quotedAt,
 			SecondaryMid:    decimal.RequireFromString("1348.9000"),
 			SecondarySource: "currency-api",
+			SecondaryAsOf:   quotedAt,
 			DivergencePct:   decimal.RequireFromString("0.0931"),
 			Agreement:       refrate.AgreementAgree,
 		},
