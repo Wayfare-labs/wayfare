@@ -125,11 +125,11 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 
 	if r.Method != http.MethodGet {
-		writeError(w, r, http.StatusMethodNotAllowed, "only GET is supported")
+		writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET is supported")
 		return
 	}
 	if err := checkParams(r, "from", "to", "sizes", "live"); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, r, http.StatusBadRequest, codeInvalidQuery, err.Error())
 		return
 	}
 
@@ -138,14 +138,14 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 
 	sendAsset, ok := asset.Lookup(from)
 	if !ok {
-		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, codeUnknownSendAsset, fmt.Sprintf(
 			"unknown send asset %q; verified assets are %s",
 			from, strings.Join(asset.KnownCodes(), ", ")))
 		return
 	}
 	recvAsset, ok := asset.Lookup(to)
 	if !ok {
-		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, codeUnknownReceiveAsset, fmt.Sprintf(
 			"unknown receive asset %q; verified assets are %s",
 			to, strings.Join(asset.KnownCodes(), ", ")))
 		return
@@ -153,7 +153,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 
 	pegQuote, ok := asset.FiatPeg(recvAsset)
 	if !ok {
-		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, codeNoFiatPeg, fmt.Sprintf(
 			"no verified fiat peg for %s, so there is no independent rate to score it against",
 			recvAsset.Code))
 		return
@@ -165,7 +165,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 
 	sizes, err := parseSizes(r.URL.Query().Get("sizes"))
 	if err != nil {
-		writeError(w, r, http.StatusBadRequest, err.Error())
+		writeError(w, r, http.StatusBadRequest, codeInvalidSizes, err.Error())
 		return
 	}
 
@@ -229,10 +229,12 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		status := http.StatusBadGateway
+		code := codeMeasurementFailed
 		if errors.Is(err, context.DeadlineExceeded) {
 			status = http.StatusGatewayTimeout
+			code = codeUpstreamTimeout
 		}
-		writeError(w, r, status, "measuring corridor: "+err.Error())
+		writeError(w, r, status, code, "measuring corridor: "+err.Error())
 		return
 	}
 
@@ -267,7 +269,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
 	if err := checkParams(r); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, r, http.StatusBadRequest, codeInvalidQuery, err.Error())
 		return
 	}
 	type entry struct {
@@ -285,7 +287,7 @@ func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
 	if s.Store != nil {
 		corridors, err := s.Store.Corridors(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError,
+			writeError(w, r, http.StatusInternalServerError, codeInternalError,
 				"listing stored corridors: "+err.Error())
 			return
 		}
@@ -311,7 +313,7 @@ func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
 			if st.HasHistory {
 				rec, err := s.Store.Latest(r.Context(), key)
 				if err != nil {
-					writeError(w, http.StatusInternalServerError,
+					writeError(w, r, http.StatusInternalServerError, codeInternalError,
 						fmt.Sprintf("loading history for %s: %v", code, err))
 					return
 				}
@@ -330,15 +332,29 @@ func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if err := checkParams(r); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, r, http.StatusBadRequest, codeInvalidQuery, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, r, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // helpers --------------------------------------------------------------------
 
 const maxSizes = 24
+
+// Machine-readable codes carried in error responses. Clients should switch on
+// code, not on the human-readable message.
+const (
+	codeMethodNotAllowed    = "method_not_allowed"
+	codeUnknownSendAsset    = "unknown_send_asset"
+	codeUnknownReceiveAsset = "unknown_receive_asset"
+	codeNoFiatPeg           = "no_fiat_peg"
+	codeInvalidSizes        = "invalid_sizes"
+	codeMeasurementFailed   = "measurement_failed"
+	codeUpstreamTimeout     = "upstream_timeout"
+	codeInvalidQuery        = "invalid_query"
+	codeInternalError       = "internal_error"
+)
 
 // checkParams rejects any query parameter outside the endpoint's allow-list.
 //
@@ -444,8 +460,11 @@ func writeJSON(w http.ResponseWriter, r *http.Request, status int, body any) {
 	_ = enc.Encode(body)
 }
 
-func writeError(w http.ResponseWriter, r *http.Request, status int, msg string) {
-	writeJSON(w, r, status, map[string]string{"error": msg})
+func writeError(w http.ResponseWriter, r *http.Request, status int, code, msg string) {
+	writeJSON(w, r, status, map[string]string{
+		"error": msg,
+		"code":  code,
+	})
 }
 
 // staleFor returns the most recent stored run for a corridor, labelled as

@@ -1,5 +1,4 @@
 name: CI
-
 on:
   push:
     branches: [main]
@@ -78,12 +77,13 @@ jobs:
           cache: true
 
       # v7 of the action is the first that installs golangci-lint v2, which
-      # is the schema .golangci.yml is written against. v6 installs the v1
+      # is the schema .golangi.yml is written against. v6 installs the v1
+
       # line and rejects the config outright.
       #
       # The version is pinned rather than tracking latest so the binary and
       # the config cannot drift apart again without someone choosing to.
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.1.6
 
@@ -112,6 +112,7 @@ jobs:
       # The tests run in a network namespace with no route out, rather than
       # behind firewall rules.
       #
+
       # An earlier version blocked ports 80 and 443 with iptables on OUTPUT.
       # That also severs the Actions agent's own control connection to GitHub:
       # the runner stops reporting, the job hangs until the lost-communication
@@ -119,7 +120,7 @@ jobs:
       # without reaching a single test.
       #
       # Namespacing confines the blackout to the test process. Loopback is
-      # brought up inside it because the tests stand up httptest servers on
+      # brought up inside it because the tests stand up httpstervers on
       # 127.0.0.1 — tearing that down would fail them for a reason that has
       # nothing to do with egress.
       - name: run tests with no network
@@ -132,7 +133,7 @@ jobs:
           # sudo: as root the Go module and build caches resolve to a
           # different HOME, the warmed modules are missed, and the download
           # that follows is the very thing being blocked.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo sysctl -w kernel.apparm_restrict_unprivileged_userns=0
 
           unshare -rn bash -c 'ip link set lo up 2>/dev/null; go test -count=1 ./...'
 
