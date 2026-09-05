@@ -68,6 +68,25 @@ func sampleLadderResult() *route.LadderResult {
 					Quotes:    []route.Quote{recommended},
 					Integrity: route.IntegrityDirect,
 				},
+				// A cost decomposition with one determined part (carrying
+				// amount and pct) and one undetermined part (carrying
+				// neither), so the money walk exercises both shapes.
+				Decomposition: route.CostDecomposition{
+					Parts: []route.CostPart{
+						{
+							Component:  route.CostFXLoss,
+							Amount:     decimal.RequireFromString("6025.68"),
+							Pct:        decimal.RequireFromString("4.46"),
+							Determined: true,
+						},
+						{
+							Component:  route.CostFees,
+							Determined: false,
+							Reason:     "network fee not measured",
+						},
+					},
+					TotalLossPct: decimal.RequireFromString("4.46"),
+				},
 			},
 		},
 		Integrity: route.IntegrityDirect,

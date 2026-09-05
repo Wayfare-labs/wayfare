@@ -145,6 +145,18 @@ func (m PriceImpactMetric) RunCurve(ctx context.Context, s Subject) (*PriceImpac
 				"any size for a curve of probe sizes to measure degradation between",
 			s.Send.Code, s.Receive.Code))
 	}
+	// A reference the providers cannot agree on is not a reference. Price
+	// impact is a derived quantity — its value only matters when the corridor
+	// can be scored against a trustworthy benchmark. When the cross-check is
+	// MALFUNCTION the benchmark itself is suspect, and producing a precise-
+	// looking percentage would misrepresent a measurement that cannot be
+	// validated. See issue #161.
+	if s.ReferenceAgreement == referenceAgreementMalfunction {
+		return nil, MetricUndetermined(d, s, fmt.Sprintf(
+			"reference cross-check is MALFUNCTION: the two providers disagreed "+
+				"too far apart to trust either, so no derived quantity (including "+
+				"price impact) may be computed against an unscorable reference"))
+	}
 	if m.DEX == nil {
 		return nil, MetricUndetermined(d, s, "no DEX client available to price paths")
 	}

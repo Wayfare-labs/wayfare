@@ -176,8 +176,8 @@ type Entry struct {
 type CorridorEntry = Entry
 
 // ValidateEntry checks that a registration entry has all required fields.
-// Corridor destination tokens (non-USDC assets) require Code, Issuer, Peg, Status,
-// VerificationDate, SourceURL, and HomeDomain.
+// All registered assets require Code, Issuer, Status, VerificationDate, SourceURL,
+// and HomeDomain. Corridor destination tokens additionally require Peg.
 func ValidateEntry(e Entry) error {
 	if strings.TrimSpace(e.Code) == "" {
 		return fmt.Errorf("asset code is required")
@@ -185,23 +185,23 @@ func ValidateEntry(e Entry) error {
 	if strings.TrimSpace(e.Issuer) == "" {
 		return fmt.Errorf("asset %s: issuer is required", e.Code)
 	}
+	if strings.TrimSpace(e.Status) == "" {
+		return fmt.Errorf("asset %s: SEP-1 status is required", e.Code)
+	}
+	if strings.TrimSpace(e.VerificationDate) == "" {
+		return fmt.Errorf("asset %s: verification date is required", e.Code)
+	}
+	if strings.TrimSpace(e.SourceURL) == "" {
+		return fmt.Errorf("asset %s: source URL is required", e.Code)
+	}
+	if strings.TrimSpace(e.HomeDomain) == "" {
+		return fmt.Errorf("asset %s: home domain is required", e.Code)
+	}
 	// USDC is the settlement asset senders start from; all other registered assets
 	// are corridor destination tokens whose peg is mandatory.
 	if e.Code != "USDC" {
 		if strings.TrimSpace(e.Peg) == "" {
 			return fmt.Errorf("asset %s: fiat peg is required for corridor tokens", e.Code)
-		}
-		if strings.TrimSpace(e.Status) == "" {
-			return fmt.Errorf("asset %s: SEP-1 status is required", e.Code)
-		}
-		if strings.TrimSpace(e.VerificationDate) == "" {
-			return fmt.Errorf("asset %s: verification date is required", e.Code)
-		}
-		if strings.TrimSpace(e.SourceURL) == "" {
-			return fmt.Errorf("asset %s: source URL is required", e.Code)
-		}
-		if strings.TrimSpace(e.HomeDomain) == "" {
-			return fmt.Errorf("asset %s: home domain is required", e.Code)
 		}
 	}
 	return nil
@@ -215,9 +215,9 @@ var registry = []Entry{
 		Issuer:           USDCIssuer,
 		Peg:              "",
 		Status:           "unverified",
-		VerificationDate: "",
-		SourceURL:        "",
-		HomeDomain:       "",
+		VerificationDate: "2026-08-08",
+		SourceURL:        "https://www.circle.com/usdc/.well-known/stellar.toml",
+		HomeDomain:       "circle.com",
 	},
 	{
 		Code:             "NGNC",
@@ -301,10 +301,10 @@ var (
 )
 
 func init() {
+	if err := validateRegistry(registry); err != nil {
+		panic(fmt.Sprintf("asset: %v", err))
+	}
 	for _, e := range registry {
-		if err := ValidateEntry(e); err != nil {
-			panic(fmt.Sprintf("asset: invalid registry entry %q: %v", e.Code, err))
-		}
 		a := Stellar(e.Code, e.Issuer)
 		known[e.Code] = a
 		if e.Peg != "" {
@@ -315,6 +315,25 @@ func init() {
 		}
 		entries[e.Code+":"+e.Issuer] = e
 	}
+}
+
+// validateRegistry checks that every entry is individually valid and that no
+// two entries share a code with a different issuer. The second condition is
+// the property issue #137 exists to enforce: asset.Lookup resolves by code,
+// so two assets sharing a code but differing by issuer must never be silently
+// conflated.
+func validateRegistry(entries []Entry) error {
+	seen := make(map[string]string) // code → first issuer
+	for _, e := range entries {
+		if err := ValidateEntry(e); err != nil {
+			return fmt.Errorf("entry %q: %w", e.Code, err)
+		}
+		if prev, dup := seen[e.Code]; dup && prev != e.Issuer {
+			return fmt.Errorf("code %q registered with issuer %q and %q — two assets sharing a code with different issuers must not be conflated", e.Code, prev, e.Issuer)
+		}
+		seen[e.Code] = e.Issuer
+	}
+	return nil
 }
 
 // USDC is the settlement asset senders start from.
@@ -376,53 +395,43 @@ func LookupEntryByCode(code string) (Entry, bool) {
 	return LookupEntry(a)
 }
 
-// Registry returns a copy of all registered entries in the registry.
+// Registry returns a copy of all registered entries.
 func Registry() []Entry {
 	out := make([]Entry, len(registry))
 	copy(out, registry)
 	return out
 }
 
-// KnownCodes lists the verified token codes, sorted.
-func KnownCodes() []string {
-	codes := make([]string, 0, len(known))
-	for c := range known {
-		codes = append(codes, c)
+// FiatPegs returns a copy of the mapping from asset code and issuer to fiat currency.
+func FiatPegs() map[string]string {
+	out := make(map[string]string, len(fiatPegs))
+	for k, v := range fiatPegs {
+		out[k] = v
 	}
-	sort.Strings(codes)
-	return codes
+	return out
 }
 
-// HomeDomain reports the domain publishing an asset's stellar.toml, when the
-// association has been verified.
-//
-// Returns false rather than guessing. A checker with no domain reports that it
-// could not determine something, which is correct; one sent to a guessed
-// domain would report a confident finding about the wrong anchor.
-func HomeDomain(a Asset) (string, bool) {
-	if a.Kind != KindStellar || a.Issuer == "" {
-		return "", false
+// HomeDomains returns a copy of the mapping from issuer account to home domain.
+func HomeDomains() map[string]string {
+	out := make(map[string]string, len(homeDomains))
+	for k, v := range homeDomains {
+		out[k] = v
 	}
-	d, ok := homeDomains[a.Issuer]
-	return d, ok
+	return out
 }
 
-// FiatPeg reports the ISO-4217 currency a Stellar token claims to track, and
-// whether the token is a known fiat-pegged asset at all.
-//
-// An unknown token reports false rather than guessing from its code. "NGNC"
-// from an unrecognised issuer is not assumed to track the naira.
-func FiatPeg(a Asset) (string, bool) {
-	if a.Kind != KindStellar || a.Issuer == "" {
-		return "", false
+// IsKnown reports whether an asset is explicitly registered.
+func IsKnown(a Asset) bool {
+	if a.Kind != KindStellar {
+		return false
 	}
-	peg, ok := fiatPegs[a.Code+":"+a.Issuer]
-	return peg, ok
+	_, ok := entries[a.Code+":"+a.Issuer]
+	return ok
 }
 
-// IsFiatToken reports whether a is a known fiat-pegged Stellar token.
-func IsFiatToken(a Asset) bool {
-	_, ok := FiatPeg(a)
+// FiatPeg returns the ISO currency code pegged by a registered asset, if any.
+func FiatPeg(a Asset) bool {
+	_, ok := fiatPegs[a.Code+":"+a.Issuer]
 	return ok
 }
 

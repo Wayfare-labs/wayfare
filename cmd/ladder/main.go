@@ -101,7 +101,7 @@ func main() {
 	dexClient := &dex.Client{}
 
 	if *record != "" {
-		dirty, err := requireCleanTree(*allowDirty)
+		dirty, err := requireCleanTree(".", *allowDirty)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
@@ -300,13 +300,19 @@ func gitRevision() string {
 	return strings.TrimSpace(string(out))
 }
 
-// dirtyFiles lists tracked files modified relative to HEAD.
+// dirtyFiles lists files whose working-tree state differs from HEAD:
+// modified tracked files and untracked files alike.
+//
+// An untracked file is included because it is part of the working tree the
+// recorded bytes were produced from even though HEAD does not contain it, so
+// git_revision would not pin the code that generated them. Porcelain lines
+// are returned verbatim, status code and all (` M f.go`, `?? scratch.txt`).
 //
 // An empty result with a nil error means a clean tree; a nil result with an
 // error means git could not answer, which is not the same thing and must not
 // be reported as clean.
-func dirtyFiles() ([]string, error) {
-	out, err := exec.Command("git", "status", "--porcelain", "--untracked-files=no").Output()
+func dirtyFiles(dir string) ([]string, error) {
+	out, err := exec.Command("git", "-C", dir, "status", "--porcelain").Output()
 	if err != nil {
 		return nil, fmt.Errorf("could not determine whether the tree is clean: %w", err)
 	}
@@ -326,6 +332,10 @@ func dirtyFiles() ([]string, error) {
 // generate the bytes — which is worse than recording nothing, because the
 // field looks like provenance and is consulted as though it were.
 //
+// Dirty means anything `git status` reports: a modified tracked file or an
+// untracked file. Either way HEAD does not describe the working tree the
+// bytes came from.
+//
 // This repository already contains the failure: the GHSC and KESC snapshots
 // recorded revision e2be414, a commit predating the snapshot package that
 // wrote them. Both were re-captured once this check existed.
@@ -333,8 +343,8 @@ func dirtyFiles() ([]string, error) {
 // -allow-dirty exists for local experiments and marks the manifest, so a
 // snapshot whose provenance is approximate says so in the artifact rather
 // than only in the shell that made it.
-func requireCleanTree(allowDirty bool) (dirty bool, err error) {
-	files, err := dirtyFiles()
+func requireCleanTree(dir string, allowDirty bool) (dirty bool, err error) {
+	files, err := dirtyFiles(dir)
 	if err != nil {
 		// Not in a git checkout, or git is unavailable. Recording is still
 		// possible; the revision is simply absent, which the manifest

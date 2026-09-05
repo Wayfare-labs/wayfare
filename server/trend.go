@@ -227,7 +227,11 @@ func toTrendRunJSON(rec *runstore.Record) TrendRunJSON {
 // deployment.
 func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "only GET is supported")
+		writeError(w, r, http.StatusMethodNotAllowed, "only GET is supported")
+		return
+	}
+	if err := checkParams(r, "from", "to", "limit"); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -236,20 +240,20 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 
 	sendAsset, ok := asset.Lookup(from)
 	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
 			"unknown send asset %q; verified assets are %s",
 			from, strings.Join(asset.KnownCodes(), ", ")))
 		return
 	}
 	recvAsset, ok := asset.Lookup(to)
 	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
 			"unknown receive asset %q; verified assets are %s",
 			to, strings.Join(asset.KnownCodes(), ", ")))
 		return
 	}
 	if _, ok := asset.FiatPeg(recvAsset); !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
 			"no verified fiat peg for %s, so there is no independent rate to score it against",
 			recvAsset.Code))
 		return
@@ -257,7 +261,7 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 
 	limit, err := parseTrendLimit(r.URL.Query().Get("limit"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -275,7 +279,7 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 	if s.Store != nil {
 		recent, err := s.Store.Recent(r.Context(), key, limit)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "reading stored history: "+err.Error())
+			writeError(w, r, http.StatusInternalServerError, "reading stored history: "+err.Error())
 			return
 		}
 		// Recent is newest first because its callers want the latest

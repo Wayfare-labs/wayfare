@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +59,20 @@ func testServer(t *testing.T, horizonBody, mid string) *httptest.Server {
 	api := httptest.NewServer(s.Handler())
 	t.Cleanup(api.Close)
 	return api
+}
+
+func rawGet(t *testing.T, url string) (int, []byte) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading %s: %v", url, err)
+	}
+	return resp.StatusCode, raw
 }
 
 func getJSON(t *testing.T, url string) (int, map[string]any) {
@@ -160,33 +175,121 @@ func TestNoMarketIsReportedAsItsOwnState(t *testing.T) {
 	}
 }
 
-// TestMoneyCrossesTheWireAsStrings guards the float64 invariant at the
-// boundary. A JSON number invites the client to parse a rate into a float,
-// reintroducing exactly the rounding error the engine avoids internally.
+// getCorridor fetches a corridor document from an API server and decodes it
+// into the shared wire type, so boundary tests walk exactly what a client
+// receives: the same JSON, parsed the same way. A money field that crossed
+// the wire as a JSON number would fail this decode with a type error.
+func getCorridor(t *testing.T, url string) route.CorridorJSON {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	var doc route.CorridorJSON
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		t.Fatalf("decoding %s as a corridor document: %v", url, err)
+	}
+	return doc
+}
+
+// assertMoneyFieldsParse is the assertion half of the boundary test: every
+// money-valued string a corridor document carries must parse as a decimal.
+// The walk is route.MoneyStrings, the single source of truth for which wire
+// fields carry money, so one walk guards all three producers of the shape —
+// live, stale and cmd/ladder -json.
+func assertMoneyFieldsParse(t *testing.T, doc route.CorridorJSON) {
+	t.Helper()
+	for _, s := range route.MoneyStrings(doc) {
+		if _, err := decimal.NewFromString(s); err != nil {
+			t.Errorf("money field %q is not a parseable decimal: %v", s, err)
+		}
+	}
+}
+
+// TestMoneyCrossesTheWireAsStrings is the boundary test the README refers
+// to: every amount, rate and percentage in a corridor document is a decimal
+// string, never a JSON number. It walks the live document (backlog #6); the
+// stale and CLI documents are walked by TestStaleDocumentMoneyFieldsParse
+// and cmd/ladder's TestLadderDocumentMoneyFieldsParse, using the same
+// route.MoneyStrings walk.
 func TestMoneyCrossesTheWireAsStrings(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
 
-	resp, err := http.Get(srv.URL + "/api/corridor?to=NGNC&sizes=100")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
+	// A real ladder run against the recorded Horizon fixture, so the walk
+	// sees the per-rung quotes and the cost blocks the engine attaches.
+	doc := getCorridor(t, srv.URL+"/api/corridor?to=NGNC&sizes=100")
+	assertMoneyFieldsParse(t, doc)
+}
 
-	var body map[string]json.RawMessage
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+// TestUnknownQueryParamsAreRejected pins the A5 strictness contract: a typo
+// like ?tp=NGNC must be an explicit 400, never a silent measurement of the
+// default corridor. Each case is rejected before any asset or size parsing,
+// so the error names the parameter, not the value it was meant to carry.
+func TestUnknownQueryParamsAreRejected(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
 
-	for _, field := range []string{"reference_mid", "floor_loss_pct", "worst_loss_pct"} {
-		raw, ok := body[field]
-		if !ok {
-			t.Errorf("%s missing from the response", field)
-			continue
-		}
-		if !strings.HasPrefix(string(raw), `"`) {
-			t.Errorf("%s = %s, want a quoted string so clients cannot parse it as a float",
-				field, raw)
-		}
+	cases := map[string]struct {
+		path    string
+		wantMsg string
+	}{
+		"corridor typo": {
+			path:    "/api/corridor?tp=NGNC",
+			wantMsg: `"tp"`,
+		},
+		"corridor extra param": {
+			path:    "/api/corridor?to=NGNC&pretty=1",
+			wantMsg: `"pretty"`,
+		},
+		"corridor multiple unknown": {
+			path:    "/api/corridor?to=NGNC&tp=NGNC&fmt=json",
+			wantMsg: `"fmt", "tp"`,
+		},
+		"assets unknown": {
+			path:    "/api/assets?foo=bar",
+			wantMsg: `"foo"`,
+		},
+		"healthz unknown": {
+			path:    "/healthz?foo=bar",
+			wantMsg: `"foo"`,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			status, body := getJSON(t, srv.URL+tc.path)
+			if status != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", status)
+			}
+			msg, _ := body["error"].(string)
+			if !strings.Contains(msg, "unknown query parameter") {
+				t.Errorf("error = %q, want it to say unknown query parameter", msg)
+			}
+			if !strings.Contains(msg, tc.wantMsg) {
+				t.Errorf("error = %q, want it to name the unknown parameter(s) %s", msg, tc.wantMsg)
+			}
+		})
+	}
+}
+
+// TestKnownQueryParamsAreAccepted is the control for the strictness test: the
+// documented parameters on each endpoint must still pass. Without it, a
+// server that rejected everything would pass the test above.
+func TestKnownQueryParamsAreAccepted(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	cases := map[string]string{
+		"corridor all params": "/api/corridor?from=USDC&to=NGNC&sizes=100&live=1",
+		"corridor default":    "/api/corridor",
+		"assets":              "/api/assets",
+		"healthz":             "/healthz",
+	}
+	for name, path := range cases {
+		t.Run(name, func(t *testing.T) {
+			status, body := getJSON(t, srv.URL+path)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %v", status, body)
+			}
+		})
 	}
 }
 
@@ -391,6 +494,101 @@ func appendHealthRecord(t *testing.T, st runstore.Store, corridor string, at tim
 	}
 }
 
+// isIndented reports whether a JSON body was emitted with SetIndent.
+// json.Encoder always appends a terminal newline, so a compact body is one
+// line plus that newline; an indented body has interior newlines too.
+func isIndented(raw []byte) bool {
+	return strings.Count(string(raw), "\n") > 1
+}
+
+// TestJSONIsCompactByDefault pins the payload-size contract behind backlog
+// #39: writeJSON emits a single line unless the caller opts into ?pretty. An
+// indented body roughly doubles the bytes every programmatic consumer pays.
+func TestJSONIsCompactByDefault(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	for _, path := range []string{"/healthz", "/api/corridor?to=NGNC&sizes=100"} {
+		status, raw := rawGet(t, srv.URL+path)
+		if status != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", path, status)
+		}
+		if isIndented(raw) {
+			t.Errorf("%s: default response is multi-line; the body must be compact", path)
+		}
+	}
+}
+
+// TestPrettyOptInIndents covers the flip side of the same contract: ?pretty
+// (bare, =1, or =true) indents the body for a human reader, while ?pretty=0
+// and ?pretty=false stay compact. The indented form must decode to the same
+// document as the plain one — pretty changes the bytes, never the meaning.
+func TestPrettyOptInIndents(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	// The corridor URL already carries a query, so the pretty parameter is
+	// appended with & rather than ?.
+	cases := []struct {
+		name       string
+		query      string
+		wantIndent bool
+	}{
+		{"absent", "", false},
+		{"zero", "&pretty=0", false},
+		{"false", "&pretty=false", false},
+		{"bare", "&pretty", true},
+		{"one", "&pretty=1", true},
+		{"true", "&pretty=true", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := srv.URL + "/api/corridor?to=NGNC&sizes=100"
+			status, raw := rawGet(t, base+tc.query)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200", status)
+			}
+			if got := isIndented(raw); got != tc.wantIndent {
+				t.Errorf("body indented = %v, want %v", got, tc.wantIndent)
+			}
+
+			// Formatting must never change the document.
+			var prettyDoc, plainDoc any
+			if err := json.Unmarshal(raw, &prettyDoc); err != nil {
+				t.Fatalf("parsing body: %v", err)
+			}
+			_, plain := rawGet(t, base)
+			if err := json.Unmarshal(plain, &plainDoc); err != nil {
+				t.Fatalf("parsing plain body: %v", err)
+			}
+			if !reflect.DeepEqual(prettyDoc, plainDoc) {
+				t.Error("?pretty changed the document, not just the formatting")
+			}
+		})
+	}
+}
+
+// TestPrettyAppliesToErrors pins that the opt-in is honoured on error
+// responses too: a human debugging with ?pretty=1 gets a readable 400, and
+// a programmatic caller still gets the compact form by default.
+func TestPrettyAppliesToErrors(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	status, raw := rawGet(t, srv.URL+"/api/corridor?to=SCAMC")
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", status)
+	}
+	if isIndented(raw) {
+		t.Error("default error body is multi-line; it should be compact")
+	}
+
+	status, raw = rawGet(t, srv.URL+"/api/corridor?to=SCAMC&pretty=1")
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", status)
+	}
+	if !isIndented(raw) {
+		t.Error("?pretty=1 error body is compact; the opt-in must apply to errors too")
+	}
+}
+
 // TestUIScoredTrueRendersVerdicts checks that when scored is true (the normal
 // path through NewStatic), the UI source contains the code to render verdicts,
 // loss curve, and recommendation block.
@@ -447,8 +645,10 @@ func TestUIScoredFalseSuppressesVerdicts(t *testing.T) {
 		t.Error("loss curve is not gated on d.scored; it would render when unscored")
 	}
 
-	// The table function must accept a scored parameter.
-	if !strings.Contains(page, "function table(rungs, scored)") {
+	// The table function must accept a scored parameter and the corridor's
+	// dependencies (so an unpriced DERIVATIVE rung can name what it routes
+	// through without overflowing the row).
+	if !strings.Contains(page, "function table(rungs, scored, depends)") {
 		t.Error("table() does not accept a scored parameter")
 	}
 

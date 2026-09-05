@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
+	"github.com/Wayfare-labs/wayfare/snapshot"
 )
 
 // liveStrictSendResponse is the actual body Horizon returned for
@@ -709,6 +711,102 @@ func TestUnknownIssuerIsNotTreatedAsFiat(t *testing.T) {
 	}
 }
 
+// malformed snapshot loading -------------------------------------------------
+
+// loadMalformedSnap opens the recorded strict-send malformed fixture set.
+//
+// The prefix is deliberately not "usdc-ngnc", so it cannot collide with the
+// corridor snapshots that integrity_snapshot_test.go matches with that prefix.
+func loadMalformedSnap(t *testing.T, prefix string) *snapshot.Manifest {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join("../testdata/snapshots", prefix+"-*"))
+	if err != nil || len(matches) == 0 {
+		t.Fatalf("no snapshot matching %q under ../testdata/snapshots (err=%v)", prefix, err)
+	}
+	m, err := snapshot.Load(matches[0])
+	if err != nil {
+		t.Fatalf("loading %s: %v", matches[0], err)
+	}
+	return m
+}
+
+// TestRecordedMalformedPayloadsReportUnknown is the layer that turns paths
+// into published verdicts, exercised against Horizon responses that parse
+// into plausible zeros.
+//
+// The failure that matters here is not a parse error — those surface loudly.
+// It is a payload that decodes cleanly into a zero or a nonsense figure and
+// would otherwise flow straight into a verdict as though it were a measured
+// price. A destination amount of "0" priced against mid renders a tidy 100%
+// loss; a negative one a loss above 100%; nine decimal places a rate the
+// asset cannot carry; and an asset type Horizon never emits names a hop that
+// was never identified. The engine's rule is that a layer-2 calculation on an
+// unavailable layer-1 fact is unknown — not a default — and each of these
+// must come back with that rule intact: no priced rung, no verdict, and no
+// zero reaching one.
+//
+// All fixtures run through snapshot.Replayer, which errors on any request it
+// was not recorded for, so these tests stay offline by construction.
+func TestRecordedMalformedPayloadsReportUnknown(t *testing.T) {
+	m := loadMalformedSnap(t, "strictsend-malformed")
+	e := &Engine{
+		DEX: &dex.Client{
+			HorizonURL: "https://horizon.stellar.org",
+			HTTPClient: m.HTTPClient(),
+		},
+		RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+			"USD/NGN": decimal.RequireFromString("1350.2568"),
+		}),
+	}
+
+	cases := []struct {
+		name   string
+		amount string
+		// reason is the specific substring the notes must carry, so a failure
+		// can be debugged from the result alone rather than guessing which
+		// shape broke.
+		reason string
+	}{
+		{"zero_destination_amount", "101", "must be positive"},
+		{"negative_destination_amount", "102", "must be positive"},
+		{"amount_more_precise_than_asset", "103", "decimal places"},
+		{"unrecognised_hop_asset_type", "104", "asset_type"},
+		{"records_array_contains_null", "105", "null path record"},
+		{"empty_200_body", "106", "decoding horizon response"},
+		{"truncated_json_body", "107", "decoding horizon response"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := e.Quote(context.Background(), ngnRequest(tc.amount))
+			if err != nil {
+				t.Fatalf("Quote: %v", err)
+			}
+
+			if res.Integrity != IntegrityUnknown {
+				t.Errorf("Integrity = %s, want UNKNOWN: a broken paywall is a failed "+
+					"measurement, not a no-market or a price", res.Integrity)
+			}
+			if len(res.Quotes) != 0 {
+				t.Errorf("got %d priced quotes, want none; a priced rung on broken data "+
+					"would publish a number the response never contained", len(res.Quotes))
+			}
+			if res.Recommended != nil {
+				t.Error("Recommended must be nil: broken data must never yield a recommendation")
+			}
+			for _, q := range res.Quotes {
+				if q.Verdict != VerdictUnknown || !q.LossPct.IsZero() {
+					t.Errorf("quote presented %s at %s%% loss instead of withholding the verdict",
+						q.Verdict, q.LossPct)
+				}
+			}
+
+			joined := strings.Join(res.Notes, " ")
+			if !strings.Contains(joined, tc.reason) {
+				t.Errorf("notes = %q, want them to name the specific reason %q",
+					res.Notes, tc.reason)
+			}
+		})
 // TestUnknownOnlyPathIsTheDocumentedFalseNegative pins the bounded
 // false-negative written down in asset/known.go: a corridor whose only hops
 // are unregistered is classified DIRECT, because an unrecognised fiat token
