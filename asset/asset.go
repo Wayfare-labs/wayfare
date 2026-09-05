@@ -50,6 +50,33 @@ func (a Asset) IsNative() bool {
 	return a.Kind == KindStellar && a.Code == "XLM" && a.Issuer == ""
 }
 
+// Identifiable reports whether a carries enough identity to render a
+// meaningful SEP38 wire form.
+//
+// A fiat asset needs its code; native needs nothing further; an issued
+// Stellar asset needs both code and issuer — an issuer-less Stellar asset
+// is not really identified at all, since anyone can issue a token under any
+// code. A caller that renders SEP38() unconditionally, without checking
+// this first, risks publishing "stellar:CODE:" for an asset whose issuer
+// was never known — a wire form that looks complete but states an identity
+// nothing verified.
+func (a Asset) Identifiable() bool {
+	switch {
+	case a.Kind == KindFiat:
+		return a.Code != ""
+	case a.IsNative():
+		return true
+	case a.Kind == KindStellar:
+		return a.Code != "" && a.Issuer != ""
+	default:
+		// An unrecognised Kind is not Stellar just because it fell through
+		// the cases above. SEP38()'s own default branch would still render
+		// one as though it were, so this must refuse it explicitly rather
+		// than let that happen silently.
+		return false
+	}
+}
+
 // SEP38 renders the asset in the identification format required by SEP-38,
 // which is also what SEP-31 and SEP-6 use for asset fields.
 //

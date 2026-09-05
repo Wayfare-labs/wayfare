@@ -83,7 +83,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 	url := c.baseURL() + lowBase + ".json"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return Rate{}, fmt.Errorf("refrate: building request: %w", err)
+		return Rate{}, &ErrUnavailable{Source: c.Name(), Err: fmt.Errorf("building request: %w", err)}
 	}
 	req.Header.Set("Accept", "application/json")
 
@@ -94,7 +94,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
 			"error", transport.SanitizeTransportError(err))
-		return Rate{}, fmt.Errorf("refrate: fetching %s rates: %w", base, err)
+		return Rate{}, &ErrUnavailable{Source: c.Name(), Err: err}
 	}
 	defer resp.Body.Close()
 
@@ -111,7 +111,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 			"pair", base+"/"+quote,
 			"status", resp.StatusCode,
 			"duration", time.Since(started).Round(time.Millisecond).String())
-		return Rate{}, fmt.Errorf("refrate: %s returned HTTP %d", c.Name(), resp.StatusCode)
+		return Rate{}, &ErrUnavailable{Source: c.Name(), Err: fmt.Errorf("HTTP %d", resp.StatusCode)}
 	}
 
 	var envelope map[string]json.RawMessage
@@ -121,7 +121,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
 			"error", err)
-		return Rate{}, fmt.Errorf("refrate: decoding response: %w", err)
+		return Rate{}, &ErrUnparseable{Source: c.Name(), Err: fmt.Errorf("decoding response: %w", err)}
 	}
 
 	rates, ok := envelope[lowBase]
@@ -139,7 +139,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
 			"error", err)
-		return Rate{}, fmt.Errorf("refrate: decoding %s rates: %w", base, err)
+		return Rate{}, &ErrUnparseable{Source: c.Name(), Err: fmt.Errorf("decoding %s rates: %w", base, err)}
 	}
 
 	raw, ok := byCode[lowQuote]
@@ -157,7 +157,7 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
 			"error", err)
-		return Rate{}, fmt.Errorf("refrate: parsing %s/%s rate %q: %w", base, quote, raw, err)
+		return Rate{}, &ErrUnparseable{Source: c.Name(), Err: fmt.Errorf("parsing %s/%s rate %q: %w", base, quote, raw, err)}
 	}
 	// A rate of exactly zero is absence, not a quote. Taken at face value it
 	// would divide by zero in the spread calculation, or report a route as
