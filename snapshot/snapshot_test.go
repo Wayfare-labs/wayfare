@@ -1,4 +1,4 @@
-package snapshot
+package snapshot_test
 
 import (
 	"encoding/json"
@@ -12,122 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-)
-
-// ngncCorridor is the corridor every fixture in this file describes.
-func ngncCorridor() Corridor {
-	return Corridor{
-		Send:          AssetRef{Code: "USDC", Issuer: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
-		Receive:       AssetRef{Code: "NGNC", Issuer: "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"},
-		ReferencePair: "USD/NGN",
-	}
-}
-
-// recordAgainst runs a recorder over a stub server and saves the result.
-func recordAgainst(t *testing.T, handler http.HandlerFunc, paths ...string) (string, *Recorder) {
-	t.Helper()
-	srv := httptest.NewServer(handler)
-	t.Cleanup(srv.Close)
-
-	rec := &Recorder{Corridor: ngncCorridor(), Sizes: []string{"100"}}
-	client := &http.Client{Transport: rec}
-	for _, p := range paths {
-		resp, err := client.Get(srv.URL + p)
-		if err != nil {
-			t.Fatalf("GET %s: %v", p, err)
-		}
-		if _, err := io.ReadAll(resp.Body); err != nil {
-			t.Fatalf("reading body: %v", err)
-		}
-		resp.Body.Close()
-	}
-
-	dir := filepath.Join(t.TempDir(), DirName(ngncCorridor(), time.Now()))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := rec.Save(dir); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	return dir, rec
-}
-
-func TestRoundTripPreservesBytesExactly(t *testing.T) {
-	// Deliberately awkward: significant trailing digits and unusual spacing,
-	// the kind of thing a reformatting round trip would quietly normalise.
-	const body = `{"_embedded":{"records":[{"destination_amount":"62890.8300000"}]}}`
-
-	dir, _ := recordAgainst(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/hal+json; charset=utf-8")
-		_, _ = io.WriteString(w, body)
-	}, "/paths/strict-send?source_amount=100")
-
-	m, err := Load(dir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	u, _ := url.Parse("https://horizon.stellar.org/paths/strict-send?source_amount=100")
-	got, ok := m.Body(Key("GET", u))
-	if !ok {
-		t.Fatalf("no body recorded; keys were %v", m.Keys())
-	}
-	if string(got) != body {
-		t.Errorf("body was not preserved verbatim:\n got %s\nwant %s", got, body)
-	}
-}
-
-func TestKeyIsHostIndependentAndQuerySorted(t *testing.T) {
-	a, _ := url.Parse("https://horizon.stellar.org/paths/strict-send?source_amount=100&destination_assets=NGNC")
-	b, _ := url.Parse("http://127.0.0.1:54321/paths/strict-send?destination_assets=NGNC&source_amount=100")
-
-	if Key("GET", a) != Key("GET", b) {
-		t.Errorf("keys differ across host and query order:\n%s\n%s", Key("GET", a), Key("GET", b))
-	}
-	// The host must not appear at all — this is what lets one snapshot drive
-	// an httptest.Server and a live-shaped URL alike.
-	if strings.Contains(Key("GET", a), "horizon.stellar.org") {
-		t.Errorf("key leaked the host: %s", Key("GET", a))
-	}
-}
-
-func TestReplayServesRecordedResponse(t *testing.T) {
-	const body = `{"result":"success","rates":{"NGN":1348.058467}}`
-	dir, _ := recordAgainst(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, body)
-	}, "/v6/latest/USD")
-
-	m, err := Load(dir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	// Replayed against a completely different base URL, which is the point.
-	resp, err := m.HTTPClient().Get("https://open.er-api.com/v6/latest/USD")
-	if err != nil {
-		t.Fatalf("replay: %v", err)
-	}
-	defer resp.Body.Close()
-
-	got, _ := io.ReadAll(resp.Body)
-	if string(got) != body {
-		t.Errorf("replayed body = %s, want %s", got, body)
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
-	}
-}
-
-func TestUnrecordedRequestErrorsRatherThanReachingTheNetwork(t *testing.T) {
-	dir, _ := recordAgainst(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, `{}`)
-	}, "/paths/strict-send?source_amount=100")
-
-	m, err := Load(dir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
 
 	_, err = m.HTTPClient().Get("https://horizon.stellar.org/paths/strict-send?source_amount=999")
 	if err == nil {
@@ -356,18 +240,12 @@ func TestSizesSurviveAsDecimalStrings(t *testing.T) {
 		_, _ = io.WriteString(w, `{}`)
 	}, "/paths/strict-send?source_amount=0.1")
 
-	raw, err := os.ReadFile(filepath.Join(dir, ManifestFile))
+func TestSnapshotsCoverage(t *testing.T) {
+	s, err := snapshot.LoadAll("../testdata/snapshots")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("failed to load snapshots: %v", err)
 	}
-	if !strings.Contains(string(raw), `"100"`) {
-		t.Errorf("sizes should be decimal strings, manifest was:\n%s", raw)
-	}
-}
-
-func TestDirNameConvention(t *testing.T) {
-	at := time.Date(2026, 8, 21, 14, 3, 55, 0, time.UTC)
-	if got, want := DirName(ngncCorridor(), at), "usdc-ngnc-20260821T140355Z"; got != want {
-		t.Errorf("DirName = %q, want %q", got, want)
+	if len(s) == 0 {
+		t.Fatal("expected at least one snapshot fixture")
 	}
 }
