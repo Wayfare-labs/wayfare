@@ -109,8 +109,12 @@ type LadderResult struct {
 	// alongside the official one. Nil when no parallel source is configured.
 	Parallel *refrate.Parallel
 
-	// Floor is the loss percentage at the smallest size priced. It
-	// approximates the corridor's cost with price impact removed.
+	// Floor is the loss percentage at the smallest size priced. It is the
+	// corridor's structural floor: at that size price impact is negligible,
+	// so whatever loss remains is the corridor's spread and fixed cost, not
+	// its depth. Every rung's slippage is measured as the excess loss over
+	// this figure, and floor plus slippage reconciles to the rung's total
+	// loss.
 	Floor decimal.Decimal
 
 	// FloorSize is the size Floor was measured at.
@@ -319,11 +323,6 @@ func (l *LadderResult) summarise() {
 		anyPriced = true
 		q := r.Result.Quotes[0]
 
-		// The decomposition answers "where did the money go" for this
-		// size — the per-quote component breakdown behind the single loss
-		// percentage, computed against the corridor's reference mid.
-		l.Rungs[i].Decomposition = Decompose(q, l.ReferenceMid)
-
 		if l.FloorSize.IsZero() {
 			l.Floor, l.FloorSize = q.LossPct, r.SendAmount
 		}
@@ -338,6 +337,15 @@ func (l *LadderResult) summarise() {
 			l.Recommended = r.Result.Recommended
 			l.RecommendedSize = r.SendAmount
 		}
+	}
+
+	// The decomposition answers "where did the money go" for every priced
+	// size — the component breakdown behind the single loss percentage. It
+	// is computed over the whole ladder rather than per quote, because
+	// slippage is the excess loss over the smallest priced rung and only
+	// here are both sizes in hand.
+	for i, d := range DecomposeLadder(l.Rungs, l.ReferenceMid) {
+		l.Rungs[i].Decomposition = d
 	}
 
 	switch {
