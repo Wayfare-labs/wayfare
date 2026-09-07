@@ -296,11 +296,11 @@ func TestUITrendIsSelfContained(t *testing.T) {
 	page := string(raw)
 
 	for _, want := range []string{
-		"/api/corridor/trend", // the endpoint the trend reads
-		"unusable above",      // the 20% threshold, as on the live curve
+		"/api/corridor/trend",                          // the endpoint the trend reads
+		"unusable above",                               // the 20% threshold, as on the live curve
 		"irregular snapshots, not a continuous series", // the honesty caption
-		"scored_against",       // which mid a run was scored against
-		"prefers-color-scheme", // the trend must live in the theme
+		"scored_against",                               // which mid a run was scored against
+		"prefers-color-scheme",                         // the trend must live in the theme
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the trend view lacks %q; it would render incompletely or mislead", want)
