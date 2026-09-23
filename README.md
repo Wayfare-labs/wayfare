@@ -495,6 +495,14 @@ as zero. Below the documented minimum sample size (30 observations —
 rule), `determined` is `false` and `reason` says why; `mean_pct`, `stddev_pct`
 and the trend fields are then absent rather than a precise-looking number.
 
+### UI
+
+The interface is one embedded file, `server/index.html`. Its light and dark
+colour schemes are recorded, with measured contrast ratios, in
+**[docs/qa/artifacts/272-color-schemes.md](docs/qa/artifacts/272-color-schemes.md)**;
+the browser QA harness that produced the computed colours lives in
+[docs/qa/README.md](docs/qa/README.md).
+
 ---
 
 ## Roadmap

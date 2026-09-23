@@ -3,8 +3,10 @@
 Reusable browser QA for the Wayfare UI. Backlog section **H — Cross-cutting: QA
 and reproducibility**: issues
 [#266](https://github.com/Wayfare-labs/wayfare/issues/266) (every error path),
-[#269](https://github.com/Wayfare-labs/wayfare/issues/269) (cross-browser) and
-[#270](https://github.com/Wayfare-labs/wayfare/issues/270) (mobile and touch).
+[#269](https://github.com/Wayfare-labs/wayfare/issues/269) (cross-browser),
+[#270](https://github.com/Wayfare-labs/wayfare/issues/270) (mobile and touch)
+and [#272](https://github.com/Wayfare-labs/wayfare/issues/272) (both colour
+schemes).
 
 Everything here drives the **real server binary** and a **real browser engine**.
 Nothing is a mock of the product: the responses the UI renders are the bytes
@@ -18,6 +20,7 @@ findings in:
 | #266 error paths in the browser | [`artifacts/266-error-paths.md`](artifacts/266-error-paths.md) |
 | #269 cross-browser matrix | [`artifacts/269-cross-browser.md`](artifacts/269-cross-browser.md) |
 | #270 mobile device QA | [`artifacts/270-mobile.md`](artifacts/270-mobile.md) |
+| #272 QA both colour schemes | [`artifacts/272-color-schemes.md`](artifacts/272-color-schemes.md) |
 
 ## Setup
 
@@ -50,6 +53,7 @@ cd docs/qa/browser
 node run-error-paths.mjs --engine=chromium,firefox,webkit   # #266
 node run-cross-browser.mjs                                  # #269
 node run-mobile.mjs                                         # #270
+node run-color-schemes.mjs                                  # #272
 ./servers.sh stop
 ```
 
@@ -74,5 +78,7 @@ repeat them where they apply:
   right element, and cannot speak to momentum, overscroll or real font metrics.
   See `artifacts/270-mobile.md`.
 - **`display: none` is not exercised.** The UI has no such states today.
+- **#272 runs Chromium only.** The colour variables are engine-independent CSS
+  values, but only one engine was measured; see `artifacts/272-color-schemes.md`.
 - The harness never writes to the repository under test; it only reads the UI and
   the API.
