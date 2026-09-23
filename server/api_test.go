@@ -242,8 +242,11 @@ func TestUnknownQueryParamsAreRejected(t *testing.T) {
 		// merge left both a test asserting it returns 200 and this one
 		// asserting it returns 400, which cannot both hold.
 		"corridor extra param": {
-			path:    "/api/corridor?to=NGNC&verbose=1",
-			wantMsg: `"verbose"`,
+			// Deliberately not "pretty": that is a real, supported parameter
+			// (the opt-in for indented JSON). Strictness rejects a parameter
+			// the endpoint does not know, not one it honours.
+			path:    "/api/corridor?to=NGNC&debug=1",
+			wantMsg: `"debug"`,
 		},
 		"corridor multiple unknown": {
 			path:    "/api/corridor?to=NGNC&tp=NGNC&fmt=json",
@@ -282,7 +285,7 @@ func TestKnownQueryParamsAreAccepted(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
 
 	cases := map[string]string{
-		"corridor all params": "/api/corridor?from=USDC&to=NGNC&sizes=100&live=1",
+		"corridor all params": "/api/corridor?from=USDC&to=NGNC&sizes=100&live=1&pretty=1",
 		"corridor default":    "/api/corridor",
 		"assets":              "/api/assets",
 		"healthz":             "/healthz",

@@ -606,6 +606,11 @@ contribution and has its own guide:
 Read [CONTRIBUTING.md](CONTRIBUTING.md) first. The invariants there are hard
 constraints, not style preferences.
 
+**Questions?** The [contributor FAQ](docs/contributor-faq.md) covers what the
+project does and does not do, how to get set up, what is not built yet, and how
+to check a claim against the code. Ask the rest in
+[Discussions → Q&A](https://github.com/Wayfare-labs/wayfare/discussions/categories/q-a).
+
 ---
 
 ## Non-goals

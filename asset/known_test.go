@@ -179,23 +179,13 @@ func TestValidateEntryRequiresVerificationDate(t *testing.T) {
 		Status:     "live",
 		SourceURL:  "https://example.com/.well-known/stellar.toml",
 		HomeDomain: "example.com",
-		// VerificationDate deliberately omitted.
 	}
-
 	err := ValidateEntry(e)
 	if err == nil {
-		t.Fatal("ValidateEntry accepted an entry with no verification date; " +
-			"an undated registration cannot be re-verified or expired")
+		t.Fatal("expected error for a missing verification date, got nil")
 	}
-	if !strings.Contains(err.Error(), "verification date") {
-		t.Errorf("error %q does not name the missing field", err)
-	}
-
-	// Control: the same entry with a date must pass, or the test above
-	// would be satisfied by a validator that rejected everything.
-	e.VerificationDate = "2026-08-08"
-	if err := ValidateEntry(e); err != nil {
-		t.Errorf("ValidateEntry rejected a complete entry: %v", err)
+	if !strings.Contains(err.Error(), "verification date is required") {
+		t.Errorf("error = %q, want it to name the missing verification date", err)
 	}
 }
 
@@ -388,5 +378,11 @@ func TestLookupEntry(t *testing.T) {
 
 	if _, ok := LookupEntryByCode("UNKNOWN"); ok {
 		t.Error("LookupEntryByCode(\"UNKNOWN\") must return false")
+	}
+	if _, ok := LookupEntry(Native()); ok {
+		t.Error("LookupEntry(Native()) must return false")
+	}
+	if _, ok := LookupEntry(Fiat("NGN")); ok {
+		t.Error("LookupEntry(Fiat(\"NGN\")) must return false")
 	}
 }

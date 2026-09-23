@@ -358,16 +358,13 @@ func (c *Client) do(req *http.Request, out any) error {
 	if err := dec.Decode(out); err != nil {
 		return fmt.Errorf("sep38: decoding response: %w", err)
 	}
-
-	// Decode stops at the end of the first JSON value, so a body like
-	// `{"price":"5.00"} and then some` would otherwise parse cleanly and
-	// yield a quote. Trailing bytes mean the response is not what it claims
-	// to be, and a partially-understood body is not a safe basis for a price:
-	// this is the fee-denomination lesson again, where arithmetic that
-	// succeeds on a misread input is worse than an error.
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("sep38: response carries trailing data after the JSON body; " +
-			"the anchor sent something other than a single quote object")
+	// A well-formed quote followed by anything else is not the document the
+	// anchor claims to have sent. Decode stops at the end of the first JSON
+	// value and silently ignores the rest, so a truncated write, a
+	// concatenated body or a proxy's error page stub would read as a price.
+	// Anything other than a clean end of input is a malformed response.
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
+		return fmt.Errorf("sep38: decoding response: unexpected trailing data after the JSON document")
 	}
 	return nil
 }

@@ -8,6 +8,12 @@ Contributions are welcome. This document covers what the project will and
 will not accept, because the constraints here are unusual and worth knowing
 before you write code.
 
+**Questions first?** The [contributor FAQ](docs/contributor-faq.md) answers the
+ones that come up most, and
+[Discussions → Q&A](https://github.com/Wayfare-labs/wayfare/discussions/categories/q-a)
+is where to ask the rest. If a question keeps recurring, it belongs in the FAQ —
+a PR adding it is welcome.
+
 ## Getting set up
 
 ```bash
@@ -130,6 +136,11 @@ make fmt vet test race lint
 
 CI runs `gofmt`, `go vet`, `go test -race`, `go build`, and `golangci-lint`.
 All must pass.
+
+Changes to `server/index.html` are only covered by the source-text assertions in
+`go test`, which cannot tell you how a panel renders. Check them in a browser:
+[docs/qa/README.md](docs/qa/README.md) is a harness that drives the real binary in
+Chromium, Firefox and WebKit and records what it saw.
 
 In the pull request, describe what changed and why. If it touches pricing,
 say how you verified correctness — and if you measured something live,

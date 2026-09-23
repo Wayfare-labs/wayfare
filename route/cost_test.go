@@ -162,15 +162,15 @@ func TestCostDecomposeZeroLoss(t *testing.T) {
 		SendAsset:     testUSDC(),
 		SendAmount:    decimal.NewFromInt(100),
 		ReceiveAsset:  testNGNC(),
-		ReceiveAmount: decimal.RequireFromString("150000"),
-		EffectiveRate: decimal.RequireFromString("1500"),
-		ReferenceMid:  decimal.RequireFromString("1500"),
+		ReceiveAmount: decimal.NewFromInt(150000),
+		EffectiveRate: decimal.NewFromInt(1500),
+		ReferenceMid:  decimal.NewFromInt(1500),
 		LossPct:       decimal.Zero,
 		LossAmount:    decimal.Zero,
 		Verdict:       VerdictGood,
 	}
 
-	d := Decompose(q, decimal.RequireFromString("1500"))
+	d := Decompose(q, decimal.NewFromInt(1500))
 	if !d.TotalLossPct.IsZero() {
 		t.Errorf("TotalLossPct = %s, want zero", d.TotalLossPct)
 	}
@@ -331,10 +331,6 @@ func TestCostBlockJSONShape(t *testing.T) {
 		}
 	}
 
-	// The one determined component carries amount and pct as strings; the
-	// three undetermined ones carry none, only a reason.
-	// The only determined component (fx_loss) carries amount and pct as
-	// strings; the three undetermined ones carry none, only a reason.
 	// Only fx_loss is determined — it is computed from the observed effective
 	// rate against mid. The other four components have no observation or
 	// computation behind them, so each must carry a reason and no number:
@@ -352,8 +348,6 @@ func TestCostBlockJSONShape(t *testing.T) {
 	}
 	assertDeterminedDecimalStrings(t, parts[0], "fx_loss")
 
-	// parts[0] is fx_loss and is determined; 1..4 are the components that
-	// must stay undetermined until there is data behind them.
 	for _, idx := range []int{1, 2, 3, 4} {
 		p := parts[idx]
 		if got := componentOf(t, p); got == string(CostFXLoss) {

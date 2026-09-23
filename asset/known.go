@@ -402,29 +402,7 @@ func Registry() []Entry {
 	return out
 }
 
-// FiatPegs returns a copy of the mapping from asset code and issuer to fiat currency.
-func FiatPegs() map[string]string {
-	out := make(map[string]string, len(fiatPegs))
-	for k, v := range fiatPegs {
-		out[k] = v
-	}
-	return out
-}
-
-// HomeDomains returns a copy of the mapping from issuer account to home domain.
-func HomeDomains() map[string]string {
-	out := make(map[string]string, len(homeDomains))
-	for k, v := range homeDomains {
-		out[k] = v
-	}
-	return out
-}
-
 // KnownCodes lists the verified token codes, sorted.
-//
-// Sorted because callers render it to a user in error messages naming the
-// valid assets, and an unstable order makes that output differ run to run for
-// no reason. server/api.go and server/trend.go both depend on it.
 func KnownCodes() []string {
 	codes := make([]string, 0, len(known))
 	for c := range known {
@@ -432,32 +410,6 @@ func KnownCodes() []string {
 	}
 	sort.Strings(codes)
 	return codes
-}
-
-// IsKnown reports whether an asset is explicitly registered.
-func IsKnown(a Asset) bool {
-	if a.Kind != KindStellar {
-		return false
-	}
-	_, ok := entries[a.Code+":"+a.Issuer]
-	return ok
-}
-
-// FiatPeg returns the ISO-4217 currency a registered Stellar token tracks, and
-// whether the token is a known fiat-pegged asset at all.
-//
-// The peg code is the return value that matters: callers score a token against
-// the currency it claims to track, and a bare boolean cannot tell them which
-// currency that is. server/api.go depends on this shape.
-//
-// An unknown token reports false rather than guessing from its code. "NGNC"
-// from an unrecognised issuer is not assumed to track the naira.
-func FiatPeg(a Asset) (string, bool) {
-	if a.Kind != KindStellar || a.Issuer == "" {
-		return "", false
-	}
-	peg, ok := fiatPegs[a.Code+":"+a.Issuer]
-	return peg, ok
 }
 
 // HomeDomain reports the domain publishing an asset's stellar.toml, when the
@@ -472,6 +424,19 @@ func HomeDomain(a Asset) (string, bool) {
 	}
 	d, ok := homeDomains[a.Issuer]
 	return d, ok
+}
+
+// FiatPeg reports the ISO-4217 currency a Stellar token claims to track, and
+// whether the token is a known fiat-pegged asset at all.
+//
+// An unknown token reports false rather than guessing from its code. "NGNC"
+// from an unrecognised issuer is not assumed to track the naira.
+func FiatPeg(a Asset) (string, bool) {
+	if a.Kind != KindStellar || a.Issuer == "" {
+		return "", false
+	}
+	peg, ok := fiatPegs[a.Code+":"+a.Issuer]
+	return peg, ok
 }
 
 // IsFiatToken reports whether a is a known fiat-pegged Stellar token.
