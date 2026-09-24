@@ -578,6 +578,12 @@ milestone so you can see which part of the project your work moves. Start with
 The full contributor backlog — every gap found in the current tree, with the
 file or response that evidences it — is **[docs/backlog.md](docs/backlog.md)**.
 
+New here? The **[first 15 minutes](docs/first-15-minutes.md)** walkthrough goes
+from a fresh clone to a reproduced measurement, and
+**[docs/troubleshooting.md](docs/troubleshooting.md)** answers the four
+stumbles people actually hit — rate limits, a sleeping deployment, a
+`stellar.toml` that will not resolve, a chain that will not verify.
+
 **Milestones:**
 
 - [V1 — Hardening](https://github.com/Wayfare-labs/wayfare/milestone/1) —
@@ -634,6 +640,9 @@ These keep the project shippable and legal for a small team:
 - **Not custodial.** Never takes possession of funds.
 - **Not a money transmitter.** No custody, so no licensing surface.
 - **Not a KYC provider.** Delegated to anchors via SEP-12.
+
+The full register — what this project refuses to build, and why, plus the
+"not yet, blocked on evidence" items — is **[docs/non-goals.md](docs/non-goals.md)**
 
 ---
 

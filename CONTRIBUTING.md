@@ -24,6 +24,13 @@ make test
 
 Go 1.22 or later. Dependencies are `shopspring/decimal` and `BurntSushi/toml`.
 
+For a fuller on-ramp — from the clone above to verifying the recorded data and
+reproducing a published figure — follow **[docs/first-15-minutes.md](docs/first-15-minutes.md)**.
+When a command's output does not behave, **[docs/troubleshooting.md](docs/troubleshooting.md)**
+covers the four stumbles people actually hit. The complete register of what
+this project refuses to build, and why, is
+**[docs/non-goals.md](docs/non-goals.md)**.
+
 Useful targets:
 
 ```bash
