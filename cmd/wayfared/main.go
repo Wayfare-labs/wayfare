@@ -5,6 +5,7 @@
 //	wayfared -schedule=0              # server only, no scheduled measurement
 //	wayfared -once                    # one sweep, record, exit (CI schedules this)
 //	wayfared -verify-store            # walk the hash chains and exit
+//	wayfared -rotate-store            # trim chains over the window ceiling and exit
 //
 // The two halves are independent on purpose. A monitor that only measures
 // while somebody has a page open would leave holes in its history exactly when
@@ -47,6 +48,9 @@ func main() {
 		schedule  = flag.Duration("schedule", monitor.DefaultInterval, "measurement interval; 0 disables the scheduler")
 		serve     = flag.Bool("serve", true, "serve HTTP")
 		verify    = flag.Bool("verify-store", false, "verify every corridor chain and exit")
+		rotate    = flag.Bool("rotate-store", false, "trim every chain over the window ceiling and exit")
+		rotateRec = flag.Int("rotate-records", runstore.MaxWindow,
+			"per-corridor record ceiling for -rotate-store")
 		once      = flag.Bool("once", false, "measure every corridor once, record, and exit")
 		histFirst = flag.Bool("history-first", false,
 			"serve the stored run instead of measuring, unless a request asks for ?live=1")
@@ -84,6 +88,10 @@ func main() {
 
 	if *verify {
 		os.Exit(verifyStore(store, logger))
+	}
+
+	if *rotate {
+		os.Exit(rotateStore(store, *rotateRec, logger))
 	}
 
 	if !*once && !*serve && *schedule == 0 {
@@ -268,6 +276,38 @@ func verifyStore(store runstore.Store, logger *slog.Logger) int {
 	if failed > 0 {
 		fmt.Printf("\n%d of %d chains failed verification\n", failed, len(corridors))
 		return 1
+	}
+	return 0
+}
+
+// rotateStore trims every corridor chain over the record ceiling to its newest
+// ceiling records, re-sealing the surviving window so it still verifies.
+//
+// This is the mechanism behind the decision recorded in ADR 007 and enforced
+// by the measure workflow: the committed `data/` is a bounded window, and a
+// chain that has outgrown it is rotated rather than left to grow forever.
+// Chains under the ceiling are untouched; the ceiling is the default
+// runstore.MaxWindow unless an operator overrides it with -rotate-records.
+func rotateStore(store runstore.Store, ceiling int, logger *slog.Logger) int {
+	fs, ok := store.(*runstore.FileStore)
+	if !ok {
+		logger.Error("-rotate-store needs a data directory; none is configured")
+		return 2
+	}
+
+	ctx := context.Background()
+	rotations, err := fs.Rotate(ctx, ceiling)
+	if err != nil {
+		logger.Error("rotating store", "error", err)
+		return 1
+	}
+	if len(rotations) == 0 {
+		fmt.Println("no corridor exceeds the window ceiling")
+		return 0
+	}
+	for _, r := range rotations {
+		fmt.Printf("rotated %s: %d -> %d records (dropped seq %d..%d), new head seq %d\n",
+			r.Corridor, r.RecordsBefore, r.RecordsAfter, r.DroppedSeqStart, r.DroppedSeqEnd, r.NewHeadSeq)
 	}
 	return 0
 }

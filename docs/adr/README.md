@@ -23,3 +23,4 @@ Each ADR follows a lightweight format:
 | 004 | Why a monitor and not a router | *See [#244](https://github.com/Wayfare-labs/wayfare/issues/244)* |
 | [005](005-why-the-scheduler-does-not-depend-on-the-server.md) | Why the scheduler does not depend on the server | Accepted |
 | [006](006-why-money-crosses-the-wire-as-decimal-strings.md) | Why money crosses the wire as decimal strings | Accepted |
+| [007](007-why-the-committed-chain-is-a-rolling-window.md) | Why the committed chain is a rolling window | Accepted |

@@ -213,9 +213,12 @@ put a secret into the deployment, and this service holds none.
 | `-serve` | | `true` | Serve HTTP; `false` runs the scheduler alone |
 | `-timeout` | | `90s` | Per-corridor measurement timeout |
 | `-verify-store` | | | Walk every chain and exit |
+| `-rotate-store` | | | Trim every chain over the window ceiling and exit |
+| `-rotate-records` | | `366` | Per-corridor record ceiling for `-rotate-store` |
 | `-log-level` | `WAYFARE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
-No secrets. Nothing to rotate.
+No secrets. No credentials to rotate — the store rotates itself, trimming chains
+over the window ceiling; see [run-store.md](run-store.md#rotating-a-chain).
 
 **A store that fails to open is fatal.** On a deployment with a volume
 attached, that means the volume did not mount, and running anyway would record

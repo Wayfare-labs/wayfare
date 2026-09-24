@@ -907,6 +907,15 @@ label derived from an unexplained cutoff is a verdict in disguise.
 forever and the deployment embeds it at build time.
 `V3` `area:data` `needs-maintainer-review` `difficulty:hard` `ready`
 
+> **Implemented.** The committed store is a bounded, always-verifiable window:
+> each corridor keeps its newest `runstore.MaxWindow` (366) records, and
+> `FileStore.Rotate` rotates a chain that has outgrown the ceiling — dropping
+> the oldest above it, re-sealing the surviving window (new head back to the
+> genesis `prev_hash`), touching only the two hash fields. `measure.yml` now
+> measures, rotates, then verifies before committing; the dropped records
+> remain archived in the repository's git history. See ADR 007,
+> `docs/run-store.md#rotating-a-chain`.
+
 **#132 — Support a storage backend behind the Store interface** *(filed: [#202](https://github.com/Wayfare-labs/wayfare/issues/202))*
 `runstore/fsstore.go` implements the interface; the README lists storage
 backends as open contributor territory.

@@ -32,7 +32,10 @@ embedded in the binary at build time. Every response carries `live: false` and a
 
 **Freshness depends on the measure workflow, not on the deployment.** New
 records are written by `.github/workflows/measure.yml` and committed to `data/`.
-That workflow is currently unable to push ([#63](https://github.com/Wayfare-labs/wayfare/issues/63)),
+The committed history is a bounded window, not the whole chain: each corridor
+keeps its newest 366 records and rotates the rest (ADR 007) — the dropped,
+older records live on in the repository's git history. The workflow is currently
+unable to push ([#63](https://github.com/Wayfare-labs/wayfare/issues/63)),
 so the served history is older than its six-hour cadence implies. Read
 `stale.age_human` rather than assuming. The mechanism — history embedded at
 build time, so freshness advances by redeploy rather than by scheduler — is

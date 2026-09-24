@@ -145,8 +145,10 @@ working around it.
 Because the image embeds `data/` at build time and runs with
 `-schedule=0 -history-first`, so freshness advances by redeploy, not by the
 scheduler ([docs/embedded-history.md](embedded-history.md)). New records are
-written by `.github/workflows/measure.yml`, which runs every six hours, verifies
-the chain, and opens a pull request.
+written by `.github/workflows/measure.yml`, which runs every six hours, rotates
+any chain over the window ceiling, verifies the window, and opens a pull
+request. The committed store is bounded — each corridor keeps its newest 366
+records — by design (ADR 007).
 
 **Observed 2026-09-23T17:25:28Z:** `GET /healthz` on
 `https://wayfare-cdb9.onrender.com` reported every corridor's newest record as
