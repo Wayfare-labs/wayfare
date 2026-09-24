@@ -165,8 +165,9 @@ as a new finding.
 No functional breakage was found: every live request returned 200 with a full
 ladder inside the timeout. The two documentation discrepancies in findings 2
 and 3 are filed separately with their reproduction steps, as the issue
-requires — this artifact changes no code, no threshold, no integrity semantics,
-no check composition and no run-record layout.
+requires: **[#481](https://github.com/Wayfare-labs/wayfare/issues/481)** (filed
+2026-09-24). This artifact changes no code, no threshold, no integrity
+semantics, no check composition and no run-record layout.
 
 ## Reproducing
 
