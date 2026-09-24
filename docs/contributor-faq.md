@@ -25,7 +25,8 @@ should be folded back into this document.
 A corridor-integrity monitor for Stellar: it prices a stablecoin → fiat-token
 corridor across trade sizes, scores every route against an independent
 mid-market rate, and says plainly when none of them are worth taking
-(`README.md`).
+(`README.md`). Why that is the shape of the product rather than a ranking:
+[docs/why-wayfare.md](why-wayfare.md).
 
 ### What do I need installed?
 
@@ -49,7 +50,11 @@ make run      # measure USDC -> NGNC against live mainnet
 
 `make all` is `fmt vet test build`. CI additionally runs `gofmt -l`, `go vet`,
 `go test -race`, `go build`, `golangci-lint` v2.1.6, a container build, and a
-network-isolated test run.
+network-isolated test run. Each target's requirements, `make run`'s exit code,
+and which check you cannot reproduce locally: [docs/development-loop.md](development-loop.md).
+
+If a live measurement fails instead of a test — `make run` needs the network by
+design — see [docs/live-measurement-failures.md](live-measurement-failures.md).
 
 ### Why does `make test` work with no network?
 
@@ -94,7 +99,8 @@ arithmetic, the verdict thresholds, the integrity taxonomy, SEP-38 fee handling,
 the check engine and how results compose, and the corridor health score when it
 exists. The reason is blast radius — an error in any of these invalidates
 published measurements rather than breaking a feature. Individual checks and
-metrics are exactly the contribution the project wants.
+metrics are exactly the contribution the project wants. Per-area detail:
+[docs/maintainer-owned-areas.md](maintainer-owned-areas.md).
 
 ### What will get my PR rejected regardless of quality?
 

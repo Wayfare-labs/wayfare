@@ -46,6 +46,9 @@ make run      # measure USDC -> NGNC against live mainnet
 `make lint` needs [golangci-lint](https://golangci-lint.run/welcome/install/)
 installed separately.
 
+What each target actually runs, what it needs installed, and how the loop maps
+onto what CI does: **[docs/development-loop.md](docs/development-loop.md)**.
+
 ## Invariants
 
 These are not style preferences. A change that breaks one of them will be
@@ -64,7 +67,9 @@ recommends nothing.
 **Never display a rate that did not come from a live source.** No estimates,
 no interpolation, no cached figures presented as current, no fallback to a
 plausible-looking constant. If a rate cannot be fetched, the correct output is
-an error, not a guess.
+an error, not a guess. What that looks like when it happens locally, and how to
+tell which upstream refused:
+**[docs/live-measurement-failures.md](docs/live-measurement-failures.md)**.
 
 **`decimal.Decimal` for all money. No `float64` in any pricing path.** Binary
 floating point cannot represent decimal fractions exactly, and rounding drift
@@ -115,6 +120,10 @@ measurements rather than breaking a feature:
 are exactly the contribution this project wants — see
 [docs/checks.md](docs/checks.md) and the issues labelled `good first issue`.
 
+The per-area reasoning — exactly what is owned, what a mistake in it would
+publish, what defends it today, and what is open contribution — is
+**[docs/maintainer-owned-areas.md](docs/maintainer-owned-areas.md)**.
+
 ### What the labels mean
 
 Contributors have to be able to trust these:
@@ -145,7 +154,8 @@ make fmt vet test race lint offline-test
 CI runs `gofmt`, `go vet`, `go test -race`, `go build`, `golangci-lint`, and
 `offline-tests` (running the full test suite in an isolated network blackout
 namespace). All must pass without outbound network access. See
-[docs/offline-testing.md](docs/offline-testing.md).
+[docs/offline-testing.md](docs/offline-testing.md); for the loop itself, and
+what each target needs installed, [docs/development-loop.md](docs/development-loop.md).
 
 Changes to `server/index.html` are only covered by the source-text assertions in
 `go test`, which cannot tell you how a panel renders. Check them in a browser:

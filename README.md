@@ -76,6 +76,8 @@ That is also why the reference rate is a required dependency rather than an
 optional enrichment. Without it the engine can rank, but it cannot tell a good
 deal from a disaster.
 
+The full argument, with the measurements behind it: **[docs/why-wayfare.md](docs/why-wayfare.md)**.
+
 ---
 
 ## What the measurements found
@@ -425,6 +427,12 @@ Go 1.22+. Dependencies: `shopspring/decimal` and `BurntSushi/toml`. Both
 binaries need live network access — there are no cached figures to fall back
 on, by design.
 
+What each `make` target runs and what CI runs:
+**[docs/development-loop.md](docs/development-loop.md)** — including why
+`make run` exits 1 on the default corridor.
+When a live measurement fails, how to tell which upstream refused, and what to
+do next: **[docs/live-measurement-failures.md](docs/live-measurement-failures.md)**.
+
 Deployment, cost and backup: **[docs/deployment.md](docs/deployment.md)**
 
 ### HTTP API
@@ -613,9 +621,14 @@ expect close review and discuss the approach first:
 - the integrity taxonomy
 - SEP-38 fee handling
 - the check engine and how results compose
-- the corridor health score — how signals become one published number. Not yet
-  designed, and deliberately so: it needs its components to exist first, and it
-  is a judgement of the same class as the verdict bands
+- the corridor health score — how signals become one published number. Merged
+  and **not reachable** (`route/health_score.go` has no non-test caller, and its
+  blended value is deliberately absent from the wire). It needs its component
+  metrics to exist first, and it is a judgement of the same class as the
+  verdict bands
+
+Each area's blast radius, what defends it, and what is *not* owned:
+**[docs/maintainer-owned-areas.md](docs/maintainer-owned-areas.md)**.
 
 Everything else — UI, CLI, docs, tests, new corridors, reference providers,
 storage backends — is open. Adding a corridor is the highest-value first
