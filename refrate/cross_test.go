@@ -21,16 +21,6 @@ type fakeProvider struct {
 
 func (f *fakeProvider) Name() string { return f.name }
 
-// fakeProvider answers with a fixed rate or a fixed error.
-type fakeProvider struct {
-	name string
-	mid  string
-	asOf time.Time
-	err  error
-}
-
-func (f *fakeProvider) Name() string { return f.name }
-
 func (f *fakeProvider) Rate(_ context.Context, base, quote string) (Rate, error) {
 	if f.err != nil {
 		return Rate{}, f.err
