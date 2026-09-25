@@ -1734,6 +1734,14 @@ Named wallets, PSPs and anchors, with what each would need from the API — the
 input #157 needs to be worth answering.
 `V1` `area:ecosystem` `area:research` `difficulty:medium` `research`
 
+> **Finding written:** [docs/ecosystem-mapping.md](ecosystem-mapping.md)
+> (2026-09-25). Named projects with dated sources for wallets, PSPs and
+> anchors, each tied to a Wayfare capability verified in code the same day;
+> the anchor-RFQ angle closes with no live subject in the measured corridor
+> set, and the PSP entries are corridor-overlapping but unverified Stellar
+> integrations. Also records that #326's "input #157" is backlog entry
+> `#157` (GitHub #217), not GitHub issue #157.
+
 **#274 — Seed Discussions with the questions contributors actually ask** *(filed: [#327](https://github.com/Wayfare-labs/wayfare/issues/327))*
 Enabled during this sweep and currently empty.
 `V1` `area:ecosystem` `good first issue` `difficulty:easy` `ready`
