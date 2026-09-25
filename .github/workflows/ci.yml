@@ -41,7 +41,6 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.22"
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
@@ -133,7 +132,7 @@ jobs:
           # sudo: as root the Go module and build caches resolve to a
           # different HOME, the warmed modules are missed, and the download
           # that follows is the very thing being blocked.
-          sudo sysctl -w kernel.apparm_restrict_unprivileged_userns=0
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
           unshare -rn bash -c 'ip link set lo up 2>/dev/null; go test -count=1 ./...'
 

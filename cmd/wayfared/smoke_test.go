@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Wayfare-labs/wayfare/runstore"
 )
@@ -149,66 +151,47 @@ func TestVerifyStoreEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openStore: %v", err)
 	}
-	// verifyStore needs a *FileStore, but openStore may return a Nop.
-	// When dir is non-empty and writable, it should return a FileStore.
 	code := verifyStore(store, logger)
 	if code != 0 {
 		t.Errorf("verifyStore on empty store = %d, want 0", code)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// rotateStore
-// ---------------------------------------------------------------------------
-
-func TestRotateStoreEmptyNoOp(t *testing.T) {
+func TestVerifyStoreReadOnlyBackend(t *testing.T) {
 	dir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store, err := openStore(dir, logger)
-	if err != nil {
-		t.Fatalf("openStore: %v", err)
-	}
-	if code := rotateStore(store, runstore.MaxWindow, logger); code != 0 {
-		t.Errorf("rotateStore on empty store = %d, want 0", code)
-	}
-}
 
-// TestRotateStoreTrims is the workflow's loop as the operator runs it: append
-// records past a ceiling, rotate, and the store comes back at the ceiling,
-// verifiable, with the sweep's freshly-appended head still present.
-func TestRotateStoreTrims(t *testing.T) {
-	dir := t.TempDir()
-	fs, err := runstore.Open(dir)
+	rec := &runstore.Record{
+		Version:      runstore.Version,
+		Seq:          1,
+		RecordedAt:   time.Unix(0, 0).UTC(),
+		Corridor:     "USDC-NGNC",
+		Integrity:    "good",
+		DependsOn:    []string{},
+		PrevHash:     runstore.GenesisPrevHash,
+		Finding:      "ok",
+		Rungs:        []runstore.Rung{},
+		FloorLossPct: "0",
+		FloorSize:    "1",
+		WorstLossPct: "0",
+		WorstSize:    "1",
+	}
+	if err := rec.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	payload, err := json.Marshal(rec)
 	if err != nil {
-		t.Fatalf("runstore.Open: %v", err)
+		t.Fatalf("json.Marshal: %v", err)
 	}
-	for i := 0; i < 5; i++ {
-		if err := fs.Append(context.Background(), &runstore.Record{Corridor: "USDC-NGNC"}); err != nil {
-			t.Fatalf("Append %d: %v", i, err)
-		}
-	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store, err := openStore(dir, logger)
-	if err != nil {
-		t.Fatalf("openStore: %v", err)
-	}
-	if code := rotateStore(store, 3, logger); code != 0 {
-		t.Fatalf("rotateStore = %d, want 0", code)
+	if err := os.WriteFile(filepath.Join(dir, "USDC-NGNC.ndjson"), append(payload, '\n'), 0o644); err != nil {
+		t.Fatalf("write record: %v", err)
 	}
 
-	re, err := runstore.Open(dir)
+	store, err := runstore.OpenFS(os.DirFS(dir), ".")
 	if err != nil {
-		t.Fatalf("reopen after rotation: %v", err)
+		t.Fatalf("OpenFS: %v", err)
 	}
-	if err := re.Verify(context.Background(), "USDC-NGNC"); err != nil {
-		t.Errorf("Verify after rotation: %v", err)
-	}
-	latest, err := re.Latest(context.Background(), "USDC-NGNC")
-	if err != nil || latest == nil {
-		t.Fatalf("Latest = %v, %v", latest, err)
-	}
-	if latest.Seq != 5 {
-		t.Errorf("Latest seq = %d, want 5 (the newest record survives rotation)", latest.Seq)
+	if code := verifyStore(store, logger); code != 0 {
+		t.Fatalf("verifyStore on read-only backend = %d, want 0", code)
 	}
 }

@@ -245,14 +245,13 @@ func openStore(dir string, logger *slog.Logger) (runstore.Store, error) {
 // verifyStore walks every chain and reports. Intended for use after a deploy
 // and after any restore from backup.
 func verifyStore(store runstore.Store, logger *slog.Logger) int {
-	fs, ok := store.(*runstore.FileStore)
-	if !ok {
-		logger.Error("-verify-store needs a data directory; none is configured")
+	if store == nil {
+		logger.Error("-verify-store requires a store; none is configured")
 		return 2
 	}
 
 	ctx := context.Background()
-	corridors, err := fs.Corridors(ctx)
+	corridors, err := store.Corridors(ctx)
 	if err != nil {
 		logger.Error("listing corridors", "error", err)
 		return 1
@@ -264,12 +263,22 @@ func verifyStore(store runstore.Store, logger *slog.Logger) int {
 
 	failed := 0
 	for _, c := range corridors {
-		if err := fs.Verify(ctx, c); err != nil {
+		if err := store.Verify(ctx, c); err != nil {
 			fmt.Printf("FAIL %s: %v\n", c, err)
 			failed++
 			continue
 		}
-		latest, _ := fs.Latest(ctx, c)
+		latest, err := store.Latest(ctx, c)
+		if err != nil {
+			fmt.Printf("FAIL %s: latest read error: %v\n", c, err)
+			failed++
+			continue
+		}
+		if latest == nil {
+			fmt.Printf("FAIL %s: no latest record available\n", c)
+			failed++
+			continue
+		}
 		fmt.Printf("ok   %s: %d records, latest %s\n",
 			c, latest.Seq, latest.RecordedAt.UTC().Format(time.RFC3339))
 	}
