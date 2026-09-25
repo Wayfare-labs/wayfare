@@ -35,10 +35,7 @@ func (SpreadMetric) Describe() Descriptor {
 		CanDetermine: "The bid/ask spread as a percentage of mid, read from " +
 			"Horizon's /order_book endpoint for the corridor's direct pair.",
 		CannotDetermine: "Whether the spread reflects executable depth or " +
-			"only the top of book, and whether AMM liquidity would tighten it. " +
-			"The venue is order-book (offers only); the ladder prices through " +
-			"pathfinding, which includes AMMs, so this spread and a route figure " +
-			"observe different markets — see docs/liquidity-venues.md.",
+			"only the top of book, and whether AMM liquidity would tighten it.",
 	}
 }
 
@@ -96,6 +93,10 @@ func (m SpreadMetric) Run(ctx context.Context, s Subject) MetricResult {
 		"spread %s%% of mid: best bid %s, best ask %s, %d bid levels, %d ask levels",
 		h.SpreadPct.StringFixed(2), h.BestBid, h.BestAsk,
 		h.BidLevels, h.AskLevels)
+
+	if substituted {
+		summary = fmt.Sprintf("on the underlying %s book: %s", buy.Code, summary)
+	}
 
 	return MetricValue(d, s, h.SpreadPct, UnitPercent, summary, evidence)
 }

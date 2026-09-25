@@ -93,9 +93,7 @@ func (PriceImpactMetric) Describe() Descriptor {
 			"probed sizes.",
 		CannotDetermine: "The complete price-impact shape — this reports the " +
 			"observed curve across the probed sizes, which is a sample of " +
-			"the full behaviour. The venue is pathfinding (order book plus " +
-			"AMM), so this and a book-only spread observe different markets " +
-			"— see docs/liquidity-venues.md.",
+			"the full behaviour.",
 	}
 }
 

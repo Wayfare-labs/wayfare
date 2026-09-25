@@ -463,6 +463,27 @@ func printTable(ctx context.Context, result *route.LadderResult, c corridor, ref
 			fmt.Printf(" (worst: %s)", worst)
 		}
 		fmt.Println(" — pass -checks=false to skip")
+
+		if len(findings.Metrics) > 0 {
+			measured := 0
+			for _, m := range findings.Metrics {
+				if m.Determined {
+					measured++
+				}
+			}
+			fmt.Printf("metrics: %d measured, %d undetermined\n", measured, len(findings.Metrics)-measured)
+			for _, m := range findings.Metrics {
+				if m.Determined {
+					fmt.Printf("  %-25s %s %s\n", m.ID, m.Value.String(), m.Unit)
+				} else {
+					reason := m.Reason
+					if reason == "" {
+						reason = m.Summary
+					}
+					fmt.Printf("  %-25s undetermined (%s)\n", m.ID, reason)
+				}
+			}
+		}
 	}
 	if priced == 0 {
 		fmt.Printf("no size could be priced for USDC -> %s\n", c.dest.Code)
