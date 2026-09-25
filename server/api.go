@@ -82,6 +82,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/corridor", s.handleCorridor)
 	mux.HandleFunc("/api/corridor/trend", s.handleTrend)
 	mux.HandleFunc("/api/assets", s.handleAssets)
+	mux.HandleFunc("/api/market-structure", s.handleMarketStructure)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.Handle("/", uiHandler())
 	return withCORS(mux)
@@ -844,4 +845,65 @@ func humanAge(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
+}
+
+// MarketStructureJSON is the wire shape for the market structure endpoint.
+// It reports issuer concentrations — cases where a single issuer backs
+// multiple corridor destination tokens. This is a structural fact about the
+// corridor set, not a measurement, and it does not change between runs.
+type MarketStructureJSON struct {
+	// IssuerConcentrations maps each issuer account ID to the list of
+	// corridor asset codes it issues. Only issuers with two or more
+	// corridors are included.
+	IssuerConcentrations map[string][]string `json:"issuer_concentrations"`
+
+	// CorridorCount is the total number of registered corridor destinations
+	// (assets with a fiat peg, excluding USDC).
+	CorridorCount int `json:"corridor_count"`
+
+	// ConcentratedCorridorCount is the number of corridors that share an
+	// issuer with at least one other corridor.
+	ConcentratedCorridorCount int `json:"concentrated_corridor_count"`
+
+	// GeneratedAt is when this analysis was produced.
+	GeneratedAt string `json:"generated_at"`
+}
+
+// handleMarketStructure serves the market structure analysis.
+// It is a read endpoint that computes issuer concentrations from the
+// verified asset registry. No store or live measurement is required.
+func (s *Server) handleMarketStructure(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, r, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is supported")
+		return
+	}
+	if err := checkParams(r, "pretty"); err != nil {
+		writeError(w, r, http.StatusBadRequest, "INVALID_QUERY_PARAM", err.Error())
+		return
+	}
+
+	concentration := asset.IssuerConcentration()
+
+	// Count total corridor destinations (assets with a peg, excluding USDC).
+	corridorCount := 0
+	for _, e := range asset.Registry() {
+		if e.Code != "USDC" && e.Peg != "" {
+			corridorCount++
+		}
+	}
+
+	// Count corridors that are in a concentration.
+	concentratedCount := 0
+	for _, corridors := range concentration {
+		concentratedCount += len(corridors)
+	}
+
+	out := MarketStructureJSON{
+		IssuerConcentrations:      concentration,
+		CorridorCount:             corridorCount,
+		ConcentratedCorridorCount: concentratedCount,
+		GeneratedAt:               time.Now().UTC().Format(time.RFC3339),
+	}
+
+	writeJSON(w, r, http.StatusOK, out)
 }
