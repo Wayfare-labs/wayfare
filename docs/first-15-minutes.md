@@ -14,6 +14,9 @@ The short version: **the whole test suite runs offline from recorded bytes
 and one live `cmd/ladder` run is the only part that needs the network
 (step 5).**
 
+For the one-page story of what the project is — what it measures, what it
+refuses to do, who it is for — see [docs/about.md](about.md).
+
 ---
 
 ## Before you start

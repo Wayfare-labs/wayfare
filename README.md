@@ -216,6 +216,10 @@ of them is a breaking change**, not a refactor.
 
 A glossary of every state a reader can meet: **[docs/glossary.md](docs/glossary.md)**
 
+New to the project and want the one-page story — what it measures, what it
+refuses to do, who it is for, and the non-custodial position stated once?
+**[docs/about.md](docs/about.md)**
+
 ### Verdict thresholds — breaking if altered
 
 Loss is how far the achieved rate falls below the reference mid.
