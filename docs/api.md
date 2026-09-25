@@ -307,6 +307,8 @@ Reference rates are never averaged. The response identifies the provider and, wh
 
 ## Related contracts
 
+- [Reading the API correctly](api-consumer.md) — a worked consumer that
+  respects `live`, `scored` and a null `recommended`, with its offline tests
 - [Run store](run-store.md) — stored record and hash-chain format
 - [Snapshot format](snapshot-format.md) — recorded upstream bytes
 - [Checks](checks.md) — tri-state counterparty findings and metrics

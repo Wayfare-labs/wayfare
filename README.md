@@ -326,6 +326,11 @@ into a verdict is maintainer-owned.
 
 Full spec: **[docs/checks.md](docs/checks.md)**
 Methodology: **[docs/metrics.md](docs/metrics.md)**
+Writing a check: **[docs/adding-a-check.md](docs/adding-a-check.md)**
+Writing a metric: **[docs/adding-a-metric.md](docs/adding-a-metric.md)** — which
+opens with the one thing a contributor has to know: a metric written today is
+validated and testable, and reaches no response, because `checks.Runner` has no
+metric path ([#91](https://github.com/Wayfare-labs/wayfare/issues/91)).
 
 ### Asset identity — breaking if altered
 
@@ -396,6 +401,7 @@ What verification looks like — including broken-chain output: **[docs/verify-s
 | `server` | HTTP surface and the embedded single-file UI |
 | `cmd/ladder` | Measurement CLI |
 | `cmd/wayfared` | Server and scheduler |
+| `examples/api-consumer` | Worked example of reading the API correctly |
 
 `anchor.Profile.SEPs()` returns the numbers of the SEPs an anchor advertises
 in its `stellar.toml` — SEP-1 (the document itself), 6, 10, 12, 24, 31, 38 —
@@ -463,7 +469,10 @@ lands (a live SEP-38 round-trip has never been performed — see
 The API is public, keyless and read-only, and answers cross-origin requests
 from any origin (`Access-Control-Allow-Origin: *`), so browser consumers on
 another origin can call it directly. No credentials are ever attached to a
-cross-origin read.
+cross-origin read. A worked consumer — one small program that reads a corridor,
+respects `live` and `scored`, and refuses to render a verdict it should not —
+lives in `examples/api-consumer`, and the reading rules it encodes are written
+out in **[docs/api-consumer.md](docs/api-consumer.md)**.
 
 The `sizes` parameter overrides the default ladder (0.1 → 5000 USDC across
 12 rungs). The default sizes and the rationale for each rung are documented
@@ -543,10 +552,11 @@ code is marked as what it is.
 taxonomy, cross-checked reference rates, recorded snapshots, pinned arithmetic.
 
 **v2 — Corridor intelligence.** **IN PROGRESS**, and further from done than the
-merge log suggests. Counterparty checks are **DONE**: three run per corridor and
-appear in every live response. Market-quality metrics — spread, observed versus
-executable depth, price impact, liquidity concentration — are **implemented but
-not reachable**: `checks.Runner` has no way to run a `Metric`, so none of them
+merge log suggests. Counterparty checks are **DONE**: seven run per corridor and
+appear in every live response (`checks.Runner.Default()`), and
+[docs/adding-a-check.md](docs/adding-a-check.md) walks the path to an eighth.
+Market-quality metrics — spread, observed versus executable depth, price
+impact, liquidity concentration — are **implemented but not reachable**: `checks.Runner` has no way to run a `Metric`, so none of them
 has ever appeared in a response, been recorded, or been rendered. Effective
 transfer cost (`route.Decompose`) is in the same state — merged, with no caller.
 Wiring that path is [#91](https://github.com/Wayfare-labs/wayfare/issues/91) and
@@ -671,6 +681,7 @@ The full register — what this project refuses to build, and why, plus the
 | NGNC anchor lacks SEP-38 | Verified from live stellar.toml |
 | Corridor figures in docs/ | Measured, live Horizon strict-send, timestamped |
 | Recorded snapshots | Hash-verified on load; provenance refuses a dirty tree |
+| Container image scan | Run in CI on the image it has just built. Measured 2026-09-25: the image's own packages clean; the Go 1.22.12 standard library carried 22 `HIGH`/`CRITICAL` advisories, recorded rather than gated — see [SECURITY.md](SECURITY.md) |
 | SEP-38 fee identity | Verified against SEP-0038 spec text, pinned in golden files |
 | USDC issuer is Circle's | **Not yet verified** against circle.com stellar.toml |
 | Live SEP-38 round-trip | **Verified** — recorded fixture from testanchor.stellar.org in `sep38/testdata/live/` |
