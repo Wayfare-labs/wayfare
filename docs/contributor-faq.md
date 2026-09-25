@@ -121,18 +121,24 @@ form to fill in.
 
 ### How do I add a check?
 
-[docs/checks.md](checks.md). A check reports a counterparty fact and **never
-moves the headline**: integrity and every verdict are computed from pathfinding
-and the reference rate alone. `route.WithFindings` is the only composition point
-and branches on nothing.
+[docs/adding-a-check.md](adding-a-check.md) walks the whole path — ID, scope,
+subject fields, evidence, the tests CI runs offline, and the line in
+`Runner.Default()` that makes it reach a reader. The contract it implements is
+[docs/checks.md](checks.md): a check reports a counterparty fact and **never
+moves the headline**. Integrity and every verdict are computed from pathfinding
+and the reference rate alone, and `route.WithFindings` is the only composition
+point and branches on nothing.
 
 ### How do I add a metric?
 
-See [docs/metrics.md](metrics.md). Be aware: as of this writing **no metric
-runs in production**. `checks.Runner` has no `Metrics` field and `RunMetric` has
-no non-test caller, so the four merged metrics are unreachable. Wiring them is
+[docs/adding-a-metric.md](adding-a-metric.md), with
+[docs/metrics.md](metrics.md) for the methodology. Be aware: as of this writing
+**no metric runs in production**. `checks.Runner` has no `Metrics` field and
+`RunMetric` has no non-test caller, so the five merged metric types are
+unreachable. Wiring them is
 [#91](https://github.com/Wayfare-labs/wayfare/issues/91) and it is the critical
-path for the whole V2 milestone.
+path for the whole V2 milestone — a metric you add is validated and testable
+now, and does not reach a response until that lands.
 
 ### Do I need to change the wire format to add things?
 

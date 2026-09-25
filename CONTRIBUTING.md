@@ -118,7 +118,10 @@ measurements rather than breaking a feature:
 
 **This is about blast radius, not gatekeeping.** Individual checks and metrics
 are exactly the contribution this project wants — see
-[docs/checks.md](docs/checks.md) and the issues labelled `good first issue`.
+[docs/checks.md](docs/checks.md), the two worked examples
+([docs/adding-a-check.md](docs/adding-a-check.md),
+[docs/adding-a-metric.md](docs/adding-a-metric.md)) and the issues labelled
+`good first issue`.
 
 The per-area reasoning — exactly what is owned, what a mistake in it would
 publish, what defends it today, and what is open contribution — is
@@ -156,6 +159,10 @@ CI runs `gofmt`, `go vet`, `go test -race`, `go build`, `golangci-lint`, and
 namespace). All must pass without outbound network access. See
 [docs/offline-testing.md](docs/offline-testing.md); for the loop itself, and
 what each target needs installed, [docs/development-loop.md](docs/development-loop.md).
+
+CI also scans the container image it has just built for known vulnerabilities.
+If you change the Dockerfile, the base image or the Go toolchain, mirror it
+locally with `make docker-build image-scan`.
 
 Changes to `server/index.html` are only covered by the source-text assertions in
 `go test`, which cannot tell you how a panel renders. Check them in a browser:

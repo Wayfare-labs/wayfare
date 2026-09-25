@@ -4,8 +4,9 @@ What each `make` target actually runs, what it needs installed, and how the
 loop maps onto what CI does. `CONTRIBUTING.md` lists the targets; this document
 explains them.
 
-**Checked against the code at commit `c9bfb75`, 2026-09-24.** Every command
-below was read from [`Makefile`](../Makefile) and
+**Checked against the code at commit `c9bfb75`, 2026-09-24; the container-image
+section re-checked at `35d7d8d`, 2026-09-25.** Every command below was read from
+[`Makefile`](../Makefile) and
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml), not from memory.
 Where a target needs something installed that the repository does not vendor,
 it says so.
@@ -18,7 +19,7 @@ it says so.
 |:---|:---|:---|
 | **Go 1.22 or later** | everything | `go.mod` pins `go 1.22.2`; CI pins `1.22`; the image builds on `golang:1.22-alpine`. |
 | **`golangci-lint` v2** | `make lint` only | Not a Go dependency and not installed by anything here. `.golangci.yml` declares `version: "2"`, so a v1 binary rejects the config outright. CI pins `v2.1.6`. |
-| **`docker`** | `make docker-build` only | Read from the target; not exercised by `make all` or by the pre-PR sequence. |
+| **`docker`** | `make docker-build`, `make image-scan` only | Read from the targets; not exercised by `make all` or by the pre-PR sequence. The scanner runs from its own container image, so no local `trivy` install is needed. |
 | **`unshare` (Linux)** | `make offline-test` only | Ships with `util-linux`. On macOS and Windows this target cannot run — see [docs/offline-testing.md](offline-testing.md). |
 
 The only module dependencies are `shopspring/decimal` and `BurntSushi/toml`
@@ -47,6 +48,7 @@ at all; [docs/offline-testing.md](offline-testing.md) is the full argument.
 | `make cover` | `go test -coverprofile=coverage.out ./...`, then `go tool cover -html` into `coverage.html`, then prints the total | — | When you want to see which branches a change left uncovered. Writes two files at the repo root. |
 | `make run` | `go run ./cmd/ladder` | **Live network** | Measuring the default corridor against mainnet. See the exit-code warning below. |
 | `make docker-build` | `docker build -t wayfare:local .` | `docker` | Before changing anything about how the monitor is packaged or deployed. |
+| `make image-scan` | two `docker run` invocations of the pinned `aquasec/trivy` image against `wayfare:local` | `docker` | After changing the base image, the Dockerfile, or the Go toolchain. Mirrors the CI scan; it is **not** part of the pre-PR sequence. |
 | `make clean` | `rm -rf bin coverage.out coverage.html` | — | Removes everything the loop writes: the build output and both coverage files. Nothing else. |
 | `make help` | grep over the Makefile's `## ` comments | — | Lists the targets with their one-line descriptions. The list is generated from the file, so it cannot drift from it. |
 
@@ -121,7 +123,7 @@ all on Ubuntu with Go `1.22`:
 | `build` | `gofmt -l .` (fails and prints a diff if any file is unformatted), `go vet ./...`, `go test -race ./...`, `go build ./...` |
 | `golangci-lint` | `golangci-lint` `v2.1.6` via the pinned action |
 | `tests run with no network` | `go mod download`, lift the AppArmor user-namespace restriction, then `unshare -rn bash -c 'ip link set lo up; go test -count=1 ./...'` |
-| `container image builds` | `docker build -t wayfare:ci .`, then run the built binary with `-verify-store` to prove it starts |
+| `container image builds` | `docker build -t wayfare:ci .`, run the built binary with `-verify-store` to prove it starts, then scan that image for known vulnerabilities |
 
 Two consequences worth knowing:
 
@@ -132,6 +134,35 @@ Two consequences worth knowing:
 - **CI uses the race detector on every push** (`go test -race`), while
   `make all` does not. A change that only passes plain `go test` can still fail
   CI.
+
+### What the image scan covers, and what it does not gate
+
+CI inspects the image it built, in the job that built it, so the gate and the
+artifact can never be different artifacts. Two invocations, both pinned
+(`aquasecurity/trivy-action@0.36.0`, scanner `v0.74.0`):
+
+| Invocation | Covers | Fails the job? |
+|:---|:---|:---|
+| report | OS packages **and** language packages, which includes the Go standard library compiled into `/wayfared` | no — `exit-code: 0` |
+| gate | the image's own packages | yes, on a fixable `HIGH` or `CRITICAL` |
+
+Measured on 2026-09-25 against the image this repository builds: the image's own
+packages — Debian 12.15, from `gcr.io/distroless/static-debian12:nonroot` — were
+clean, and `/wayfared` carried 22 `HIGH`/`CRITICAL` advisories with fixes, one of
+them `CRITICAL`, all in `stdlib` at Go 1.22.12. Every fix is on a later release
+line (1.24.13+, 1.25.7+, 1.26.0-rc.3+), so none is reachable without leaving the
+toolchain the Dockerfile, `go.mod`, CI and the README all pin to 1.22.
+
+That is why the language-package scan reports rather than gates. A job that is
+red for a reason no change here can fix is a job people learn to ignore, and
+the toolchain bump is a decision with its own blast radius. A finding in the
+image's own packages is different: the fix is a newer base image, which is a
+change this repository can make.
+
+Both invocations pass `--ignore-unfixed`, so an advisory with no available patch
+cannot fail the build either: it cannot be acted on, and blocking every pull
+request on one announces nothing new. `make image-scan` runs both against
+`wayfare:local`.
 
 `CONTRIBUTING.md` gives the pre-PR sequence. Read as one line:
 

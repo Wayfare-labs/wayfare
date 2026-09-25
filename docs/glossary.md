@@ -278,7 +278,7 @@ spread of nothing and a spread that could not be read are different facts,
 and zero is a plausible-looking number for the second.
 
 **Source:** `checks/metric.go` — `MetricResult`, `RunMetric()`.
-`checks/checks.md` — the two-shape contract.
+[docs/checks.md](checks.md) — the two-shape contract.
 Checked 2026-08-25.
 
 ---
