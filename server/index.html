@@ -52,6 +52,18 @@
   h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.01em; }
   .sub { color: var(--muted); font-size: .92rem; margin: 0; }
   .controls { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; margin-bottom: 1.5rem; }
+  .compare-controls { margin: -0.45rem 0 1.25rem; }
+  .compare-controls summary { cursor: pointer; width: fit-content; font-weight: 600; }
+  .compare-controls .controls { margin: .65rem 0 0; }
+  .compare-controls select { min-width: 12rem; max-width: 100%; }
+  .compare-panel { overflow-wrap: anywhere; }
+  .compare-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; margin: .8rem 0; }
+  .compare-side { min-width: 0; padding: .7rem; border: 1px solid var(--border); border-radius: 6px; }
+  .compare-side h3 { margin: 0 0 .25rem; font-size: .92rem; }
+  .compare-side p { margin: .15rem 0; color: var(--muted); font-size: .82rem; }
+  .compare-value { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .compare-note { margin: .65rem 0 0; padding: .65rem .75rem; border: 1px solid var(--unknown); border-radius: 6px; color: var(--unknown); background: var(--unknown-soft); }
+  @media (max-width: 520px) { .compare-grid { grid-template-columns: 1fr; } }
   select, button {
     font: inherit; padding: .5rem .8rem; border-radius: 6px;
     border: 1px solid var(--border); background: var(--panel); color: var(--ink);
@@ -145,6 +157,7 @@
   .provenance-live { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
   h2 { font-size: .95rem; margin: 0 0 .8rem; letter-spacing: .01em; }
   .legend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .55rem; margin-top: .9rem; }
+  @media (max-width: 520px) { .legend-grid { grid-template-columns: 1fr; } }
   .legend-item { display: flex; align-items: center; gap: .45rem; min-width: 0; }
   .legend-item span:last-child { font-size: .8rem; }
   .case { font-size: .88rem; color: var(--muted); }
@@ -217,6 +230,19 @@
     <button id="trend">Show trend</button>
     <span id="status" class="sub"></span>
   </div>
+
+  <details class="compare-controls">
+    <summary>Compare shared measurements</summary>
+    <div class="controls">
+      <label for="compare-to">Compare with</label>
+      <select id="compare-to" aria-label="Select the second corridor to compare" disabled>
+        <option value="">Loading corridors…</option>
+      </select>
+      <button id="compare" type="button" aria-controls="compare-out" disabled>Compare corridors</button>
+      <span id="compare-status" class="sub" role="status" aria-live="polite"></span>
+    </div>
+  </details>
+  <div id="compare-out" aria-live="polite"></div>
 
   <div id="out">
     <div class="loading-panel" id="loading">
@@ -330,6 +356,7 @@ async function loadAssets() {
 
 function buildSelector(data) {
   const sel = $('to');
+  const compareSel = $('compare-to');
   const assets = (data.assets || []).filter(a => a.can_be_destination);
   // Sort: corridors with history first, then alphabetically.
   assets.sort((a, b) => {
@@ -339,17 +366,36 @@ function buildSelector(data) {
     return a.code.localeCompare(b.code);
   });
 
-  sel.innerHTML = assets.map((a, i) => {
+  const options = assets.map((a, i) => {
     const label = CORRIDOR_NAMES[a.code] || a.code;
     const note = a.state && a.state.has_history
       ? ` [${a.state.last_integrity}]` : '';
     return `<option value="${esc(a.code)}"${i === 0 ? ' selected' : ''}>` +
       `USDC \u2192 ${esc(label)}${esc(note)}</option>`;
   }).join('');
+  sel.innerHTML = options;
+  compareSel.innerHTML = '<option value="" disabled>Select a different corridor</option>' + options;
+  compareSel.value = assets.find(a => a.code !== sel.value)?.code || '';
+  compareSel.disabled = assets.length < 2;
+  $('compare').disabled = assets.length < 2;
+  if (assets.length < 2) {
+    compareSel.innerHTML = '<option value="">A second corridor is not available</option>';
+  }
 
   // Show the detail line for the initially selected corridor.
   updateCorridorDetail(sel.value);
-  sel.addEventListener('change', () => updateCorridorDetail(sel.value));
+  sel.addEventListener('change', () => {
+    updateCorridorDetail(sel.value);
+    if (compareSel.value === sel.value) {
+      compareSel.value = assets.find(a => a.code !== sel.value)?.code || '';
+    }
+    $('compare-out').innerHTML = '';
+    $('compare-status').textContent = '';
+  });
+  compareSel.addEventListener('change', () => {
+    $('compare-out').innerHTML = '';
+    $('compare-status').textContent = '';
+  });
 }
 
 function updateCorridorDetail(code) {
@@ -430,6 +476,101 @@ function render(d) {
 
   parts.push(caseStudy(d));
   $('out').innerHTML = parts.join('');
+}
+
+// The comparison is deliberately narrow: loss percentages are dimensionless
+// and comparable only when both API responses scored the same send size and
+// both produced a priced quote. Receive amounts and effective rates use
+// different destination currencies, so they are not compared across corridors.
+function sharedLosses(a, b) {
+  const leftAsset = a.send_asset || {};
+  const rightAsset = b.send_asset || {};
+  if (!leftAsset.code || leftAsset.code !== rightAsset.code ||
+      (leftAsset.issuer || '') !== (rightAsset.issuer || '') ||
+      (leftAsset.asset && rightAsset.asset && leftAsset.asset !== rightAsset.asset) ||
+      a.scored !== true || b.scored !== true || !Array.isArray(a.rungs) || !Array.isArray(b.rungs)) return [];
+  const right = new Map(b.rungs
+    .filter(r => typeof r.send_amount === 'string' && r.send_amount !== '')
+    .map(r => [r.send_amount, r]));
+  return a.rungs.flatMap(left => {
+    if (typeof left.send_amount !== 'string' || left.send_amount === '') return [];
+    const other = right.get(left.send_amount);
+    const lq = left.priced === true && left.quote;
+    const rq = other && other.priced === true && other.quote;
+    if (!lq || !rq || typeof lq.loss_pct !== 'string' || !lq.loss_pct ||
+        typeof rq.loss_pct !== 'string' || !rq.loss_pct) return [];
+    return [{ size: left.send_amount, left: lq.loss_pct, right: rq.loss_pct }];
+  });
+}
+
+function comparisonSide(d) {
+  const source = d.send_asset?.code || 'source asset';
+  const destination = d.receive_asset?.code || 'Unknown corridor';
+  const freshness = d.live
+    ? `Live measurement · ${d.measured_at || 'time not supplied'}`
+    : `Recorded, not current · ${d.stale?.age_human || 'historical reading'} · ${d.stale?.recorded_at || d.measured_at || 'time not supplied'}`;
+  const dependency = (d.depends_on || []).map(a => a.code || a).filter(Boolean).join(', ');
+  const structure = dependency ? `${d.integrity} · depends on ${dependency}` : String(d.integrity || 'Not supplied');
+  return `<section class="compare-side" aria-label="${esc(destination)} response details">
+    <h3>${esc(source)} → ${esc(destination)}</h3>
+    <p>Market structure: ${esc(structure)}</p>
+    <p>${esc(freshness)}</p>
+  </section>`;
+}
+
+function compareRender(a, b) {
+  const common = sharedLosses(a, b);
+  const sendCode = a.send_asset?.code || 'source token';
+  const left = a.receive_asset?.code || 'first corridor';
+  const right = b.receive_asset?.code || 'second corridor';
+  const rows = common.map(row => `<tr>
+    <td class="num">${esc(row.size)} ${esc(sendCode)}</td>
+    <td class="num compare-value">${esc(formatPct(row.left))}%</td>
+    <td class="num compare-value">${esc(formatPct(row.right))}%</td>
+  </tr>`).join('');
+  const unscored = [
+    a.scored === false ? left : '',
+    b.scored === false ? right : '',
+  ].filter(Boolean);
+  const table = common.length
+    ? `<div class="scroll"><table><thead><tr><th>Shared send amount (${esc(sendCode)})</th><th>${esc(left)} loss against mid</th><th>${esc(right)} loss against mid</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<p class="compare-note">${unscored.length ? '<span class="m-state">UNDETERMINED</span>' : ''}No shared scored loss measurements are available for the same source asset and send amounts.${unscored.length ? ` The API reports no scored loss for ${esc(unscored.join(' and '))}.` : ''} Nothing has been filled in or inferred.</p>`;
+  return `<section class="panel compare-panel" aria-labelledby="compare-heading">
+    <h2 id="compare-heading">Shared measurements</h2>
+    <div class="compare-grid">${comparisonSide(a)}${comparisonSide(b)}</div>
+    ${table}
+    <p class="meta">Only API-produced loss percentages for identical send sizes appear here. Values are shown as returned by each corridor; no difference, ranking, or recommendation is calculated.</p>
+  </section>`;
+}
+
+async function compareCorridors() {
+  const first = $('to').value;
+  const second = $('compare-to').value;
+  const status = $('compare-status');
+  const button = $('compare');
+  if (!first || !second || first === second) {
+    status.textContent = 'Choose two different corridors.';
+    $('compare-out').innerHTML = '';
+    return;
+  }
+  button.disabled = true;
+  status.textContent = 'Loading corridor responses…';
+  $('compare-out').innerHTML = '';
+  try {
+    const responses = await Promise.all([first, second].map(async code => {
+      const r = await fetch(`/api/corridor?to=${encodeURIComponent(code)}`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      return data;
+    }));
+    $('compare-out').innerHTML = compareRender(responses[0], responses[1]);
+    status.textContent = '';
+  } catch (e) {
+    $('compare-out').innerHTML = `<p class="compare-note" role="alert">Could not load both corridor responses: ${esc(e.message)}</p>`;
+    status.textContent = '';
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function unscoredBlock(d) {
@@ -996,14 +1137,17 @@ function runsTable(runs) {
 
 $('run').addEventListener('click', measure);
 $('trend').addEventListener('click', loadTrend);
+$('compare').addEventListener('click', compareCorridors);
 
 // On page load, fetch the default corridor from recorded history (no &live=1)
 // so the loading state disappears as soon as the server responds, regardless
 // of whether this is a cold start or a warm one.  A cold start on Render's
 // free tier can take ~60 s; the loading panel explains this to the reader.
 (async function boot() {
-  const to = $('to').value; // NGNC by default
   try {
+    await loadAssets();
+    const to = $('to').value;
+    if (!to) throw new Error('No corridor is available to load.');
     const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}`);
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
