@@ -11,6 +11,7 @@ All endpoints are read-only. The service does not hold funds, issue tokens, sign
 | `GET` | `/api/corridor` | Measure or retrieve one corridor |
 | `GET` | `/api/corridor/trend` | Read stored measurements for a corridor |
 | `GET` | `/api/assets` | List verified assets configured in the binary |
+| `GET` | `/api/market-structure` | Identify shared issuer dependencies across corridors |
 | `GET` | `/healthz` | Return service health |
 | `GET` | `/` | Serve the embedded single-file UI |
 
@@ -280,7 +281,49 @@ curl -s https://wayfare-cdb9.onrender.com/api/assets
       "can_be_destination": true
     }
   ]
+}
 ```
+
+## `GET /api/market-structure`
+
+Returns issuer concentrations — cases where a single issuer backs multiple corridor destination tokens. This is a structural fact about the corridor set, not a measurement, and it does not change between runs.
+
+Query parameters:
+
+- `pretty=1` — optional; pretty-print the JSON response.
+
+A successful response contains:
+
+- `issuer_concentrations` — map of issuer account ID to the list of corridor asset codes it issues. Only issuers with two or more corridors are included.
+- `corridor_count` — total number of registered corridor destinations (assets with a fiat peg, excluding USDC).
+- `concentrated_corridor_count` — number of corridors that share an issuer with at least one other corridor.
+- `generated_at` — RFC3339 timestamp when this analysis was produced.
+
+**cURL:**
+
+```bash
+curl -s https://wayfare-cdb9.onrender.com/api/market-structure
+curl -s https://wayfare-cdb9.onrender.com/api/market-structure?pretty=1
+```
+
+**Example Response (200 OK):**
+
+```json
+{
+  "issuer_concentrations": {
+    "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6": [
+      "GHSC",
+      "KESC",
+      "NGNC"
+    ]
+  },
+  "corridor_count": 8,
+  "concentrated_corridor_count": 3,
+  "generated_at": "2026-08-27T12:00:00Z"
+}
+```
+
+In the current registry, LinkIOIssuer (`GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6`) backs three corridors: NGNC (naira), GHSC (Ghanaian cedi), and KESC (Kenyan shilling). This concentration is a market-structure fact — if that issuer fails, all three corridors fail together.
 
 ## `GET /healthz`
 
