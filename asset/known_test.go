@@ -2,6 +2,7 @@ package asset
 
 import (
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -347,6 +348,45 @@ func TestImpostorSameCodeDifferentIssuerNotFound(t *testing.T) {
 
 	if _, ok := LookupEntry(impostor); ok {
 		t.Error("LookupEntry must return false for an impostor with the right code but wrong issuer")
+	}
+}
+
+// TestIssuerConcentration verifies that the shared issuer behind NGNC, GHSC,
+// and KESC is identified as a concentration. LinkIOIssuer backs three
+// corridors; all other issuers in the registry back at most one corridor
+// (excluding USDC, the settlement asset).
+func TestIssuerConcentration(t *testing.T) {
+	concentration := IssuerConcentration()
+
+	// LinkIOIssuer should have three corridors: NGNC, GHSC, KESC.
+	linkIOCorridors, ok := concentration[LinkIOIssuer]
+	if !ok {
+		t.Fatalf("IssuerConcentration missing LinkIOIssuer key")
+	}
+	want := []string{"GHSC", "KESC", "NGNC"} // sorted
+	if len(linkIOCorridors) != 3 {
+		t.Errorf("LinkIOIssuer corridors = %v, want 3", linkIOCorridors)
+	}
+	// Sort for deterministic comparison.
+	sorted := make([]string, len(linkIOCorridors))
+	copy(sorted, linkIOCorridors)
+	sort.Strings(sorted)
+	if !reflect.DeepEqual(sorted, want) {
+		t.Errorf("LinkIOIssuer corridors = %v, want %v", sorted, want)
+	}
+
+	// No other issuer should appear in the concentration map (all others
+	// back at most one corridor, and USDC is excluded).
+	for issuer := range concentration {
+		if issuer != LinkIOIssuer {
+			t.Errorf("unexpected issuer in concentration map: %q", issuer)
+		}
+	}
+
+	// USDC is the settlement asset, not a corridor destination, so it must
+	// never appear in the concentration result.
+	if _, ok := concentration[USDCIssuer]; ok {
+		t.Error("USDCIssuer must not appear in IssuerConcentration (it is the settlement asset)")
 	}
 }
 
