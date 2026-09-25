@@ -558,13 +558,30 @@ func TestPrettyOptInIndents(t *testing.T) {
 			}
 
 			// Formatting must never change the document.
-			var prettyDoc, plainDoc any
+			//
+			// The two bodies come from two independent measurements, so the
+			// fields that record when each one was taken legitimately differ:
+			// measured_at is formatted with RFC3339 second precision, and two
+			// requests milliseconds apart straddle a second tick often enough
+			// to fail this comparison for a reason that has nothing to do with
+			// ?pretty. They are asserted present and then set aside, so the
+			// comparison covers the measurement itself rather than the clock.
+			var prettyDoc, plainDoc map[string]any
 			if err := json.Unmarshal(raw, &prettyDoc); err != nil {
 				t.Fatalf("parsing body: %v", err)
 			}
 			_, plain := rawGet(t, base)
 			if err := json.Unmarshal(plain, &plainDoc); err != nil {
 				t.Fatalf("parsing plain body: %v", err)
+			}
+			for _, doc := range []map[string]any{prettyDoc, plainDoc} {
+				if _, ok := doc["measured_at"]; !ok {
+					t.Fatal("the corridor body has no measured_at; a reading with no time on it is not verifiable")
+				}
+			}
+			for _, field := range []string{"measured_at", "reference_fetched_at"} {
+				delete(prettyDoc, field)
+				delete(plainDoc, field)
 			}
 			if !reflect.DeepEqual(prettyDoc, plainDoc) {
 				t.Error("?pretty changed the document, not just the formatting")
