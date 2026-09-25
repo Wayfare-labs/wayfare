@@ -349,7 +349,10 @@ function buildSelector(data) {
 
   // Show the detail line for the initially selected corridor.
   updateCorridorDetail(sel.value);
-  sel.addEventListener('change', () => updateCorridorDetail(sel.value));
+  sel.addEventListener('change', () => {
+    updateCorridorDetail(sel.value);
+    loadCorridor(sel.value);
+  });
 }
 
 function updateCorridorDetail(code) {
@@ -997,12 +1000,7 @@ function runsTable(runs) {
 $('run').addEventListener('click', measure);
 $('trend').addEventListener('click', loadTrend);
 
-// On page load, fetch the default corridor from recorded history (no &live=1)
-// so the loading state disappears as soon as the server responds, regardless
-// of whether this is a cold start or a warm one.  A cold start on Render's
-// free tier can take ~60 s; the loading panel explains this to the reader.
-(async function boot() {
-  const to = $('to').value; // NGNC by default
+async function loadCorridor(to) {
   try {
     const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}`);
     const data = await r.json();
@@ -1014,6 +1012,17 @@ $('trend').addEventListener('click', loadTrend);
        If the instance is still waking up, wait a moment and
        <a href="" style="color:inherit">reload</a>.</div>`;
   }
+}
+
+// On page load, populate the corridor selector from /api/assets first, then
+// fetch the initial corridor from recorded history (no &live=1) so the loading
+// state disappears as soon as the server responds, regardless of whether this
+// is a cold start or a warm one.  A cold start on Render's free tier can take
+// ~60 s; the loading panel explains this to the reader.
+(async function boot() {
+  await loadAssets();
+  const to = $('to').value || 'NGNC';
+  await loadCorridor(to);
 })();
 </script>
 <script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a30a05c3d811663d',t:'MTc4NzY1NDg4Nw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
