@@ -979,3 +979,101 @@ func metricString(t *testing.T, entry map[string]json.RawMessage, field string) 
 	}
 	return s
 }
+
+// TestMarketStructureEndpoint verifies the /api/market-structure endpoint
+// returns the issuer concentration analysis. The known registry has one
+// issuer (LinkIOIssuer) backing three corridors (NGNC, GHSC, KESC), which
+// is the concentration the endpoint must surface.
+func TestMarketStructureEndpoint(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	status, body := getJSON(t, srv.URL+"/api/market-structure")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %v", status, body)
+	}
+
+	// Verify issuer_concentrations has the LinkIOIssuer entry.
+	concentrations, ok := body["issuer_concentrations"].(map[string]any)
+	if !ok {
+		t.Fatal("issuer_concentrations missing or not a map")
+	}
+
+	linkIOCorridors, ok := concentrations["GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"].([]any)
+	if !ok {
+		t.Fatalf("LinkIOIssuer not found in concentrations: %v", concentrations)
+	}
+	if len(linkIOCorridors) != 3 {
+		t.Errorf("LinkIOIssuer corridors = %v, want 3", linkIOCorridors)
+	}
+
+	// Verify the three expected corridors are present.
+	expected := map[string]bool{"NGNC": false, "GHSC": false, "KESC": false}
+	for _, c := range linkIOCorridors {
+		if code, ok := c.(string); ok {
+			expected[code] = true
+		}
+	}
+	for code, found := range expected {
+		if !found {
+			t.Errorf("missing corridor %q in LinkIOIssuer concentration", code)
+		}
+	}
+
+	// Verify corridor_count and concentrated_corridor_count.
+	if got := body["corridor_count"]; got != float64(8) { // 8 corridors with pegs excluding USDC
+		t.Errorf("corridor_count = %v, want 8", got)
+	}
+	if got := body["concentrated_corridor_count"]; got != float64(3) {
+		t.Errorf("concentrated_corridor_count = %v, want 3", got)
+	}
+
+	// Verify generated_at is present and parseable.
+	generatedAt, ok := body["generated_at"].(string)
+	if !ok {
+		t.Fatal("generated_at missing or not a string")
+	}
+	if _, err := time.Parse(time.RFC3339, generatedAt); err != nil {
+		t.Errorf("generated_at = %q, want RFC3339 timestamp: %v", generatedAt, err)
+	}
+
+	// No other issuer should have a concentration.
+	for issuer := range concentrations {
+		if issuer != "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6" {
+			t.Errorf("unexpected issuer in concentration map: %q", issuer)
+		}
+	}
+}
+
+// TestMarketStructureUnknownParamsAreRejected verifies the endpoint enforces
+// the same strict parameter handling as other endpoints.
+func TestMarketStructureUnknownParamsAreRejected(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	status, body := getJSON(t, srv.URL+"/api/market-structure?foo=bar")
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", status)
+	}
+	msg, _ := body["error"].(string)
+	if !strings.Contains(msg, "unknown query parameter") {
+		t.Errorf("error = %q, want it to say unknown query parameter", msg)
+	}
+	if !strings.Contains(msg, `"foo"`) {
+		t.Errorf("error = %q, want it to name the unknown parameter", msg)
+	}
+}
+
+// TestMarketStructureKnownParamsAreAccepted verifies the documented
+// parameters are accepted.
+func TestMarketStructureKnownParamsAreAccepted(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	status, _ := getJSON(t, srv.URL+"/api/market-structure")
+	if status != http.StatusOK {
+		t.Errorf("status = %d, want 200", status)
+	}
+
+	status, _ = getJSON(t, srv.URL+"/api/market-structure?pretty=1")
+	if status != http.StatusOK {
+		t.Errorf("status = %d, want 200 with pretty=1", status)
+	}
+}
