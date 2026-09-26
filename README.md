@@ -481,7 +481,11 @@ in **[docs/ladder-sizes.md](docs/ladder-sizes.md)**.
 (`recorded_at`, `age_seconds`, `age_human`) — the thing actually at risk on a
 `-history-first` deployment, whose served history is only as fresh as its last
 deploy. `data` is `null` when no history exists to describe: unknown, never a
-fabricated age.
+fabricated age. Alongside it, `freshness` reports the cross-corridor view in
+one place: `chain_head` (the ledger Horizon is on right now),
+`newest_record_at` and `record_count` over the whole run store. Each is
+`null` when it cannot be known — Horizon unreachable, store unreadable or
+empty — never a zero that would read as "very old" or "ledger 0".
 
 Bodies are compact by default; append `&pretty=1` (or `?pretty` on an
 endpoint with no other parameters) to any of the JSON endpoints to get an

@@ -288,16 +288,54 @@ A healthy service returns status `200` with:
 
 **cURL:**
 ```bash
-curl -s https://wayfare-cdb9.onrender.com/healthz 
+curl -s https://wayfare-cdb9.onrender.com/healthz
 ```
 
 **Example Response (200 OK):**
 
 ```json
-{ "status": "ok" }
+{
+  "status": "ok",
+  "data": {
+    "USDC-NGNC": {
+      "recorded_at": "2026-09-26T08:00:00Z",
+      "age_seconds": 45,
+      "age_human": "45s"
+    }
+  },
+  "freshness": {
+    "chain_head": 55101724,
+    "newest_record_at": "2026-09-26T08:00:00Z",
+    "record_count": 431
+  }
+}
 ```
 
+`data` maps each corridor that has stored history to its newest run and the
+age of that run; a corridor with no stored run is omitted rather than
+reported as fresh, and the whole field is `null` when no history is
+configured.
+
 This endpoint checks that the HTTP service is responding. It does not perform a live corridor measurement or validate upstream availability.
+
+### Freshness fields
+
+`freshness` describes how current the recorded data is, so a consumer can tell
+"is old" apart from "is down":
+
+- `chain_head`: the Stellar core ledger sequence reported by Horizon's root
+  endpoint at request time.
+- `newest_record_at`: RFC 3339 timestamp of the most recent recorded corridor
+  measurement in the run store (null when the store holds no records).
+- `record_count`: number of records held by the run store.
+
+Unknown values are rendered as `null`, never as zero or a synthesised guess.
+If Horizon's root is unreachable, `chain_head` is `null` while store-derived
+fields are still reported; if the store cannot be read, its fields are `null`
+while `chain_head` is still reported. A `200` with nulls means the check could
+not be made, not that data is absent. The freshness block does not change the
+endpoint's health verdict: it remains `200` as long as the HTTP service is
+answering.
 
 ## Freshness and provenance
 
