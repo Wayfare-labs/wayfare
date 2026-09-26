@@ -6,6 +6,22 @@
 <title>Wayfare — corridor integrity monitor</title>
 <style>
   :root {
+    /* Typographic scale (#282): eight steps anchored on the 15px body —
+       11 / 12 / 13 / 14 / 15 / 16 / 19.2 / 21.6 px at the default root size.
+       Every font-size in this stylesheet references one of these tokens; no
+       rule declares its own size. Two sizes are deliberately off-scale and
+       named here: inline code is .85em so it scales with its parent, and the
+       SVG axis is 10px of viewBox user units that scale with the chart. */
+    --fs-3xs: .6875rem; /* 11px   — dense badges: finding/metric state chips */
+    --fs-2xs: .75rem;   /* 12px   — micro labels: ids, evidence, units, table heads */
+    --fs-xs:  .8125rem; /* 13px   — small notes: meta, footer, legend, info */
+    --fs-sm:  .875rem;  /* 14px   — secondary text: tables, help, case copy */
+    --fs-md:  .9375rem; /* 15px   — body: sub, summaries, recommendations */
+    --fs-lg:  1rem;     /* 16px   — emphasised: finding, badge glyphs */
+    --fs-xl:  1.2rem;   /* 19.2px — metric value */
+    --fs-2xl: 1.35rem;  /* 21.6px — page title */
+
+    color-scheme: light dark;
     --bg: #fbfbfa;
     --panel: #ffffff;
     --border: #e4e2dd;
@@ -22,8 +38,12 @@
     --grid: #ecebe7;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
+  /* System theme (#287): the OS preference applies unless an explicit light
+     choice is stored (data-theme="light"). The explicit dark block below
+     mirrors this one so a chosen dark scheme holds whatever the OS says;
+     keep the two token sets in sync. */
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #161815;
       --panel: #1e211d;
       --border: #33372f;
@@ -40,17 +60,38 @@
       --grid: #2a2e27;
     }
   }
+  /* Explicit dark, chosen in the theme selector: applies whatever the OS says. */
+  :root[data-theme="dark"] {
+    --bg: #161815;
+    --panel: #1e211d;
+    --border: #33372f;
+    --ink: #eceae4;
+    --muted: #9a978e;
+    --accent: #7fb8a4;
+    --bad: #e08b78;
+    --warn: #d9b06a;
+    --ok: #7fb8a4;
+    --ok-soft: #20372f;
+    --bad-soft: #422522;
+    --unknown: #b7b9b8;
+    --unknown-soft: #2a2d2d;
+    --grid: #2a2e27;
+    color-scheme: dark;
+  }
+  /* Explicit light: overrides an OS set to dark. The tokens are the :root
+     defaults, so only the colour scheme needs pinning. */
+  :root[data-theme="light"] { color-scheme: light; }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     background: var(--bg);
     color: var(--ink);
-    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font: var(--fs-md)/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   .wrap { max-width: 900px; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
   header { border-bottom: 1px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.75rem; }
-  h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.01em; }
-  .sub { color: var(--muted); font-size: .92rem; margin: 0; }
+  h1 { font-size: var(--fs-2xl); margin: 0 0 .3rem; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: var(--fs-md); margin: 0; }
   .controls { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; margin-bottom: 1.5rem; }
   select, button {
     font: inherit; padding: .5rem .8rem; border-radius: 6px;
@@ -66,11 +107,11 @@
   .integrity-card { display: grid; grid-template-columns: auto 1fr; gap: .75rem 1rem; align-items: start; margin-bottom: .35rem; }
   .badge {
     display: inline-flex; align-items: center; gap: .45rem; width: fit-content;
-    font: 700 .78rem/1 var(--mono); letter-spacing: .06em;
+    font: 700 var(--fs-2xs)/1 var(--mono); letter-spacing: .06em;
     padding: .55rem .7rem; border-radius: 7px; border: 2px solid currentColor;
     text-transform: uppercase; white-space: nowrap;
   }
-  .badge::before { font-size: 1rem; line-height: 1; }
+  .badge::before { font-size: var(--fs-lg); line-height: 1; }
   .b-direct { color: var(--ok); background: var(--ok-soft); }
   .b-direct::before { content: "◆"; }
   .b-derivative { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--panel)); }
@@ -79,23 +120,23 @@
   .b-nomarket::before { content: "∅"; }
   .integrity-copy { min-width: 0; }
   .integrity-title { font-weight: 700; margin: 0; }
-  .integrity-help { color: var(--muted); font-size: .88rem; margin: .15rem 0 0; }
-  .integrity-dependency { font-family: var(--mono); font-size: .8rem; margin: .35rem 0 0; color: var(--warn); }
+  .integrity-help { color: var(--muted); font-size: var(--fs-sm); margin: .15rem 0 0; }
+  .integrity-dependency { font-family: var(--mono); font-size: var(--fs-xs); margin: .35rem 0 0; color: var(--warn); }
   .integrity-card .badge[title] { cursor: help; }
   @media (max-width: 520px) { .integrity-card { grid-template-columns: 1fr; gap: .45rem; } }
-  .finding { font-size: 1.02rem; margin: .85rem 0 0; }
+  .finding { font-size: var(--fs-lg); margin: .85rem 0 0; }
   .rec-none {
     margin-top: .9rem; padding: .7rem .85rem; border-radius: 6px;
-    border: 1px solid var(--bad); color: var(--bad); font-size: .9rem;
+    border: 1px solid var(--bad); color: var(--bad); font-size: var(--fs-md);
   }
   .rec-some {
     margin-top: .9rem; padding: .7rem .85rem; border-radius: 6px;
-    border: 1px solid var(--ok); color: var(--ok); font-size: .9rem;
+    border: 1px solid var(--ok); color: var(--ok); font-size: var(--fs-md);
   }
-  table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
   th, td { text-align: right; padding: .42rem .5rem; border-bottom: 1px solid var(--grid); }
   th:first-child, td:first-child, th:last-child, td:last-child { text-align: left; }
-  th { color: var(--muted); font-weight: 550; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+  th { color: var(--muted); font-weight: 550; font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: .04em; }
   td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
   .v-unusable { color: var(--bad); font-weight: 600; }
   .v-poor { color: var(--warn); }
@@ -104,10 +145,10 @@
   .finding-row { display: flex; gap: .7rem; align-items: baseline; padding: .5rem 0;
                  border-bottom: 1px solid var(--grid); }
   .finding-row:last-child { border-bottom: 0; }
-  .f-state { font: 600 .68rem/1.5 var(--mono); letter-spacing: .05em; padding: .1rem .45rem;
+  .f-state { font: 600 var(--fs-3xs)/1.5 var(--mono); letter-spacing: .05em; padding: .1rem .45rem;
              display: inline-flex; align-items: center; gap: .28rem; min-width: 5.3rem;
              border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }
-  .f-state::before { font: 700 .8rem/1 var(--mono); }
+  .f-state::before { font: 700 var(--fs-xs)/1 var(--mono); }
   .f-pass { color: var(--ok); background: var(--ok-soft); }
   .f-pass::before { content: "✓"; }
   .f-fail { color: var(--bad); background: var(--bad-soft); }
@@ -118,43 +159,43 @@
   .finding-row:has(.f-fail) { background: var(--bad-soft); border-left: 3px solid var(--bad); padding-left: .65rem; }
   .finding-row:has(.f-unknown) { background: var(--unknown-soft); border-left: 3px solid var(--unknown); padding-left: .65rem; }
   .f-body { flex: 1; min-width: 0; }
-  .f-id { font-family: var(--mono); font-size: .76rem; color: var(--muted); }
-  .f-summary { font-size: .9rem; }
-  .f-limit { font-size: .8rem; color: var(--muted); margin-top: .2rem; }
-  .f-evidence { font-family: var(--mono); font-size: .74rem; color: var(--muted);
+  .f-id { font-family: var(--mono); font-size: var(--fs-2xs); color: var(--muted); }
+  .f-summary { font-size: var(--fs-md); }
+  .f-limit { font-size: var(--fs-xs); color: var(--muted); margin-top: .2rem; }
+  .f-evidence { font-family: var(--mono); font-size: var(--fs-2xs); color: var(--muted);
                 margin-top: .3rem; word-break: break-all; }
   .m-value {
-    font: 700 1.2rem/1.15 var(--mono); font-variant-numeric: tabular-nums;
+    font: 700 var(--fs-xl)/1.15 var(--mono); font-variant-numeric: tabular-nums;
     margin-top: .3rem; color: var(--ink);
   }
   .m-unit {
-    color: var(--muted); font: 600 .72rem/1 var(--mono);
+    color: var(--muted); font: 600 var(--fs-2xs)/1 var(--mono);
     text-transform: uppercase; letter-spacing: .05em; margin-left: .45rem;
   }
   .m-state {
-    display: inline-block; font: 600 .68rem/1.5 var(--mono); letter-spacing: .05em;
+    display: inline-block; font: 600 var(--fs-3xs)/1.5 var(--mono); letter-spacing: .05em;
     padding: .1rem .45rem; border-radius: 4px; border: 1px solid currentColor;
     color: var(--unknown); background: var(--unknown-soft); white-space: nowrap;
     margin-right: .5rem;
   }
   .m-unknown { color: var(--unknown); }
-  .meta { color: var(--muted); font-size: .82rem; margin-top: .9rem; }
+  .meta { color: var(--muted); font-size: var(--fs-xs); margin-top: .9rem; }
   .err { color: var(--bad); }
   .provenance { margin-bottom: .9rem; padding: .7rem .85rem; border-radius: 6px;
                 border: 1px solid var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
   .provenance-live { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
-  h2 { font-size: .95rem; margin: 0 0 .8rem; letter-spacing: .01em; }
+  h2 { font-size: var(--fs-md); margin: 0 0 .8rem; letter-spacing: .01em; }
   .legend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .55rem; margin-top: .9rem; }
   .legend-item { display: flex; align-items: center; gap: .45rem; min-width: 0; }
-  .legend-item span:last-child { font-size: .8rem; }
-  .case { font-size: .88rem; color: var(--muted); }
+  .legend-item span:last-child { font-size: var(--fs-xs); }
+  .case { font-size: var(--fs-sm); color: var(--muted); }
   .integrity-cell { white-space: nowrap; }
-  .integrity-cell .badge { font-size: .65rem; padding: .3rem .45rem; border-width: 1px; }
-  .integrity-cell .badge::before { font-size: .8rem; }
-  .integrity-cell .integrity-via { font-family: var(--mono); font-size: .72rem; color: var(--warn); margin-left: .35rem; }
+  .integrity-cell .badge { font-size: var(--fs-3xs); padding: .3rem .45rem; border-width: 1px; }
+  .integrity-cell .badge::before { font-size: var(--fs-xs); }
+  .integrity-cell .integrity-via { font-family: var(--mono); font-size: var(--fs-2xs); color: var(--warn); margin-left: .35rem; }
   .case strong { color: var(--ink); font-weight: 600; }
-  .cs-info { font-size: .8rem; color: var(--muted); margin-left: .3rem; }
-  .cs-info .cs-state { font: 600 .72rem/1 var(--mono); letter-spacing: .04em;
+  .cs-info { font-size: var(--fs-xs); color: var(--muted); margin-left: .3rem; }
+  .cs-info .cs-state { font: 600 var(--fs-2xs)/1 var(--mono); letter-spacing: .04em;
     padding: .15rem .4rem; border-radius: 3px; border: 1px solid currentColor;
     vertical-align: middle; }
   .cs-info .cs-state.cs-direct { color: var(--muted); }
@@ -163,10 +204,10 @@
   svg { width: 100%; height: auto; display: block; }
   .axis { fill: var(--muted); font: 10px var(--mono); }
   .trend-legend { display: flex; gap: 1.1rem; margin-top: .4rem;
-                  font: 550 .72rem/1 var(--mono); letter-spacing: .05em; color: var(--muted); }
+                  font: 550 var(--fs-2xs)/1 var(--mono); letter-spacing: .05em; color: var(--muted); }
   .trend-legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
                       margin-right: .35rem; vertical-align: -1px; }
-  footer { color: var(--muted); font-size: .82rem; border-top: 1px solid var(--border); padding-top: 1.1rem; margin-top: 2rem; }
+  footer { color: var(--muted); font-size: var(--fs-xs); border-top: 1px solid var(--border); padding-top: 1.1rem; margin-top: 2rem; }
   code { font-family: var(--mono); font-size: .85em; }
 
   /* Loading / cold-start state ------------------------------------------- */
@@ -190,13 +231,59 @@
     40%            { opacity: 1;   transform: scale(1); }
   }
   .loading-what {
-    font-size: .97rem; color: var(--ink);
+    font-size: var(--fs-lg); color: var(--ink);
   }
   .loading-wake {
-    font-size: .85rem; color: var(--muted);
+    font-size: var(--fs-sm); color: var(--muted);
     border-left: 3px solid var(--border); padding-left: .7rem;
   }
+
+  /* Evidence drawer (#294): the reference and path provenance behind the
+     headline, disclosed on demand. Native <details>/<summary> keeps it
+     keyboard reachable without a custom widget. */
+  .evidence { margin-top: .9rem; border-top: 1px solid var(--grid); padding-top: .6rem; }
+  .evidence > summary { cursor: pointer; font-size: var(--fs-sm); font-weight: 600; color: var(--muted); }
+  .evidence > summary:hover { color: var(--ink); }
+  .evidence-list { display: grid; gap: .3rem; margin: .6rem 0 0; }
+  .evidence-row { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); gap: .1rem .75rem; }
+  .evidence-row dt { color: var(--muted); font-size: var(--fs-xs); }
+  .evidence-row dd { margin: 0; font-family: var(--mono); font-size: var(--fs-2xs); word-break: break-word; }
+  @media (max-width: 520px) { .evidence-row { grid-template-columns: 1fr; } }
+
+  /* Per-check evidence (#294): collapsed behind a disclosure so the finding
+     summary leads, with the raw source-and-timestamp lines one step away. */
+  .f-ev { margin-top: .35rem; }
+  .f-ev > summary { cursor: pointer; font-size: var(--fs-2xs); color: var(--muted); }
+  .f-ev > summary:hover { color: var(--ink); }
+  .f-ev[open] .f-evidence:first-of-type { margin-top: .25rem; }
+
+  /* Benchmark versus achieved (#295): each track spans the reference mid;
+     the solid fill is 100% minus the engine's loss figure for that size, and
+     the hatched remainder is the gap. Neutral greys on purpose — colour here
+     must not carry a verdict the engine did not issue. */
+  .bench-row { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: .3rem .7rem;
+                padding: .45rem 0; border-bottom: 1px solid var(--grid); }
+  .bench-row:last-child { border-bottom: 0; }
+  .bench-size { grid-row: span 2; align-self: center; text-align: right;
+                font: 600 var(--fs-2xs)/1 var(--mono); font-variant-numeric: tabular-nums;
+                color: var(--muted); }
+  .bench-track { display: block; height: .85rem; border: 1px solid var(--border); border-radius: 4px;
+                 background-color: var(--panel); overflow: hidden;
+                 background-image: repeating-linear-gradient(-45deg, var(--grid) 0 3px, transparent 3px 7px); }
+  .bench-fill { display: block; height: 100%; background: var(--muted); }
+  .bench-nums { grid-column: 2; font: 400 var(--fs-xs)/1.4 var(--mono);
+                font-variant-numeric: tabular-nums; color: var(--muted); word-break: break-word; }
+  .bench-nums strong { color: var(--ink); font-weight: 600; }
 </style>
+<script>
+  // Issue #287: apply a stored explicit theme before first paint so a reload
+  // never flashes the wrong scheme. "system" (or nothing stored) leaves the
+  // data-theme attribute off and the prefers-color-scheme query governs.
+  try {
+    var t = localStorage.getItem('wayfare-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+</script>
 </head>
 <body>
 <div class="wrap">
@@ -215,6 +302,12 @@
     <span id="cs-detail" class="cs-info"></span>
     <button id="run">Measure live</button>
     <button id="trend">Show trend</button>
+    <label for="theme">Theme</label>
+    <select id="theme" aria-label="Colour theme">
+      <option value="system">System</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
     <span id="status" class="sub"></span>
   </div>
 
@@ -418,10 +511,12 @@ function render(d) {
     <p class="meta">Reference ${esc(d.reference_pair)} mid
       <strong>${esc(d.reference_mid)}</strong> via ${esc(d.reference_source)} ·
       measured ${esc(d.measured_at)}</p>
+    ${evidenceDrawer(d)}
   </div>`);
 
   const priced = d.rungs.filter(r => r.priced);
   if (d.scored && priced.length) {
+    parts.push(benchmarkPanel(d, priced));
     parts.push(`<div class="panel"><h2>Loss against mid, by size</h2>${curve(priced)}</div>`);
   }
 
@@ -465,6 +560,78 @@ function recommendationBlock(d) {
   return `<div class="rec-some">Recommended at ${esc(d.recommended_size)}
     ${esc(d.send_asset.code)}: ${esc(q.description)} &mdash; ${formatPct(q.loss_pct)}%
     below mid, graded ${esc(q.verdict)}.</div>`;
+}
+
+// The evidence behind the headline (#294): where the benchmark came from,
+// when it was fetched, and which paths were actually tested. It sits behind a
+// native <details> disclosure — keyboard reachable, and progressive: the
+// headline states the conclusion, the drawer carries the provenance. Fields
+// the response does not carry (an older record may have no fetched-at) are
+// omitted rather than guessed.
+function evidenceDrawer(d) {
+  const rows = [];
+  const add = (label, value) => { if (value) rows.push([label, value]); };
+  add('Reference mid', `${d.reference_mid} ${d.reference_pair} via ${d.reference_source}`);
+  if (d.reference_secondary_mid) {
+    add('Second opinion', `${d.reference_secondary_mid} via ${d.reference_secondary_source}` +
+      (d.reference_divergence_pct ? ` — ${d.reference_divergence_pct}% apart` : ''));
+  }
+  if (d.reference_agreement) add('Agreement', d.reference_agreement);
+  add('Rate as of', d.reference_as_of);
+  add('Fetched at', d.reference_fetched_at);
+
+  const paths = [...new Set((d.rungs || []).filter(r => r.priced)
+    .map(r => r.quote.description).filter(Boolean))];
+  if (paths.length) add('Paths tested', paths.join(' · '));
+
+  if (!rows.length) return '';
+  return `<details class="evidence">
+    <summary>Evidence &amp; provenance</summary>
+    <dl class="evidence-list">
+      ${rows.map(([k, v]) =>
+        `<div class="evidence-row"><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}
+    </dl>
+  </details>`;
+}
+
+// Benchmark versus achieved (#295). The engine already publishes the three
+// numbers — the reference mid, the rate each size executes at, and the loss
+// between them — but they arrive in different panels and the reader has to
+// subtract them by hand. Each row draws the mid as the full track and the
+// achieved rate as the filled share of it (100% minus loss_pct, which the
+// engine computes as (mid − rate) / mid, floored at zero), with the gap
+// written out in words and numbers. Nothing is derived from anything the
+// response did not carry, and the panel is absent whenever the engine
+// refused to score — a benchmark that could not be trusted must not be drawn
+// as though it had been.
+function benchmarkPanel(d, rungs) {
+  const mid = esc(d.reference_mid);
+  const rows = rungs.map(r => {
+    const raw = parseFloat(r.quote.loss_pct);
+    const known = !isNaN(raw);
+    const loss = known ? Math.min(100, Math.max(0, raw)) : 0;
+    // A loss figure that will not parse shows no fill at all: half a bar is
+    // a worse lie than an empty one.
+    const fill = known
+      ? `<span class="bench-fill" style="width:${(100 - loss).toFixed(1)}%"></span>`
+      : '';
+    return `<div class="bench-row">
+      <span class="bench-size">${esc(r.send_amount)}</span>
+      <span class="bench-track" aria-hidden="true">${fill}</span>
+      <span class="bench-nums">${esc(r.quote.effective_rate)} of ${mid} · <strong>${formatPct(r.quote.loss_pct)}%</strong> gap</span>
+    </div>`;
+  }).join('');
+
+  return `<div class="panel">
+    <h2>Benchmark versus achieved</h2>
+    <p class="case">Each track spans the reference mid <strong>${mid}</strong>
+      ${esc(d.reference_pair)} via ${esc(d.reference_source)} — what
+      ${esc(d.send_asset.code)} should fetch at par. The solid part is the rate
+      that size actually executes at; the hatched remainder is the gap. Only
+      sizes the engine priced appear here; unpriced sizes and their reasons are
+      in Measurements.</p>
+    ${rows}
+  </div>`;
 }
 
 // A log-x line chart. Loss is clamped to 0–100 so the shape of the curve, not
@@ -577,8 +744,12 @@ function findings(f) {
 
     const text = c.determined ? c.summary : (c.reason || c.summary);
 
-    const evidence = (c.evidence || []).map(e =>
-      `<div class="f-evidence">${esc(e.source)} → ${esc(e.observed)}</div>`).join('');
+    // Evidence is progressively disclosed (#294): the finding summary and
+    // state lead, and each raw line carries its source and observation time.
+    const evidence = (c.evidence || []).length
+      ? `<details class="f-ev"><summary>Evidence</summary>${(c.evidence || []).map(e =>
+          `<div class="f-evidence">${esc(e.source)} → ${esc(e.observed)} · ${esc(e.observed_at)}</div>`).join('')}</details>`
+      : '';
 
     return `<div class="finding-row">
       <span class="f-state ${state[1]}">${state[0]}</span>
@@ -658,7 +829,7 @@ function metrics(ms) {
 }
 
 function legend() {
-  return `<div class="panel" style="font-size:.85rem; color:var(--muted)">
+  return `<div class="panel" style="font-size:var(--fs-sm); color:var(--muted)">
     <h2>Verdict thresholds</h2>
     <p>Loss is how far the achieved rate falls below the reference mid.</p>
     <p>
@@ -999,6 +1170,40 @@ function runsTable(runs) {
 
 $('run').addEventListener('click', measure);
 $('trend').addEventListener('click', loadTrend);
+
+// --- Theme (#287) ------------------------------------------------------------
+// Three states: system (follows prefers-color-scheme — the media query in the
+// stylesheet does the work), light and dark (explicit, applied via data-theme).
+// The choice persists in localStorage and is applied before first paint by the
+// inline script in <head>, so a reload lands on the chosen scheme with no
+// flash. The control is a native <select>, so it is keyboard reachable and
+// its state is text, not colour alone.
+
+function storedTheme() {
+  try {
+    const v = localStorage.getItem('wayfare-theme');
+    return v === 'light' || v === 'dark' ? v : 'system';
+  } catch (e) {
+    return 'system';
+  }
+}
+
+function applyTheme(v) {
+  if (v === 'light' || v === 'dark') {
+    document.documentElement.setAttribute('data-theme', v);
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  try {
+    localStorage.setItem('wayfare-theme', v === 'system' ? '' : v);
+  } catch (e) {
+    // Storage unavailable (private mode): the choice still applies now, it
+    // just does not persist.
+  }
+}
+
+$('theme').value = storedTheme();
+$('theme').addEventListener('change', (e) => applyTheme(e.target.value));
 
 async function loadCorridor(to) {
   try {
