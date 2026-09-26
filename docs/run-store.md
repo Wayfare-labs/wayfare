@@ -115,6 +115,51 @@ checks or no metrics ran.
 
 ---
 
+## Measurability uptime
+
+Backlog entry #124 ([issue #195](https://github.com/Wayfare-labs/wayfare/issues/195)):
+uptime of the measurement, not of the service — how many scheduled sweeps
+produced a priced ladder.
+
+**Measurable means the sweep produced a price.** A run is measurable when at
+least one of its rungs priced — not all of them; a ladder whose smaller sizes
+failed while larger ones answered is still a priced ladder. This is the
+measurement's own uptime: a `DIRECT` corridor that prices badly is measurable,
+and a `NO-MARKET` corridor is not — the sweep ran fine and Horizon answered,
+but the answer is that no path exists, so there is no price and no loss figure
+to analyse. A service that is up while Horizon is down would score 100% HTTP
+uptime and 0% measurement uptime; the distinction is the point.
+
+`runstore.Measurable` reports it for one record;
+`runstore.MeasurabilityOf` summarises the whole chain:
+
+- **`total_runs`** — the recorded runs the figure covers: the denominator,
+  always present, so a reader can see what the percentage stands on. It
+  counts recorded runs only: a sweep that died before writing a record left
+  nothing in the chain, and inventing a run for it would be synthesis (the
+  not-measured-versus-could-not-be distinction is backlog entry #118).
+- **`measurable_runs`** / **`not_measurable_runs`** — the counts, carried
+  separately so a reader never has to subtract.
+- **`uptime_pct`** — `measurable_runs / total_runs × 100`, computed in
+  `decimal.Decimal` like every other percentage in this repository. A
+  measured `"0"` (every sweep recorded, none priced) is a finding about the
+  corridor. It is empty only when `total_runs` is zero — no recorded history,
+  so uptime is **unknown, never zero**: a corridor that was not measured is
+  not a corridor that was never measurable.
+- **`first_run_at` / `last_run_at`** — the window the figure covers, so
+  "0% over three days" is distinguishable from "0% over an hour".
+
+`runstore.MeasurabilityHistory` returns the per-run classification, oldest
+first — whether each sweep priced, how many of its rungs did, and the
+integrity state it recorded, so a reader can tell a `NO-MARKET` run (the
+corridor was measured and has no market) from an `UNKNOWN` one (an upstream
+outage; nothing was learned).
+
+Like every reader here, the classification is derived on read and appends
+nothing: not a single hash in the chain depends on it.
+
+---
+
 ## The preimage rule
 
 ```

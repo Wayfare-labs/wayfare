@@ -332,6 +332,13 @@ a legacy record encodes byte-for-byte as it did when it was written.
 Version 3 added `reference.fetched_at`, which lets a stored reading say how
 old its benchmark was when the reading was taken.
 
+The chain also answers longitudinal questions derived on read, appending
+nothing: `runstore.DetectTransitions` reconstructs integrity-state
+transitions, and `runstore.MeasurabilityOf` reports how often a corridor was
+measurable at all — how many scheduled sweeps produced a priced ladder. A
+corridor that prices nothing measurable reports that plainly; an unmeasured
+one reports unknown, never zero.
+
 Full spec: **[docs/run-store.md](docs/run-store.md)**
 
 ---
