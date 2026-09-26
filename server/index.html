@@ -59,6 +59,30 @@
   button { cursor: pointer; font-weight: 550; }
   button:hover:not(:disabled) { border-color: var(--accent); }
   button:disabled { opacity: .55; cursor: default; }
+
+  /* Touch targets (#306): every interactive control gets a 44×44px hit area
+     via min-height plus padding, whichever way the text wraps at small
+     widths. Selects keep their native arrow affordance; buttons get visible
+     :active feedback so presses register on more than colour. Focus
+     outlines are never suppressed, so keyboard reachability is unchanged. */
+  select, button {
+    min-height: 44px;
+    min-width: 44px;
+    padding: .55rem 1.1rem;
+    touch-action: manipulation;
+  }
+  select { padding-right: 2rem; }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:focus-visible,
+  select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* The corridor label points at the select it names; give it the same
+     comfortable height so the whole control row stays a steady target. */
+  .controls label {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
   .panel {
     background: var(--panel); border: 1px solid var(--border);
     border-radius: 10px; padding: 1.15rem 1.25rem; margin-bottom: 1.25rem;
