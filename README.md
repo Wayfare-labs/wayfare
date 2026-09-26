@@ -380,6 +380,14 @@ a legacy record encodes byte-for-byte as it did when it was written.
 Version 3 added `reference.fetched_at`, which lets a stored reading say how
 old its benchmark was when the reading was taken.
 
+Because every record carries both mids, consecutive runs can be read apart:
+`runstore.BenchmarkMoved` reports the benchmark's own move (mid₂−mid₁ over
+mid₁) and the corridor's own move (rate₂−rate₁ over rate₁, at the smallest
+priced size, which no benchmark can influence). A headline that worsened
+while the corridor held still was the yardstick moving, not the corridor.
+Any figure that could not be measured is absent — an explicit unknown, never
+zero.
+
 Full spec: **[docs/run-store.md](docs/run-store.md)**
 
 What verification looks like — including broken-chain output: **[docs/verify-store.md](docs/verify-store.md)**

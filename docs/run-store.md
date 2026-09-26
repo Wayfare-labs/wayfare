@@ -88,7 +88,7 @@ Records are derived from `route.CorridorJSON` — the same shape the HTTP API
 and `ladder -json` emit — so the stored record and the served record cannot
 drift into two schemas that disagree about the same measurement.
 
-Four pieces are worth calling out:
+Five pieces are worth calling out:
 
 **`recommended` is `null`, not omitted,** when no size produced an acceptable
 route. That is the normal shape of a broken corridor, and storing it as an
@@ -112,6 +112,34 @@ strings. In Version 2 a record may also omit either block entirely, meaning no
 checks or no metrics ran.
 
 **All money is a decimal string.** Never a JSON number, never a `float64`.
+
+**Both mids are what separate benchmark movement from corridor movement.** A
+stored history is the only place that separation can happen after the fact,
+and it is why a record deliberately carries the benchmark's mid even when both
+providers answered identically. `runstore.BenchmarkMoved` reads two
+consecutive records and reports, all in `decimal.Decimal` arithmetic:
+
+- **`benchmark_pct`** — the benchmark's own move, (mid₂ − mid₁) / mid₁ × 100.
+- **`corridor_pct`** — the corridor's own move, (rate₂ − rate₁) / rate₁ × 100,
+  where `rate` is the effective rate at the smallest priced rung. It is
+  measured against the corridor's own earlier rate, so a benchmark move cannot
+  appear in it.
+- **`loss_pct_change`** — the change in the headline floor loss, loss₂ − loss₁.
+
+Read side by side, they attribute the headline: a `loss_pct_change` that
+worsened while `corridor_pct` held at zero was the benchmark moving, not the
+corridor. `BenchmarkMovement` does the same for every consecutive pair in a
+corridor's history, oldest pair first.
+
+Nothing here is synthesised to fill a gap. An unpriced run carries no rate and
+no loss, a run whose reference was never scorable carries no benchmark, and the
+corresponding fields stay empty — the explicit unknown, never zero, never a
+default. A measured "0" (the corridor genuinely held still between two priced
+runs) is different from an empty field (there was no price to compare), and the
+wire keeps the two apart.
+
+The comparison is derived on read and appends nothing: not a single hash in the
+chain depends on it.
 
 ---
 
