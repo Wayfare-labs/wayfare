@@ -26,6 +26,20 @@
 // are the anchor's own charge for a conversion, obtainable via SEP-38 when
 // the anchor publishes an ANCHOR_QUOTE_SERVER. Expected failure cost stays
 // explicitly unknown until failure history exists.
+// CostDecomposition breaks the effective transfer cost into separately-reported
+// components: FX loss, network fees, anchor fee, slippage, and expected
+// failure cost.
+//
+// Currently, the verdict reports a single loss percentage against fair value.
+// That number is useful but opaque. Showing the decomposition turns a single
+// verdict into actionable information.
+//
+// Each component is computed and reported independently. Network fees and
+// anchor fees are reported separately because they have different sources:
+// network fees are Stellar base-fee charges per operation, while anchor fees
+// are the anchor's own charge for a conversion, obtainable via SEP-38 when
+// the anchor publishes an ANCHOR_QUOTE_SERVER. Expected failure cost stays
+// explicitly unknown until failure history exists.
 package route
 
 import (
