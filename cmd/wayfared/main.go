@@ -6,6 +6,7 @@
 //	wayfared -once                    # one sweep, record, exit (CI schedules this)
 //	wayfared -verify-store            # walk the hash chains and exit
 //	wayfared -rotate-store            # trim chains over the window ceiling and exit
+//	wayfared -check-fresh             # exit non-zero if any record is stale
 //
 // The two halves are independent on purpose. A monitor that only measures
 // while somebody has a page open would leave holes in its history exactly when
@@ -51,7 +52,11 @@ func main() {
 		rotate    = flag.Bool("rotate-store", false, "trim every chain over the window ceiling and exit")
 		rotateRec = flag.Int("rotate-records", runstore.MaxWindow,
 			"per-corridor record ceiling for -rotate-store")
-		once      = flag.Bool("once", false, "measure every corridor once, record, and exit")
+		once       = flag.Bool("once", false, "measure every corridor once, record, and exit")
+		checkFresh = flag.Bool("check-fresh", false,
+			"report corridors whose newest record is older than -max-age (or missing) and exit; 1 stale, 2 check unavailable")
+		maxAge = flag.Duration("max-age", 2*monitor.DefaultInterval,
+			"staleness ceiling for -check-fresh; default is two missed sweeps")
 		histFirst = flag.Bool("history-first", false,
 			"serve the stored run instead of measuring, unless a request asks for ?live=1")
 		logLevel = flag.String("log-level", envOr("WAYFARE_LOG_LEVEL", "info"), "debug, info, warn or error")
@@ -92,6 +97,20 @@ func main() {
 
 	if *rotate {
 		os.Exit(rotateStore(store, *rotateRec, logger))
+	}
+
+	// The alerting hook for scheduled measurement (issue #310): a CI or cron
+	// wrapper runs -once and then -check-fresh, so a sweep that silently
+	// stopped recording — or recorded but dropped a corridor — exits
+	// non-zero and makes the job fail loudly. Needs no network: it only
+	// reads the store, so it also catches the case where the schedule never
+	// ran at all, which no in-process failure could report.
+	if *checkFresh {
+		os.Exit(checkFreshness(store, monitor.DefaultCorridors(), *maxAge, time.Now().UTC(), logger))
+	}
+
+	if *checkFresh {
+		os.Exit(checkFreshness(store, monitor.DefaultCorridors(), *maxAge, time.Now().UTC(), logger))
 	}
 
 	if !*once && !*serve && *schedule == 0 {
