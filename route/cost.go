@@ -15,6 +15,7 @@
 package route
 
 import (
+	"errors"
 	"github.com/Wayfare-labs/wayfare/checks"
 )
 
@@ -132,4 +133,18 @@ func SweepCostClass(sizeCount int) checks.Cost {
 		return checks.CostOneRequest
 	}
 	return checks.CostExpensive
+}
+
+var ErrComponentSumMismatch = errors.New("component sum does not match total loss within tolerance")
+
+func ReconcileComponents(total decimal.Decimal, comps map[string]decimal.Decimal, undetermined decimal.Decimal, tolerance decimal.Decimal) error {
+	sum := undetermined
+	for _, val := range comps {
+		sum = sum.Add(val)
+	}
+	diff := sum.Sub(total).Abs()
+	if diff.GreaterThan(tolerance) {
+		return ErrComponentSumMismatch
+	}
+	return nil
 }
