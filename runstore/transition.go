@@ -114,25 +114,23 @@ func DetectTransitions(ctx context.Context, store Store, corridor string) ([]*In
 		return nil, fmt.Errorf("runstore: fetching history for %s: %w", corridor, err)
 	}
 
-	// Need at least 2 records to compare.
+	return TransitionsFromRecords(records), nil
+}
+
+// TransitionsFromRecords compares consecutive records in chronological order
+// and returns the structural transitions within that window.
+func TransitionsFromRecords(records []*Record) []*IntegrityTransition {
 	if len(records) < 2 {
-		return nil, nil
+		return nil
 	}
 
-	// All() returns records in chronological order (oldest first).
 	var transitions []*IntegrityTransition
-
 	for i := 1; i < len(records); i++ {
-		prev := records[i-1]
-		curr := records[i]
-
-		transition := compareRuns(prev, curr)
-		if transition != nil {
+		if transition := compareRuns(records[i-1], records[i]); transition != nil {
 			transitions = append(transitions, transition)
 		}
 	}
-
-	return transitions, nil
+	return transitions
 }
 
 // DetectLatestTransition compares only the two most recent runs for a corridor.

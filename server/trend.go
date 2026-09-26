@@ -47,6 +47,11 @@ type TrendJSON struct {
 	// it without a nil check when the history is empty.
 	Runs []TrendRunJSON `json:"runs"`
 
+	// IntegrityTransitions is the ordered series of determined structural
+	// changes between consecutive runs in Runs. Transitions involving UNKNOWN
+	// are omitted by runstore's integrity-transition contract.
+	IntegrityTransitions []IntegrityTransitionJSON `json:"integrity_transitions"`
+
 	// DivergenceStats summarises how far the corridor's two reference
 	// providers have disagreed across the runs above — a fact about the
 	// benchmark, not the corridor. Always present, never omitted: a benchmark
@@ -54,6 +59,17 @@ type TrendJSON struct {
 	// explicitly rather than left for a client to infer from an absent key.
 	// Never feeds back into any run's verdict or integrity state above.
 	DivergenceStats DivergenceStatsJSON `json:"divergence_stats"`
+}
+
+// IntegrityTransitionJSON is one structural change in a trend window.
+type IntegrityTransitionJSON struct {
+	PreviousIntegrity string   `json:"previous_integrity"`
+	CurrentIntegrity  string   `json:"current_integrity"`
+	PreviousRunAt     string   `json:"previous_run_at"`
+	CurrentRunAt      string   `json:"current_run_at"`
+	PreviousDependsOn []string `json:"previous_depends_on"`
+	CurrentDependsOn  []string `json:"current_depends_on"`
+	TransitionType    string   `json:"transition_type"`
 }
 
 // DivergenceStatsJSON is a corridor benchmark's own longitudinal divergence:
@@ -170,17 +186,33 @@ type TrendRungJSON struct {
 // stored (oldest first) order.
 func toTrendJSON(recs []*runstore.Record, key, pair string, send, recv asset.Asset) TrendJSON {
 	out := TrendJSON{
-		Corridor:      key,
-		SendAsset:     route.ToAssetJSON(send),
-		ReceiveAsset:  route.ToAssetJSON(recv),
-		ReferencePair: pair,
-		Count:         len(recs),
-		Runs:          make([]TrendRunJSON, 0, len(recs)),
+		Corridor:             key,
+		SendAsset:            route.ToAssetJSON(send),
+		ReceiveAsset:         route.ToAssetJSON(recv),
+		ReferencePair:        pair,
+		Count:                len(recs),
+		Runs:                 make([]TrendRunJSON, 0, len(recs)),
+		IntegrityTransitions: make([]IntegrityTransitionJSON, 0),
 	}
 	for _, rec := range recs {
 		out.Runs = append(out.Runs, toTrendRunJSON(rec))
 	}
+	for _, transition := range runstore.TransitionsFromRecords(recs) {
+		out.IntegrityTransitions = append(out.IntegrityTransitions, toIntegrityTransitionJSON(transition))
+	}
 	return out
+}
+
+func toIntegrityTransitionJSON(transition *runstore.IntegrityTransition) IntegrityTransitionJSON {
+	return IntegrityTransitionJSON{
+		PreviousIntegrity: transition.PreviousIntegrity,
+		CurrentIntegrity:  transition.CurrentIntegrity,
+		PreviousRunAt:     transition.PreviousRunAt.UTC().Format(time.RFC3339),
+		CurrentRunAt:      transition.CurrentRunAt.UTC().Format(time.RFC3339),
+		PreviousDependsOn: append([]string{}, transition.PreviousDependsOn...),
+		CurrentDependsOn:  append([]string{}, transition.CurrentDependsOn...),
+		TransitionType:    transition.TransitionType.String(),
+	}
 }
 
 func toTrendRunJSON(rec *runstore.Record) TrendRunJSON {

@@ -773,7 +773,7 @@ function renderTrend() {
     ${integrityElement(latest.integrity, latest.depends_on || [])}
     <span class="case">&nbsp; latest of ${runs.length} stored run(s) &middot;
     ${esc(fmtRunTime(runs[0].recorded_at))} &rarr; ${esc(fmtRunTime(latest.recorded_at))} UTC</span>
-    <p class="meta">${referenceSummary(runs)}${integritySummary(runs)}</p>
+    <p class="meta">${referenceSummary(runs)}</p>
   </div>`);
 
   parts.push(`<div class="panel">
@@ -794,6 +794,13 @@ function renderTrend() {
     axis mark the integrity state at each run; the dashed line is the 20%
     unusable threshold, as on the live curve.</p>
   </div>`);
+
+  parts.push(`<div class="panel">
+    <h2>Integrity transitions</h2>
+    <div class="scroll">${integrityTransitionsTable(d.integrity_transitions || [])}</div>
+    <p class="meta">Transitions are compared between consecutive runs. Pairs
+    involving UNKNOWN are omitted because they do not establish a structural
+    change.</p></div>`);
 
   parts.push(`<div class="panel">
     <h2>Stored runs</h2>
@@ -824,14 +831,27 @@ function referenceSummary(runs) {
   return `Reference source changed &mdash; ${changes.join('; ')}. Loss on either side of a change is scored against a different benchmark and is not strictly comparable.`;
 }
 
-function integritySummary(runs) {
-  const changes = [];
-  for (let i = 1; i < runs.length; i++)
-    if (runs[i].integrity !== runs[i - 1].integrity)
-      changes.push(`${esc(runs[i - 1].integrity)} &rarr; ${esc(runs[i].integrity)} at ${esc(fmtRunTime(runs[i].recorded_at))}`);
-  if (changes.length === 0)
-    return ` Integrity state was ${esc(runs[0].integrity)} throughout.`;
-  return ` Integrity state changed &mdash; ${changes.join('; ')}.`;
+function integrityTransitionsTable(transitions) {
+  if (transitions.length === 0)
+    return `<p>No integrity transitions were established between consecutive runs.</p>`;
+
+  const rows = transitions.map(t => {
+    const type = t.transition_type === 'DEPENDS_ON_CHANGED'
+      ? 'Dependencies changed'
+      : 'Integrity state';
+    const change = t.transition_type === 'DEPENDS_ON_CHANGED'
+      ? `${(t.previous_depends_on || []).map(esc).join(', ') || 'none'} &rarr; ${(t.current_depends_on || []).map(esc).join(', ') || 'none'}`
+      : `${esc(t.previous_integrity)} &rarr; ${esc(t.current_integrity)}`;
+    return `<tr>
+      <td>${esc(fmtRunTime(t.previous_run_at))} &rarr; ${esc(fmtRunTime(t.current_run_at))}</td>
+      <td>${type}: ${change}</td>
+    </tr>`;
+  }).join('');
+
+  return `<table>
+    <thead><tr><th>Recorded (UTC)</th><th>Transition</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
 }
 
 function fmtRunTime(v) {

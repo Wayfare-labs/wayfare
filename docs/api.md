@@ -201,6 +201,15 @@ Query parameters:
 
 This endpoint reads stored history only; it never measures. It returns `200` with `count: 0` and `runs: []` for an empty history. Runs are returned oldest first. Each run carries its sequence, timestamp, integrity, dependencies, reference details, ladder summary, finding, and rung loss/verdict values.
 
+`integrity_transitions` is an always-present array of structural changes
+between consecutive runs in that returned window, in chronological order. A
+change in integrity state (for example, `DIRECT` to `DERIVATIVE` or
+`DERIVATIVE` to `NO-MARKET`) is included, as is a `depends_on` change while
+remaining `DERIVATIVE`. A pair involving `UNKNOWN` is omitted: it cannot
+establish that structure changed. An empty array means no such transition was
+established in the window. The series is descriptive and does not alter a
+verdict or integrity state.
+
 **cURL:**
 
 ```bash

@@ -16,6 +16,7 @@ import (
 type trendSeed struct {
 	at        time.Time
 	integrity string
+	dependsOn []string
 	mid       string
 	source    string
 	loss      string
@@ -39,6 +40,7 @@ func seedTrendStore(t *testing.T, seeds []trendSeed) runstore.Store {
 			RecordedAt: s.at,
 			Corridor:   "USDC-NGNC",
 			Integrity:  s.integrity,
+			DependsOn:  s.dependsOn,
 			Reference: runstore.Reference{
 				Mid:           s.mid,
 				Source:        s.source,
@@ -133,6 +135,55 @@ func TestTrendServesHistoryOldestFirst(t *testing.T) {
 	}
 }
 
+func TestTrendServesIntegrityTransitions(t *testing.T) {
+	base := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	seeds := []trendSeed{
+		{at: base, integrity: "DIRECT", mid: "1350", source: "currency-api", loss: "5", verdict: "FAIR"},
+		{at: base.Add(6 * time.Hour), integrity: "DERIVATIVE", dependsOn: []string{"NGNC"}, mid: "1350", source: "currency-api", loss: "5", verdict: "FAIR"},
+		{at: base.Add(12 * time.Hour), integrity: "DERIVATIVE", dependsOn: []string{"NGNC", "KESC"}, mid: "1350", source: "currency-api", loss: "5", verdict: "FAIR"},
+		{at: base.Add(18 * time.Hour), integrity: "NO-MARKET", mid: "1350", source: "currency-api", loss: "5", verdict: "FAIR"},
+		{at: base.Add(24 * time.Hour), integrity: "UNKNOWN", mid: "1350", source: "currency-api", loss: "5", verdict: "FAIR"},
+		{at: base.Add(30 * time.Hour), integrity: "DIRECT", mid: "1350", source: "currency-api", loss: "5", verdict: "FAIR"},
+	}
+	srv := trendServer(t, seedTrendStore(t, seeds))
+
+	status, body := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %v", status, body)
+	}
+	transitions, ok := body["integrity_transitions"].([]any)
+	if !ok {
+		t.Fatal("integrity_transitions must be an array")
+	}
+	if len(transitions) != 3 {
+		t.Fatalf("integrity_transitions = %d, want 3 (UNKNOWN-adjacent pairs excluded)", len(transitions))
+	}
+
+	wantTypes := []string{"INTEGRITY_STATE_CHANGE", "DEPENDS_ON_CHANGED", "INTEGRITY_STATE_CHANGE"}
+	wantPrevious := []string{"DIRECT", "DERIVATIVE", "DERIVATIVE"}
+	wantCurrent := []string{"DERIVATIVE", "DERIVATIVE", "NO-MARKET"}
+	for i, transitionAny := range transitions {
+		transition := transitionAny.(map[string]any)
+		if transition["transition_type"] != wantTypes[i] {
+			t.Errorf("transition %d type = %v, want %s", i, transition["transition_type"], wantTypes[i])
+		}
+		if transition["previous_integrity"] != wantPrevious[i] || transition["current_integrity"] != wantCurrent[i] {
+			t.Errorf("transition %d = %v -> %v, want %s -> %s", i,
+				transition["previous_integrity"], transition["current_integrity"], wantPrevious[i], wantCurrent[i])
+		}
+		if transition["current_run_at"] != seeds[i+1].at.Format(time.RFC3339) {
+			t.Errorf("transition %d current_run_at = %v, want %s", i, transition["current_run_at"], seeds[i+1].at.Format(time.RFC3339))
+		}
+	}
+	dependencyChange := transitions[1].(map[string]any)
+	if got := dependencyChange["previous_depends_on"].([]any); len(got) != 1 || got[0] != "NGNC" {
+		t.Errorf("previous_depends_on = %v, want [NGNC]", got)
+	}
+	if got := dependencyChange["current_depends_on"].([]any); len(got) != 2 || got[1] != "KESC" {
+		t.Errorf("current_depends_on = %v, want [NGNC KESC]", got)
+	}
+}
+
 // TestTrendWithNoHistoryIsEmptyNotError covers both halves of the empty case:
 // an opened-but-empty store, and no store at all. Both must answer 200 with
 // an empty array, because a missing history is the answer, not a failure,
@@ -159,6 +210,10 @@ func TestTrendWithNoHistoryIsEmptyNotError(t *testing.T) {
 			}
 			if len(runs) != 0 {
 				t.Errorf("runs = %d, want 0", len(runs))
+			}
+			transitions, ok := body["integrity_transitions"].([]any)
+			if !ok || transitions == nil || len(transitions) != 0 {
+				t.Errorf("integrity_transitions = %v, want an empty array", body["integrity_transitions"])
 			}
 		})
 	}
@@ -471,11 +526,11 @@ func TestUITrendIsSelfContained(t *testing.T) {
 	page := string(raw)
 
 	for _, want := range []string{
-		"/api/corridor/trend", // the endpoint the trend reads
-		"unusable above",      // the 20% threshold, as on the live curve
+		"/api/corridor/trend",                          // the endpoint the trend reads
+		"unusable above",                               // the 20% threshold, as on the live curve
 		"irregular snapshots, not a continuous series", // the honesty caption
-		"scored_against",       // which mid a run was scored against
-		"prefers-color-scheme", // the trend must live in the theme
+		"scored_against",                               // which mid a run was scored against
+		"prefers-color-scheme",                         // the trend must live in the theme
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the trend view lacks %q; it would render incompletely or mislead", want)
