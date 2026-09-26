@@ -28,11 +28,14 @@ HEALTH="$(curl -fsS --max-time 10 "$BASE/healthz")" || die "/healthz did not ans
   || die "/healthz did not report status ok: $HEALTH"
 
 # -------------------------------------------------------------- UI page -----
+# Substring tests rather than `printf | grep -q`: under pipefail, grep -q's
+# early exit after a match SIGPIPEs the writer and turns a match into a
+# failure.
 echo "== GET $BASE/"
 UI="$(curl -fsS --max-time 10 "$BASE/")" || die "/ did not answer 200"
-printf '%s' "$UI" | grep -q "Corridor integrity monitor" \
+[[ "$UI" == *"Corridor integrity monitor"* ]] \
   || die "the UI at / is not the corridor monitor page"
-printf '%s' "$UI" | grep -q "Wayfare is non-custodial" \
+[[ "$UI" == *"Wayfare is non-custodial"* ]] \
   || die "the UI at / is missing the provenance footer"
 
 # ------------------------------------------------------- corridor request ---
