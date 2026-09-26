@@ -135,6 +135,10 @@ Contributors have to be able to trust these:
 - `difficulty:medium` — multi-file, needs design judgement
 - `difficulty:hard` — architectural; discuss before building
 
+The dated audit of the currently open newcomer-labelled issues, including
+blockers and scope caveats, is in
+[docs/good-first-issue-audit.md](docs/good-first-issue-audit.md).
+
 ## Code conventions
 
 - Comments explain *why*, not *what*. The code already says what it does.

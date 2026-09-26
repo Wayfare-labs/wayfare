@@ -1,6 +1,7 @@
 # HTTP API reference
 
-**Status:** implemented in the repository as of 2026-08-27. This document describes the handlers and wire fields present in `server/` at that date. It does not describe roadmap capabilities.
+**Status:** implemented API contracts, including `GET /api/chain-heads` added
+2026-09-26. This document does not describe roadmap capabilities.
 
 All endpoints are read-only. The service does not hold funds, issue tokens, sign transactions, or execute payments.
 
@@ -10,6 +11,7 @@ All endpoints are read-only. The service does not hold funds, issue tokens, sign
 |---|---|---|
 | `GET` | `/api/corridor` | Measure or retrieve one corridor |
 | `GET` | `/api/corridor/trend` | Read stored measurements for a corridor |
+| `GET` | `/api/chain-heads` | Publish the current hash-chain tip for each stored corridor |
 | `GET` | `/api/assets` | List verified assets configured in the binary |
 | `GET` | `/healthz` | Return service health |
 | `GET` | `/` | Serve the embedded single-file UI |
@@ -235,6 +237,58 @@ curl -s "https://wayfare-cdb9.onrender.com/api/corridor/trend?to=NGNC&limit=7"
         {"send_amount": "0.1", "priced": true, "loss_pct": "27.15", "verdict": "UNUSABLE"},
         {"send_amount": "5000", "priced": true, "loss_pct": "97.52", "verdict": "UNUSABLE"}
       ]
+    }
+  ]
+}
+```
+
+## `GET /api/chain-heads`
+
+Returns the current stored hash-chain tip for every corridor, sorted by
+corridor key. This endpoint is read-only and does not measure. Each entry
+contains:
+
+**Query parameter:** `pretty=1` is optional and indents the JSON response for
+humans.
+
+Each item in `heads` contains:
+
+- `corridor` — stable corridor key, such as `USDC-NGNC`.
+- `seq` — sequence number of the current tip.
+- `recorded_at` — the tip record's UTC timestamp in RFC 3339 form.
+- `hash` — the full SHA-256 record hash, including its `sha256:` prefix.
+
+An empty or unconfigured store returns `200` with `heads: []`. The endpoint
+does not sign the response or provide a trusted timestamp: a third party should
+retain the returned hash and the time and source at which it observed it. The
+hash is a pin for comparing later observations, not proof that the underlying
+measurement was correct or that the publisher included every scheduled run.
+To establish that a later chain still contains a pinned head, the reader must
+obtain the corresponding NDJSON history from the repository's
+[committed data](../data/) and verify its links; this endpoint publishes the
+tip only and does not return per-record proofs.
+
+At present, the committed store is a rolling window. When rotation trims a
+corridor, its surviving records are re-sealed from a new window head, so its
+published tip hash changes and is not a continuation of the previously pinned
+chain. See [ADR 007](adr/007-why-the-committed-chain-is-a-rolling-window.md).
+
+**cURL:**
+
+```bash
+curl -s https://wayfare-cdb9.onrender.com/api/chain-heads
+```
+
+**Example Response (200 OK):**
+
+```json
+{
+  "heads": [
+    {
+      "corridor": "USDC-NGNC",
+      "seq": 1,
+      "recorded_at": "2026-08-22T12:09:59Z",
+      "hash": "sha256:424b33fcf1202487e493e905a7710247489ccd4d943eb182ce6f0f4f0fb4144f"
     }
   ]
 }
