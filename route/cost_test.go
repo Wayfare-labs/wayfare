@@ -580,3 +580,70 @@ func TestCostNoDeterminedComponentDefaultsToZero(t *testing.T) {
 		}
 	}
 }
+
+func TestReconcileComponents_ExactMatch(t *testing.T) {
+	total := decimal.NewFromFloat(10.50)
+	comps := map[string]decimal.Decimal{
+		"fee":     decimal.NewFromFloat(0.50),
+		"fx_loss": decimal.NewFromFloat(10.00),
+	}
+	tolerance := decimal.NewFromFloat(0.001)
+	undetermined := decimal.NewFromFloat(0)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+}
+
+func TestReconcileComponents_WithinTolerance(t *testing.T) {
+	total := decimal.NewFromFloat(10.50)
+	comps := map[string]decimal.Decimal{
+		"fee":     decimal.NewFromFloat(0.501),
+		"fx_loss": decimal.NewFromFloat(10.00),
+	}
+	tolerance := decimal.NewFromFloat(0.01)
+	undetermined := decimal.NewFromFloat(0)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != nil {
+		t.Fatalf(
+			"expected nil error within tolerance, got %v",
+			err,
+		)
+	}
+}
+
+func TestReconcileComponents_CoveredByUndetermined(t *testing.T) {
+	total := decimal.NewFromFloat(15.00)
+	comps := map[string]decimal.Decimal{
+		"fee": decimal.NewFromFloat(5.00),
+	}
+	undetermined := decimal.NewFromFloat(10.00)
+	tolerance := decimal.NewFromFloat(0.001)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != nil {
+		t.Fatalf(
+			"expected undetermined shortfall to reconcile, got %v",
+			err,
+		)
+	}
+}
+
+func TestReconcileComponents_MismatchError(t *testing.T) {
+	total := decimal.NewFromFloat(20.00)
+	comps := map[string]decimal.Decimal{
+		"fee": decimal.NewFromFloat(5.00),
+	}
+	undetermined := decimal.NewFromFloat(2.00)
+	tolerance := decimal.NewFromFloat(0.001)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != ErrComponentSumMismatch {
+		t.Fatalf(
+			"expected ErrComponentSumMismatch, got %v",
+			err,
+		)
+	}
+}
