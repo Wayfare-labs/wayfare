@@ -230,6 +230,26 @@
     .controls { align-items: stretch; }
     .controls > * { flex: 1 1 100%; }
   }
+  /* Touch targets (#306): every interactive control gets a 44×44px hit area
+     via min-height plus padding, whichever way the text wraps at small
+     widths. Selects keep their native arrow affordance. Press feedback and
+     :focus-visible outlines come from the state contract above, so keyboard
+     reachability is unchanged. */
+  select, button {
+    min-height: 44px;
+    min-width: 44px;
+    padding: .55rem 1.1rem;
+    touch-action: manipulation;
+  }
+  select { padding-right: 2rem; }
+
+  /* The corridor label points at the select it names; give it the same
+     comfortable height so the whole control row stays a steady target. */
+  .controls label {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
   .panel {
     background: var(--panel); border: 1px solid var(--border);
     border-radius: var(--radius-md); padding: var(--space-5) var(--space-5); margin-bottom: var(--space-5);
