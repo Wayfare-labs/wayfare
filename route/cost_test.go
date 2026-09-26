@@ -10,6 +10,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/checks"
 )
 
 func testUSDC() asset.Asset { return asset.USDC() }
@@ -526,6 +527,20 @@ func TestAnchorFeeSeparateFromNetworkFees(t *testing.T) {
 // unavailable quantity is unknown, not a default: every component that is
 // genuinely unmeasured must report Determined: false, so that no consumer is
 // told a number was established when nothing was observed.
+func TestSweepCostClassBounding(t *testing.T) {
+	if got := SweepCostClass(1); got != checks.CostOneRequest {
+		Errorf(t, "SweepCostClass(1) = %v, want CostOneRequest", got)
+	}
+	if got := SweepCostClass(5); got != checks.CostExpensive {
+		Errorf(t, "SweepCostClass(5) = %v, want CostExpensive", got)
+	}
+}
+
+func Errorf(t *testing.T, format string, args ...any) {
+	t.Helper()
+	t.Errorf(format, args...)
+}
+
 func TestCostNoDeterminedComponentDefaultsToZero(t *testing.T) {
 	q := Quote{
 		Kind:          KindDEX,

@@ -15,6 +15,10 @@
 package route
 
 import (
+	"github.com/Wayfare-labs/wayfare/checks"
+)
+
+import (
 	"github.com/shopspring/decimal"
 )
 
@@ -118,4 +122,14 @@ func Decompose(q Quote, mid decimal.Decimal) CostDecomposition {
 		Parts:        parts,
 		TotalLossPct: q.LossPct,
 	}
+}
+
+// SweepCostClass classifies the upstream request cost of a metric sweep
+// across sizes, distinguishing CostOneRequest from CostExpensive in accordance
+// with checks.Descriptor.Cost.
+func SweepCostClass(sizeCount int) checks.Cost {
+	if sizeCount <= 1 {
+		return checks.CostOneRequest
+	}
+	return checks.CostExpensive
 }

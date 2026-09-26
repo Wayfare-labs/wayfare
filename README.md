@@ -396,7 +396,7 @@ What verification looks like — including broken-chain output: **[docs/verify-s
 | `sep38` | Anchor RFQ client, with the fee-denomination identity |
 | `dex` | On-chain pricing via Horizon pathfinding, plus market health |
 | `route` | Ladder sweep, verdicts, integrity, and the shared wire shape |
-| `checks` | Counterparty checks and metrics; qualify the headline, never move it |
+| `checks` | Counterparty checks and metrics (including bounded upstream request cost classification for metric sweeps across sizes); qualify the headline, never move it |
 | `runstore` | Hash-chained measurement history |
 | `monitor` | Scheduled measurement, independent of HTTP |
 | `snapshot` | Record and replay upstream responses |
