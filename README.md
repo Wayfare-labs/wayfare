@@ -171,6 +171,9 @@ Layers 3 and 4 have **no packages and no stubs**, deliberately. Speculative
 structure is worse than none: an empty package invites code that has no inputs
 yet. **[ADR 003](docs/adr/003-why-layers-3-and-4-have-no-packages.md)**
 
+The bounded-history research finding asks what the planned 90-day sample could
+and could not support: **[docs/spike-90-day-history.md](docs/spike-90-day-history.md)**.
+
 ### How the pieces fit
 
 ```
@@ -451,6 +454,7 @@ Deployment, cost and backup: **[docs/deployment.md](docs/deployment.md)**
 - [GET /api/assets](docs/api.md#get-api-assets)
 - [GET /api/corridor](docs/api.md#get-apicorridor)
 - [GET /api/corridor/trend](docs/api.md#get-apicorridortrend)
+- [GET /api/chain-heads](docs/api.md#get-apichain-heads) — pin the current stored chain tips
 - `GET /` single-file UI, no build step
 
 Beyond the contracts above, two fields to know. **`live`** is on every
@@ -595,6 +599,8 @@ milestone so you can see which part of the project your work moves. Start with
 
 The full contributor backlog — every gap found in the current tree, with the
 file or response that evidences it — is **[docs/backlog.md](docs/backlog.md)**.
+The dated review of the open `good first issue` label set is
+**[docs/good-first-issue-audit.md](docs/good-first-issue-audit.md)**.
 
 New here? The **[first 15 minutes](docs/first-15-minutes.md)** walkthrough goes
 from a fresh clone to a reproduced measurement, and

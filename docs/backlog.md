@@ -931,6 +931,10 @@ A reader who records today's head can prove later that no earlier record
 changed; nothing currently exposes it.
 `V3` `area:data` `difficulty:medium` `ready`
 
+> **Implemented:** `GET /api/chain-heads` publishes each corridor's current
+> sequence, recorded time and full record hash in stable order. The API and
+> rolling-window caveat are documented in [docs/api.md](api.md#get-apichain-heads).
+
 ---
 
 ## F. Initiative E — V4+ Research and design spikes
@@ -950,6 +954,12 @@ contribution.
 At a six-hour cadence, three corridors, that is roughly 1,080 records. Determine
 what is answerable at that sample size and what is not.
 `V4+` `area:research` `difficulty:medium` `research`
+
+> **Finding written:** [docs/spike-90-day-history.md](spike-90-day-history.md)
+> (2026-09-26). About 360 observations per corridor can support descriptive
+> summaries and the existing gated slope calculation, but not a general
+> seasonal or predictive claim; the present checkout still has one record per
+> corridor, so the nominal 1,080 is a planning count, not observed evidence.
 
 **#136 — Spike: which V2 measurements are worth storing longitudinally** *(filed: [#334](https://github.com/Wayfare-labs/wayfare/issues/334))*
 Storage is not free and the record layout is hash-pinned; choosing badly is
@@ -1755,6 +1765,12 @@ repository is high and currently transmitted by example only.
 Seven issues carry the label; confirm each is genuinely completable by a
 stranger with only the README and CONTRIBUTING.
 `V1` `area:ecosystem` `good first issue` `difficulty:easy` `ready`
+
+> **Audit written:** [docs/good-first-issue-audit.md](good-first-issue-audit.md)
+> (2026-09-26). The issue's seven-item count does not match GitHub's event
+> history: 20 open issues were labelled before #329 was opened, then #329 was
+> labelled two seconds later. The audit records the discrepancy and assesses
+> the full current set of 21.
 
 ---
 
