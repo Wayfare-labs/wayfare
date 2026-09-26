@@ -6,38 +6,86 @@
 <title>Wayfare — corridor integrity monitor</title>
 <style>
   :root {
-    --bg: #fbfbfa;
-    --panel: #ffffff;
-    --border: #e4e2dd;
-    --ink: #1a1a18;
-    --muted: #6b6862;
-    --accent: #2f6f5e;
-    --bad: #a03e2f;
-    --warn: #96712a;
-    --ok: #2f6f5e;
-    --ok-soft: #e9f4ef;
-    --bad-soft: #fbeceb;
-    --unknown: #666b70;
-    --unknown-soft: #f0f1f2;
-    --grid: #ecebe7;
+    --brand-navy: #0F172A;
+    --brand-teal: #10B981;
+    --brand-amber: #F59E0B;
+    --brand-slate: #334155;
+    --brand-cloud: #F8FAFC;
+    --brand-coral: #F97316;
+    --critical: #B91C1C;
+    --critical-soft: #FEE2E2;
+    --success: #0F766E;
+    --success-soft: #D1FAE5;
+    --warning: #A16207;
+    --warning-soft: #FEF3C7;
+    --neutral: #475569;
+    --neutral-soft: #E2E8F0;
+    --inset: #E2E8F0;
+    --bg: var(--brand-cloud);
+    --panel: #FFFFFF;
+    --panel-alt: #F8FAFC;
+    --border: #CBD5E1;
+    --ink: var(--brand-navy);
+    --muted: var(--neutral);
+    --accent: var(--brand-teal);
+    --bad: var(--critical);
+    --warn: var(--warning);
+    --ok: var(--success);
+    --ok-soft: var(--success-soft);
+    --bad-soft: var(--critical-soft);
+    --unknown: var(--brand-slate);
+    --unknown-soft: var(--neutral-soft);
+    --grid: #E2E8F0;
+    --chart-grid: #CBD5E1;
+    --chart-line: var(--brand-slate);
+    --chart-point: var(--brand-navy);
+    --chart-threshold: var(--critical);
+    --focus-ring: rgba(15, 118, 110, 0.28);
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --text-xs: .72rem;
+    --text-sm: .82rem;
+    --text-md: .94rem;
+    --text-lg: 1.15rem;
+    --text-xl: 1.35rem;
+    --space-1: .25rem;
+    --space-2: .5rem;
+    --space-3: .75rem;
+    --space-4: 1rem;
+    --space-5: 1.25rem;
+    --space-6: 1.5rem;
+    --space-8: 2rem;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 24px rgba(15, 23, 42, 0.04);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #161815;
-      --panel: #1e211d;
-      --border: #33372f;
-      --ink: #eceae4;
-      --muted: #9a978e;
-      --accent: #7fb8a4;
-      --bad: #e08b78;
-      --warn: #d9b06a;
-      --ok: #7fb8a4;
-      --ok-soft: #20372f;
-      --bad-soft: #422522;
-      --unknown: #b7b9b8;
-      --unknown-soft: #2a2d2d;
-      --grid: #2a2e27;
+      --bg: #020817;
+      --panel: #0F172A;
+      --panel-alt: #111827;
+      --border: #334155;
+      --ink: #F8FAFC;
+      --muted: #CBD5E1;
+      --accent: var(--brand-teal);
+      --bad: #FCA5A5;
+      --warn: #FCD34D;
+      --ok: #6EE7B7;
+      --ok-soft: rgba(16, 185, 129, 0.18);
+      --bad-soft: rgba(185, 28, 28, 0.18);
+      --unknown: #CBD5E1;
+      --unknown-soft: rgba(148, 163, 184, 0.18);
+      --grid: #1E293B;
+      --chart-grid: #334155;
+      --chart-line: #E2E8F0;
+      --chart-point: #F8FAFC;
+      --chart-threshold: #FCA5A5;
+      --inset: #1E293B;
+      --critical-soft: rgba(185, 28, 28, 0.18);
+      --warning-soft: rgba(245, 158, 11, 0.18);
+      --success-soft: rgba(16, 185, 129, 0.18);
+      --neutral-soft: rgba(148, 163, 184, 0.18);
+      --focus-ring: rgba(110, 231, 183, 0.35);
     }
   }
   * { box-sizing: border-box; }
@@ -49,16 +97,24 @@
   }
   .wrap { max-width: 900px; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
   header { border-bottom: 1px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.75rem; }
-  h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.01em; }
-  .sub { color: var(--muted); font-size: .92rem; margin: 0; }
+  h1 { font-size: var(--text-xl); margin: 0 0 .3rem; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); font-size: var(--text-md); margin: 0; }
   .controls { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; margin-bottom: 1.5rem; }
   select, button {
-    font: inherit; padding: .5rem .8rem; border-radius: 6px;
+    font: inherit; padding: .65rem .85rem; border-radius: var(--radius-sm);
     border: 1px solid var(--border); background: var(--panel); color: var(--ink);
+    transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
   }
-  button { cursor: pointer; font-weight: 550; }
-  button:hover:not(:disabled) { border-color: var(--accent); }
+  button { cursor: pointer; font-weight: 600; }
+  button:hover:not(:disabled) { border-color: var(--accent); background: var(--panel-alt); }
+  button:focus-visible, select:focus-visible {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring);
+  }
   button:disabled { opacity: .55; cursor: default; }
+  @media (max-width: 640px) {
+    .controls { align-items: stretch; }
+    .controls > * { flex: 1 1 100%; }
+  }
   .panel {
     background: var(--panel); border: 1px solid var(--border);
     border-radius: 10px; padding: 1.15rem 1.25rem; margin-bottom: 1.25rem;
@@ -69,13 +125,14 @@
     font: 700 .78rem/1 var(--mono); letter-spacing: .06em;
     padding: .55rem .7rem; border-radius: 7px; border: 2px solid currentColor;
     text-transform: uppercase; white-space: nowrap;
+    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.02);
   }
   .badge::before { font-size: 1rem; line-height: 1; }
-  .b-direct { color: var(--ok); background: var(--ok-soft); }
+  .b-direct { color: var(--brand-navy); background: var(--neutral-soft); }
   .b-direct::before { content: "◆"; }
-  .b-derivative { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--panel)); }
+  .b-derivative { color: var(--brand-slate); background: var(--warning-soft); }
   .b-derivative::before { content: "↪"; }
-  .b-nomarket { color: var(--bad); background: var(--bad-soft); }
+  .b-nomarket { color: var(--brand-coral); background: rgba(249, 115, 22, 0.12); }
   .b-nomarket::before { content: "∅"; }
   .integrity-copy { min-width: 0; }
   .integrity-title { font-weight: 700; margin: 0; }
@@ -108,11 +165,11 @@
              display: inline-flex; align-items: center; gap: .28rem; min-width: 5.3rem;
              border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }
   .f-state::before { font: 700 .8rem/1 var(--mono); }
-  .f-pass { color: var(--ok); background: var(--ok-soft); }
+  .f-pass { color: var(--success); background: var(--success-soft); }
   .f-pass::before { content: "✓"; }
-  .f-fail { color: var(--bad); background: var(--bad-soft); }
+  .f-fail { color: var(--critical); background: var(--critical-soft); }
   .f-fail::before { content: "×"; }
-  .f-unknown { color: var(--unknown); background: var(--unknown-soft); }
+  .f-unknown { color: var(--brand-slate); background: var(--neutral-soft); }
   .f-unknown::before { content: "?"; }
   .finding-row:has(.f-pass) { background: var(--ok-soft); border-left: 3px solid var(--ok); padding-left: .65rem; }
   .finding-row:has(.f-fail) { background: var(--bad-soft); border-left: 3px solid var(--bad); padding-left: .65rem; }
@@ -134,10 +191,10 @@
   .m-state {
     display: inline-block; font: 600 .68rem/1.5 var(--mono); letter-spacing: .05em;
     padding: .1rem .45rem; border-radius: 4px; border: 1px solid currentColor;
-    color: var(--unknown); background: var(--unknown-soft); white-space: nowrap;
+    color: var(--brand-slate); background: var(--neutral-soft); white-space: nowrap;
     margin-right: .5rem;
   }
-  .m-unknown { color: var(--unknown); }
+  .m-unknown { color: var(--brand-slate); }
   .meta { color: var(--muted); font-size: .82rem; margin-top: .9rem; }
   .err { color: var(--bad); }
   .provenance { margin-bottom: .9rem; padding: .7rem .85rem; border-radius: 6px;
@@ -157,9 +214,9 @@
   .cs-info .cs-state { font: 600 .72rem/1 var(--mono); letter-spacing: .04em;
     padding: .15rem .4rem; border-radius: 3px; border: 1px solid currentColor;
     vertical-align: middle; }
-  .cs-info .cs-state.cs-direct { color: var(--muted); }
-  .cs-info .cs-state.cs-derivative { color: var(--warn); }
-  .cs-info .cs-state.cs-nomarket { color: var(--bad); }
+  .cs-info .cs-state.cs-direct { color: var(--brand-navy); background: var(--neutral-soft); }
+  .cs-info .cs-state.cs-derivative { color: var(--brand-slate); background: var(--warning-soft); }
+  .cs-info .cs-state.cs-nomarket { color: var(--brand-coral); background: rgba(249, 115, 22, 0.12); }
   svg { width: 100%; height: auto; display: block; }
   .axis { fill: var(--muted); font: 10px var(--mono); }
   .trend-legend { display: flex; gap: 1.1rem; margin-top: .4rem;
@@ -493,7 +550,7 @@ function curve(rungs) {
 
   const dots = xs.map((x, i) =>
     `<circle cx="${sx(x).toFixed(1)}" cy="${sy(ys[i]).toFixed(1)}" r="3"
-       fill="var(--bad)"><title>${esc(rungs[i].send_amount)} → ${formatPct(rungs[i].quote.loss_pct)}% loss</title></circle>`).join('');
+       fill="var(--chart-point)"><title>${esc(rungs[i].send_amount)} → ${formatPct(rungs[i].quote.loss_pct)}% loss</title></circle>`).join('');
 
   const labels = rungs.map((r, i) =>
     (i === 0 || i === rungs.length - 1 || i === Math.floor(rungs.length / 2))
@@ -503,7 +560,7 @@ function curve(rungs) {
   return `<svg viewBox="0 0 ${W} ${H}" role="img"
     aria-label="Loss against mid rising with trade size">
     ${grid}${thresh}
-    <polyline points="${pts.join(' ')}" fill="none" stroke="var(--bad)" stroke-width="2"/>
+    <polyline points="${pts.join(' ')}" fill="none" stroke="var(--chart-line)" stroke-width="2"/>
     ${dots}${labels}
     <text class="axis" x="${W / 2}" y="${H - 4}" text-anchor="middle">send amount (log scale)</text>
   </svg>`;
