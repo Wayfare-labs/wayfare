@@ -117,9 +117,9 @@ checks or no metrics ran.
 
 ## Measurability uptime
 
-Backlog entry #124 ([issue #195](https://github.com/Wayfare-labs/wayfare/issues/195)):
-uptime of the measurement, not of the service — how many scheduled sweeps
-produced a priced ladder.
+Issue [#195](https://github.com/Wayfare-labs/wayfare/issues/195) (entry 124
+of docs/backlog.md): uptime of the measurement, not of the service — how
+many scheduled sweeps produced a priced ladder.
 
 **Measurable means the sweep produced a price.** A run is measurable when at
 least one of its rungs priced — not all of them; a ladder whose smaller sizes
@@ -137,7 +137,8 @@ uptime and 0% measurement uptime; the distinction is the point.
   always present, so a reader can see what the percentage stands on. It
   counts recorded runs only: a sweep that died before writing a record left
   nothing in the chain, and inventing a run for it would be synthesis (the
-  not-measured-versus-could-not-be distinction is backlog entry #118).
+  not-measured-versus-could-not-be distinction is entry 118 of
+  docs/backlog.md).
 - **`measurable_runs`** / **`not_measurable_runs`** — the counts, carried
   separately so a reader never has to subtract.
 - **`uptime_pct`** — `measurable_runs / total_runs × 100`, computed in
