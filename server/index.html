@@ -41,6 +41,21 @@
     }
   }
   * { box-sizing: border-box; }
+
+  /* Motion (#307): the only animated states are the cold-start dots and the
+     panel entrance on a result render — both wayfinding, neither ever
+     delaying a figure: they run outside the reading flow, finish in well
+     under half a second, and touch no metric text. Under
+     prefers-reduced-motion every animation and transition collapses to an
+     opacity change only, so state still changes visibly without any
+     movement. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
   body {
     margin: 0;
     background: var(--bg);
@@ -62,6 +77,14 @@
   .panel {
     background: var(--panel); border: 1px solid var(--border);
     border-radius: 10px; padding: 1.15rem 1.25rem; margin-bottom: 1.25rem;
+  }
+  /* Panel entrance: a 240ms fade-and-settle that reads as the result having
+     arrived, not as decoration. Under reduced motion the global override
+     turns it into an instantaneous appear. */
+  .panel { animation: panel-in 240ms ease-out; }
+  @keyframes panel-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: none; }
   }
   .integrity-card { display: grid; grid-template-columns: auto 1fr; gap: .75rem 1rem; align-items: start; margin-bottom: .35rem; }
   .badge {
@@ -186,8 +209,8 @@
   .loading-dots span:nth-child(2) { animation-delay: .22s; }
   .loading-dots span:nth-child(3) { animation-delay: .44s; }
   @keyframes pulse {
-    0%, 80%, 100% { opacity: .25; transform: scale(.9); }
-    40%            { opacity: 1;   transform: scale(1); }
+    0%, 80%, 100% { opacity: .25; }
+    40%            { opacity: .85; }
   }
   .loading-what {
     font-size: .97rem; color: var(--ink);
