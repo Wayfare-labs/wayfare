@@ -383,13 +383,31 @@ function fmtISOTime(v) {
   return `${MONTHS[d.getUTCMonth()]} ${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`;
 }
 
+// --- Error presentation ------------------------------------------------------
+
+// showErrorBanner drops an error banner at the top of #out without clearing
+// what is already there (issue #293). A failed live measurement or history
+// load must never leave an empty page: the reader keeps the reading that was
+// on screen and their corridor and size selections stay intact, so recovery
+// is a retry, not re-entering everything. Any earlier banner is removed
+// first, so banners never stack when a reader retries and fails again.
+//
+// The banner is role="alert" (announced to assistive tech) and always
+// carries the failure reason in text, never colour alone.
+function showErrorBanner(message) {
+  const out = $('out');
+  const prior = out.querySelector('.panel.err');
+  if (prior) prior.remove();
+  out.insertAdjacentHTML('afterbegin',
+    `<div class="panel err" role="alert">${message}</div>`);
+}
+
 // --- Measurement -------------------------------------------------------------
 
 async function measure() {
   const to = $('to').value;
   $('run').disabled = true;
   $('status').textContent = 'measuring live — a full ladder is a dozen round trips…';
-  $('out').innerHTML = '';
   try {
     const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}&live=1`);
     const data = await r.json();
@@ -397,7 +415,7 @@ async function measure() {
     render(data);
     $('status').textContent = '';
   } catch (e) {
-    $('out').innerHTML = `<div class="panel err">Could not measure: ${esc(e.message)}</div>`;
+    showErrorBanner(`Could not measure: ${esc(e.message)}`);
     $('status').textContent = '';
   } finally {
     $('run').disabled = false;
@@ -719,7 +737,6 @@ async function loadTrend() {
   const to = $('to').value;
   $('trend').disabled = true;
   $('status').textContent = 'loading stored history…';
-  $('out').innerHTML = '';
   try {
     const r = await fetch(`/api/corridor/trend?to=${encodeURIComponent(to)}`);
     const data = await r.json();
@@ -728,8 +745,9 @@ async function loadTrend() {
     renderTrend();
     $('status').textContent = '';
   } catch (e) {
-    trendState = null;
-    $('out').innerHTML = `<div class="panel err">Could not load history: ${esc(e.message)}</div>`;
+    // trendState keeps its previous value: the last good history load stays
+    // readable (and its size control usable) under the banner.
+    showErrorBanner(`Could not load history: ${esc(e.message)}`);
     $('status').textContent = '';
   } finally {
     $('trend').disabled = false;
@@ -1010,10 +1028,8 @@ async function loadCorridor(to) {
     if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
     render(data);
   } catch (e) {
-    $('out').innerHTML =
-      `<div class="panel err">Could not load corridor data: ${esc(e.message)}.
-       If the instance is still waking up, wait a moment and
-       <a href="" style="color:inherit">reload</a>.</div>`;
+    showErrorBanner(
+      `Could not load corridor data: ${esc(e.message)}. If the instance is still waking up, wait a moment and <a href="" style="color:inherit">reload</a>.`);
   }
 }
 
