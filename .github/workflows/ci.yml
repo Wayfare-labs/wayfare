@@ -150,3 +150,39 @@ jobs:
 
       - name: binary runs in the image
         run: docker run --rm wayfare:ci -verify-store -data /tmp/empty
+
+  # CI above proves the image builds and the binary starts; neither proves a
+  # deployed instance answers correctly afterwards. This job runs the image
+  # exactly as a deployment runs it (default CMD: -history-first, schedule
+  # off) and probes the HTTP surface the way a client would, so a wire-shape
+  # regression, an unregistered UI asset, or a handler that answers 200 with
+  # an error body fails here before it ships.
+  #
+  # The same assertions also exist as a Go test (server/smoke_test.go) that
+  # runs offline in the normal suite; this job exercises the real container
+  # entrypoint and the real distroless image on top.
+  smoke:
+    name: post-deploy smoke check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [build, docker]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: build image
+        run: docker build -t wayfare:ci .
+
+      - name: run the deployment
+        run: |
+          docker run -d --name wayfare-smoke -p 8080:8080 wayfare:ci
+
+      - name: smoke check
+        run: bash scripts/smoke-check.sh "http://127.0.0.1:8080"
+
+      - name: container logs on failure
+        if: failure()
+        run: docker logs wayfare-smoke
+
+      - name: stop the deployment
+        if: always()
+        run: docker rm -f wayfare-smoke
