@@ -216,6 +216,10 @@
     <button id="run">Measure live</button>
     <button id="trend">Show trend</button>
     <span id="status" class="sub"></span>
+    <!-- render() and renderTrend() replace #out.innerHTML wholesale, and an
+         innerHTML swap raises nothing a screen reader announces. Every
+         result is mirrored into this polite live region instead (#302). -->
+    <span id="out-status" role="status" aria-live="polite" class="sub"></span>
   </div>
 
   <div id="out">
@@ -305,6 +309,52 @@ const verdictClass = (v) => 'v-' + String(v).toLowerCase();
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+// --- Assistive technology announcements (#302) ------------------------------
+// An innerHTML replacement is silent to assistive technology, so results are
+// mirrored into the polite live region above: nothing is interrupted, the
+// message lands after the paint, and every figure in it is one the engine
+// produced — read straight off the served document, never derived here. An
+// undetermined state is announced as exactly that: unknown, not failure.
+const announce = (message) => {
+  const region = $('out-status');
+  if (!region) return;
+  // Clearing first makes an identical message re-announce.
+  region.textContent = '';
+  window.setTimeout(() => { region.textContent = message; }, 50);
+};
+
+// One announcement for a measurement document: the integrity state the
+// engine issued, the finding in the engine's own words, then the
+// recommendation or its explicit absence.
+const announceResult = (d) => {
+  const send = (d.send_asset && d.send_asset.code) || '';
+  const recv = (d.receive_asset && d.receive_asset.code) || '';
+  const corridor = [send, recv].filter(Boolean).join(' → ');
+  if (d.recommended) {
+    announce(`${corridor}: ${d.integrity}. ${d.finding} Recommended at ` +
+      `${d.recommended_size} ${send}: ${d.recommended.loss_pct}% below mid, ` +
+      `graded ${d.recommended.verdict}.`);
+  } else if (d.scored) {
+    announce(`${corridor}: ${d.integrity}. ${d.finding} No size tested is worth taking.`);
+  } else {
+    announce(`${corridor}: no verdict could be issued. ${d.finding}`);
+  }
+};
+
+// Same for the trend view: the window and the latest state, read off the
+// stored runs.
+const announceTrend = (d) => {
+  const runs = d.runs || [];
+  if (runs.length === 0) {
+    announce(`No stored runs for the ${d.corridor} corridor yet.`);
+    return;
+  }
+  const latest = runs[runs.length - 1];
+  announce(`Trend for the ${d.corridor} corridor: ${runs.length} stored ` +
+    `run${runs.length === 1 ? '' : 's'} from ${fmtRunTime(runs[0].recorded_at)} ` +
+    `to ${fmtRunTime(latest.recorded_at)} UTC. Latest integrity ${latest.integrity}.`);
+};
+
 // --- Asset / corridor selector -----------------------------------------------
 
 const CORRIDOR_NAMES = {
@@ -386,15 +436,18 @@ async function measure() {
   const to = $('to').value;
   $('run').disabled = true;
   $('status').textContent = 'measuring live — a full ladder is a dozen round trips…';
+  announce('Measuring live — a full ladder is a dozen round trips…');
   $('out').innerHTML = '';
   try {
     const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}&live=1`);
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
     render(data);
+    announceResult(data);
     $('status').textContent = '';
   } catch (e) {
     $('out').innerHTML = `<div class="panel err">Could not measure: ${esc(e.message)}</div>`;
+    announce(`Could not measure: ${e.message}`);
     $('status').textContent = '';
   } finally {
     $('run').disabled = false;
@@ -723,10 +776,12 @@ async function loadTrend() {
     if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
     trendState = { data, size: defaultTrendSize(data) };
     renderTrend();
+    announceTrend(data);
     $('status').textContent = '';
   } catch (e) {
     trendState = null;
     $('out').innerHTML = `<div class="panel err">Could not load history: ${esc(e.message)}</div>`;
+    announce(`Could not load history: ${e.message}`);
     $('status').textContent = '';
   } finally {
     $('trend').disabled = false;
@@ -806,6 +861,8 @@ function renderTrend() {
   $('trend-size').addEventListener('change', (e) => {
     trendState.size = e.target.value;
     $('trend-chart').innerHTML = trendChart(d, trendState.size);
+    const sendCode = (d.send_asset && d.send_asset.code) || '';
+    announce(`Trend chart now shows the ${trendState.size} ${sendCode} size.`.trim());
   });
 }
 
@@ -1006,11 +1063,13 @@ async function loadCorridor(to) {
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
     render(data);
+    announceResult(data);
   } catch (e) {
     $('out').innerHTML =
       `<div class="panel err">Could not load corridor data: ${esc(e.message)}.
        If the instance is still waking up, wait a moment and
        <a href="" style="color:inherit">reload</a>.</div>`;
+    announce(`Could not load corridor data: ${e.message}. If the instance is still waking up, wait a moment and reload.`);
   }
 }
 
