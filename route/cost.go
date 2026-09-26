@@ -12,14 +12,26 @@
 // are the anchor's own charge for a conversion, obtainable via SEP-38 when
 // the anchor publishes an ANCHOR_QUOTE_SERVER. Expected failure cost stays
 // explicitly unknown until failure history exists.
+// CostDecomposition breaks the effective transfer cost into separately-reported
+// components: FX loss, network fees, anchor fee, slippage, and expected
+// failure cost.
+//
+// Currently, the verdict reports a single loss percentage against fair value.
+// That number is useful but opaque. Showing the decomposition turns a single
+// verdict into actionable information.
+//
+// Each component is computed and reported independently. Network fees and
+// anchor fees are reported separately because they have different sources:
+// network fees are Stellar base-fee charges per operation, while anchor fees
+// are the anchor's own charge for a conversion, obtainable via SEP-38 when
+// the anchor publishes an ANCHOR_QUOTE_SERVER. Expected failure cost stays
+// explicitly unknown until failure history exists.
 package route
 
 import (
 	"errors"
-	"github.com/Wayfare-labs/wayfare/checks"
-)
 
-import (
+	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/shopspring/decimal"
 )
 
@@ -135,8 +147,12 @@ func SweepCostClass(sizeCount int) checks.Cost {
 	return checks.CostExpensive
 }
 
+// ErrComponentSumMismatch is returned when the sum of determined and undetermined
+// cost components does not match the published total loss within the stated tolerance.
 var ErrComponentSumMismatch = errors.New("component sum does not match total loss within tolerance")
 
+// ReconcileComponents asserts that the sum of components and undetermined amount
+// equals the total loss within the stated tolerance.
 func ReconcileComponents(total decimal.Decimal, comps map[string]decimal.Decimal, undetermined decimal.Decimal, tolerance decimal.Decimal) error {
 	sum := undetermined
 	for _, val := range comps {
