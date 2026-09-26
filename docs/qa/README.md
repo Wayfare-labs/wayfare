@@ -21,6 +21,11 @@ findings in:
 | #269 cross-browser matrix | [`artifacts/269-cross-browser.md`](artifacts/269-cross-browser.md) |
 | #270 mobile device QA | [`artifacts/270-mobile.md`](artifacts/270-mobile.md) |
 | #272 QA both colour schemes | [`artifacts/272-color-schemes.md`](artifacts/272-color-schemes.md) |
+| #273 WCAG 2.2 AA audit | [`artifacts/273-accessibility-audit.md`](artifacts/273-accessibility-audit.md) |
+
+The #273 colour numbers come from `node browser/contrast.mjs`, which reads the
+resolved custom-property values out of `server/index.html` without a browser, so
+it runs offline. Its written output is `browser/results/contrast.json`.
 
 ## Setup
 
