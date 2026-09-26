@@ -211,6 +211,30 @@ func TestCostComponentsDoNotOverlap(t *testing.T) {
 // computes and carries each priced rung's decomposition — the change that
 // takes Decompose from a test-only function to the value behind every priced
 // rung on the wire. An unpriced rung carries none.
+func TestReconcileComponents(t *testing.T) {
+	total := decimal.NewFromInt(100)
+	comps := map[string]decimal.Decimal{
+		"fx_loss":  decimal.NewFromInt(60),
+		"slippage": decimal.NewFromInt(30),
+	}
+	undetermined := decimal.NewFromInt(10)
+	tolerance := decimal.NewFromFloat(0.1)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+
+	// Mismatch case
+	badComps := map[string]decimal.Decimal{
+		"fx_loss": decimal.NewFromInt(50),
+	}
+	err = ReconcileComponents(total, badComps, undetermined, tolerance)
+	if !errors.Is(err, ErrComponentSumMismatch) {
+		t.Errorf("expected ErrComponentSumMismatch, got %v", err)
+	}
+}
+
 func TestLadderAttachesDecompositionToPricedRungs(t *testing.T) {
 	q := Quote{
 		Kind:          KindDEX,
