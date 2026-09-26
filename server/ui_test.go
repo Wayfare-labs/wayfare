@@ -29,13 +29,13 @@ func TestUIPreservesContentOnFetchError(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"function showErrorBanner",              // the shared preserve-and-banner path
-		"insertAdjacentHTML('afterbegin'",        // the banner goes above retained content
-		`role="alert"`,                           // announced to assistive tech, not colour alone
-		"prior.remove()",                         // retrying never stacks banners
-		"Could not measure:",                     // the measure failure keeps its text
-		"Could not load history:",                // the trend failure keeps its text
-		"Could not load corridor data:",          // the corridor failure keeps its text
+		"function showErrorBanner",        // the shared preserve-and-banner path
+		"insertAdjacentHTML('afterbegin'", // the banner goes above retained content
+		`role="alert"`,                    // announced to assistive tech, not colour alone
+		"prior.remove()",                  // retrying never stacks banners
+		"Could not measure:",              // the measure failure keeps its text
+		"Could not load history:",         // the trend failure keeps its text
+		"Could not load corridor data:",   // the corridor failure keeps its text
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("UI missing %q; an error would not preserve and explain the page", want)
