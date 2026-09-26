@@ -868,6 +868,16 @@ Uptime of the measurement, not of the service: how many scheduled sweeps
 produced a priced ladder.
 `V3` `area:data` `difficulty:easy` `ready`
 
+> **Implemented.** `runstore.Measurable` classifies one record (measurable
+> = at least one priced rung), `runstore.MeasurabilityHistory` classifies
+> every run oldest-first, and `runstore.MeasurabilityOf` summarises the
+> chain: counts plus a decimal-only `uptime_pct`, empty — unknown, never
+> zero — when no history exists, with the window bounds carried so a reader
+> sees what the figure stands on. A NO-MARKET sweep is a successful
+> measurement of "no market" and is deliberately not measurable: there was
+> no price to measure with. Derived on read; appends nothing. See
+> docs/run-store.md, "Measurability uptime".
+
 ### D3 — Market structure
 
 **#125 — Define what "market structure" means for this project, in writing** *(filed: [#196](https://github.com/Wayfare-labs/wayfare/issues/196))*
