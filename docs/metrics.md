@@ -271,7 +271,7 @@ the order book is empty.
 ### price-impact.size — Price impact by trade size
 
 **Definition.** How much the effective rate degrades between a small probe
-(default 10 send units) and a full-size trade, as a percentage.
+(default 10 send units) and a full-size trade, as a percentage. A metric sweep across multiple trade sizes incurs an upstream request cost classified as `CostOneRequest` when a single size is probed, or `CostExpensive` when multiple sizes sweep against the shared public Horizon.
 
 **Unit.** Percent (decimal).
 
