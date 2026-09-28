@@ -80,6 +80,7 @@ optional enrichment. Without it the engine can rank, but it cannot tell a good
 deal from a disaster.
 
 The full argument, with the measurements behind it: **[docs/why-wayfare.md](docs/why-wayfare.md)**.
+Why Stellar-native and what the code uses: **[docs/why-stellar-native.md](docs/why-stellar-native.md)**.
 
 ---
 
@@ -150,6 +151,9 @@ LAYER 2 — DETERMINISTIC CALCULATION                               [live]
   spread, depth, price impact, concentration, cost decomposition
                                              [implemented, not yet reachable]
 
+  Market-structure vocabulary and current limits:
+  [docs/market-structure.md](docs/market-structure.md)
+
         │
         ▼
 
@@ -167,6 +171,9 @@ LAYER 4 — VERIFIABLE OUTPUT                 [not built — needs a trust model
 Layers 3 and 4 have **no packages and no stubs**, deliberately. Speculative
 structure is worse than none: an empty package invites code that has no inputs
 yet. **[ADR 003](docs/adr/003-why-layers-3-and-4-have-no-packages.md)**
+
+The bounded-history research finding asks what the planned 90-day sample could
+and could not support: **[docs/spike-90-day-history.md](docs/spike-90-day-history.md)**.
 
 ### How the pieces fit
 
@@ -219,6 +226,10 @@ A glossary of every state a reader can meet: **[docs/glossary.md](docs/glossary.
 New to the project and want the one-page story — what it measures, what it
 refuses to do, who it is for, and the non-custodial position stated once?
 **[docs/about.md](docs/about.md)**
+
+Why the monitor is Stellar-native, grounded in what the code uses (assets,
+pathfinding, order books, anchors, SEP-1, SEP-38) without unsupported exclusivity claims:
+**[docs/why-stellar-native.md](docs/why-stellar-native.md)**
 
 ### Verdict thresholds — breaking if altered
 
@@ -398,7 +409,7 @@ What verification looks like — including broken-chain output: **[docs/verify-s
 | `sep38` | Anchor RFQ client, with the fee-denomination identity |
 | `dex` | On-chain pricing via Horizon pathfinding, plus market health |
 | `route` | Ladder sweep, verdicts, integrity, and the shared wire shape |
-| `checks` | Counterparty checks and metrics; qualify the headline, never move it |
+| `checks` | Counterparty checks and metrics (including bounded upstream request cost classification for metric sweeps across sizes); qualify the headline, never move it |
 | `runstore` | Hash-chained measurement history |
 | `monitor` | Scheduled measurement, independent of HTTP |
 | `snapshot` | Record and replay upstream responses |
@@ -454,6 +465,7 @@ Deployment, cost and backup: **[docs/deployment.md](docs/deployment.md)**
 - [GET /api/assets](docs/api.md#get-api-assets)
 - [GET /api/corridor](docs/api.md#get-apicorridor)
 - [GET /api/corridor/trend](docs/api.md#get-apicorridortrend)
+- [GET /api/chain-heads](docs/api.md#get-apichain-heads) — pin the current stored chain tips
 - `GET /` single-file UI, no build step
 
 Beyond the contracts above, two fields to know. **`live`** is on every
@@ -487,7 +499,11 @@ in **[docs/ladder-sizes.md](docs/ladder-sizes.md)**.
 (`recorded_at`, `age_seconds`, `age_human`) — the thing actually at risk on a
 `-history-first` deployment, whose served history is only as fresh as its last
 deploy. `data` is `null` when no history exists to describe: unknown, never a
-fabricated age.
+fabricated age. Alongside it, `freshness` reports the cross-corridor view in
+one place: `chain_head` (the ledger Horizon is on right now),
+`newest_record_at` and `record_count` over the whole run store. Each is
+`null` when it cannot be known — Horizon unreachable, store unreadable or
+empty — never a zero that would read as "very old" or "ledger 0".
 
 Bodies are compact by default; append `&pretty=1` (or `?pretty` on an
 endpoint with no other parameters) to any of the JSON endpoints to get an
@@ -528,7 +544,10 @@ The interface is one embedded file, `server/index.html`. Its light and dark
 colour schemes are recorded, with measured contrast ratios, in
 **[docs/qa/artifacts/272-color-schemes.md](docs/qa/artifacts/272-color-schemes.md)**;
 the browser QA harness that produced the computed colours lives in
-[docs/qa/README.md](docs/qa/README.md).
+[docs/qa/README.md](docs/qa/README.md). The interactive state contract —
+focus, hover, active, disabled, and the reduced-motion behaviour — is
+specified in **[docs/ui-states.md](docs/ui-states.md)** and pinned by source
+text in `go test`.
 
 ---
 
@@ -602,6 +621,8 @@ milestone so you can see which part of the project your work moves. Start with
 
 The full contributor backlog — every gap found in the current tree, with the
 file or response that evidences it — is **[docs/backlog.md](docs/backlog.md)**.
+The dated review of the open `good first issue` label set is
+**[docs/good-first-issue-audit.md](docs/good-first-issue-audit.md)**.
 
 New here? The **[first 15 minutes](docs/first-15-minutes.md)** walkthrough goes
 from a fresh clone to a reproduced measurement, and

@@ -54,8 +54,7 @@ func (DepthMetric) Describe() Descriptor {
 			"on each side), and executable depth from pathfinding across " +
 			"multiple sizes (the maximum destination amount reachable).",
 		CannotDetermine: "Whether those levels represent executable liquidity " +
-			"or stale offers. The two halves observe different venues " +
-			"(order-book and pathfinding); see docs/liquidity-venues.md.",
+			"or stale offers.",
 	}
 }
 
@@ -69,8 +68,7 @@ func (m DepthMetric) RunObserved(ctx context.Context, s Subject) MetricResult {
 		Title:        "Observed order book depth",
 		CanDetermine: "The number of bid and ask levels on the direct order book.",
 		CannotDetermine: "Whether those levels represent executable liquidity " +
-			"or stale offers, and any AMM depth that would settle alongside them. " +
-			"The venue is order-book; see docs/liquidity-venues.md.",
+			"or stale offers, and any AMM depth that would settle alongside them.",
 	}
 	at := time.Now().UTC()
 
@@ -123,9 +121,7 @@ func (m DepthMetric) RunExecutable(ctx context.Context, s Subject) MetricResult 
 		CanDetermine: "The maximum destination amount reachable via Horizon " +
 			"pathfinding, and the size at which the receive amount stops growing.",
 		CannotDetermine: "Whether the executable amount reflects a sustainable " +
-			"market or a one-time fill. The venue is pathfinding (order book " +
-			"plus AMM liquidity pools), so this figure is not comparable with " +
-			"the order-book depth on the same corridor — see docs/liquidity-venues.md.",
+			"market or a one-time fill.",
 	}
 	at := time.Now().UTC()
 

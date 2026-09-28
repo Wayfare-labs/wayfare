@@ -21,6 +21,7 @@ findings in:
 | #269 cross-browser matrix | [`artifacts/269-cross-browser.md`](artifacts/269-cross-browser.md) |
 | #270 mobile device QA | [`artifacts/270-mobile.md`](artifacts/270-mobile.md) |
 | #272 QA both colour schemes | [`artifacts/272-color-schemes.md`](artifacts/272-color-schemes.md) |
+| #293 errors preserve the page | [`artifacts/293-error-preservation.md`](artifacts/293-error-preservation.md) |
 
 ## Setup
 
@@ -54,6 +55,7 @@ node run-error-paths.mjs --engine=chromium,firefox,webkit   # #266
 node run-cross-browser.mjs                                  # #269
 node run-mobile.mjs                                         # #270
 node run-color-schemes.mjs                                  # #272
+node run-error-preservation.mjs                             # #293
 ./servers.sh stop
 ```
 
@@ -82,3 +84,14 @@ repeat them where they apply:
   values, but only one engine was measured; see `artifacts/272-color-schemes.md`.
 - The harness never writes to the repository under test; it only reads the UI and
   the API.
+
+## HTTP API QA
+
+A sibling, dependency-free harness drives the deployed HTTP API directly, from a
+consumer's perspective rather than the UI's: endpoint and parameter fixtures, a
+served-history-versus-committed-chain check, and a cold-start measurement. See
+[`api/README.md`](api/README.md); the written findings are
+[`artifacts/258-cold-start-distribution.md`](artifacts/258-cold-start-distribution.md),
+[`artifacts/259-served-history-vs-committed.md`](artifacts/259-served-history-vs-committed.md),
+[`artifacts/260-api-consumer-qa.md`](artifacts/260-api-consumer-qa.md) and
+[`artifacts/262-healthz-cold-start.md`](artifacts/262-healthz-cold-start.md).

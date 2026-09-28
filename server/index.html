@@ -5,39 +5,140 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wayfare — corridor integrity monitor</title>
 <style>
+  /*
+   * Design tokens (issue #281). Three layers, no build step.
+   *
+   *   1. Primitives  — the raw palette and the non-colour scales, one per step.
+   *   2. Semantic    — role names that components actually paint with (surface,
+   *                    ink, line, and the state families below).
+   *   3. Aliases     — the historical short names (--bg, --ok, ...) kept so the
+   *                    rule bodies below stay untouched.
+   *
+   * The dark block now overrides ONLY primitives; every semantic and alias is a
+   * var() chain resolved at computed-value time, so a palette swap propagates
+   * without re-listing roles. This replaces the old fourteen-token copy-paste,
+   * where a token added to light but forgotten in dark silently disagreed —
+   * exactly the class of drift a token layer exists to prevent.
+   *
+   * The state families encode the taxonomy the glossary defines (docs/
+   * glossary.md): structural integrity, pricing severity, check outcome, data
+   * provenance and availability are five separate questions. Distinct names
+   * keep a future contributor from reusing one family's colour for another,
+   * which is how a structural state would start reading as a severity.
+   */
   :root {
-    --bg: #fbfbfa;
-    --panel: #ffffff;
-    --border: #e4e2dd;
-    --ink: #1a1a18;
-    --muted: #6b6862;
-    --accent: #2f6f5e;
-    --bad: #a03e2f;
-    --warn: #96712a;
-    --ok: #2f6f5e;
-    --ok-soft: #e9f4ef;
-    --bad-soft: #fbeceb;
-    --unknown: #666b70;
-    --unknown-soft: #f0f1f2;
-    --grid: #ecebe7;
+    --brand-navy: #0F172A;
+    --brand-teal: #10B981;
+    --brand-amber: #F59E0B;
+    --brand-slate: #334155;
+    --brand-cloud: #F8FAFC;
+    --brand-coral: #F97316;
+    --critical: #B91C1C;
+    --critical-soft: #FEE2E2;
+    --success: #0F766E;
+    --success-soft: #D1FAE5;
+    --warning: #A16207;
+    --warning-soft: #FEF3C7;
+    --neutral: #475569;
+    --neutral-soft: #E2E8F0;
+    --inset: #E2E8F0;
+    --bg: var(--brand-cloud);
+    --panel: #FFFFFF;
+    --panel-alt: #F8FAFC;
+    --border: #CBD5E1;
+    --ink: var(--brand-navy);
+    --muted: var(--neutral);
+    --accent: var(--brand-teal);
+    --bad: var(--critical);
+    --warn: var(--warning);
+    --ok: var(--success);
+    --ok-soft: var(--success-soft);
+    --bad-soft: var(--critical-soft);
+    --unknown: var(--brand-slate);
+    --unknown-soft: var(--neutral-soft);
+    --grid: #E2E8F0;
+    --chart-grid: #CBD5E1;
+    --chart-line: var(--brand-slate);
+    --chart-point: var(--brand-navy);
+    /* The threshold is the one genuine severity in a chart: it marks where the
+       engine refuses a size. It is named as a chart role so the chart never
+       paints data with a verdict colour. */
+    --chart-threshold: var(--critical);
+    /* Structural integrity states, not severities (docs/state-vocabulary.md).
+       They share the brand primitives the badges use so the same state reads
+       the same colour in both places, and they are deliberately distinct from
+       --ok/--warn/--bad: NO-MARKET must not read as failure. */
+    --chart-direct: var(--brand-navy);
+    --chart-derivative: var(--brand-slate);
+    --chart-nomarket: var(--brand-coral);
+    --focus-ring: rgba(15, 118, 110, 0.28);
+    --press-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.18);
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --text-xs: .72rem;
+    --text-sm: .82rem;
+    --text-md: .94rem;
+    --text-lg: 1.15rem;
+    --text-xl: 1.35rem;
+    /* Spacing scale (issue #283): a single 4px-based ladder, referenced by
+       every padding, margin and gap in the stylesheet instead of the dozen
+       ad-hoc rem values that used to sit in the rule bodies. The interface is
+       compact, so the ladder starts at 4px; a zero gap is still spelled 0. */
+    --space-1: .25rem;   /*  4px */
+    --space-2: .5rem;    /*  8px */
+    --space-3: .75rem;   /* 12px */
+    --space-4: 1rem;     /* 16px */
+    --space-5: 1.25rem;  /* 20px */
+    --space-6: 1.5rem;   /* 24px */
+    --space-7: 1.75rem;  /* 28px */
+    --space-8: 2rem;     /* 32px */
+    --space-10: 2.5rem;  /* 40px */
+    --space-12: 3rem;    /* 48px */
+    --space-20: 5rem;    /* 80px */
+    /* Radius scale (issue #283): four steps. xs is the chip/state corner, sm
+       the control and callout corner, md the panel corner, lg the larger
+       surfaces. A circle (50%) is a shape, not a step, so it stays literal. */
+    --radius-xs: 4px;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 24px rgba(15, 23, 42, 0.04);
   }
+  /*
+   * Dark is a primitives-only swap. Nothing here names a role: the semantic and
+   * alias layers resolve through var() and follow automatically, so the two
+   * schemes cannot disagree about what --check-undetermined means.
+   */
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #161815;
-      --panel: #1e211d;
-      --border: #33372f;
-      --ink: #eceae4;
-      --muted: #9a978e;
-      --accent: #7fb8a4;
-      --bad: #e08b78;
-      --warn: #d9b06a;
-      --ok: #7fb8a4;
-      --ok-soft: #20372f;
-      --bad-soft: #422522;
-      --unknown: #b7b9b8;
-      --unknown-soft: #2a2d2d;
-      --grid: #2a2e27;
+      --bg: #020817;
+      --panel: #0F172A;
+      --panel-alt: #111827;
+      --border: #334155;
+      --ink: #F8FAFC;
+      --muted: #CBD5E1;
+      --accent: var(--brand-teal);
+      --bad: #FCA5A5;
+      --warn: #FCD34D;
+      --ok: #6EE7B7;
+      --ok-soft: rgba(16, 185, 129, 0.18);
+      --bad-soft: rgba(185, 28, 28, 0.18);
+      --unknown: #CBD5E1;
+      --unknown-soft: rgba(148, 163, 184, 0.18);
+      --grid: #1E293B;
+      --chart-grid: #334155;
+      --chart-line: #E2E8F0;
+      --chart-point: #F8FAFC;
+      --chart-threshold: #FCA5A5;
+      --chart-direct: #F8FAFC;
+      --chart-derivative: #CBD5E1;
+      --chart-nomarket: #FDBA74;
+      --inset: #1E293B;
+      --critical-soft: rgba(185, 28, 28, 0.18);
+      --warning-soft: rgba(245, 158, 11, 0.18);
+      --success-soft: rgba(16, 185, 129, 0.18);
+      --neutral-soft: rgba(148, 163, 184, 0.18);
+      --focus-ring: rgba(110, 231, 183, 0.35);
+      --press-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
     }
   }
   * { box-sizing: border-box; }
@@ -47,53 +148,146 @@
     color: var(--ink);
     font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
-  .wrap { max-width: 900px; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
-  header { border-bottom: 1px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.75rem; }
-  h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.01em; }
-  .sub { color: var(--muted); font-size: .92rem; margin: 0; }
-  .controls { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; margin-bottom: 1.5rem; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: var(--space-10) var(--space-5) var(--space-20); }
+  header { border-bottom: 1px solid var(--border); padding-bottom: var(--space-5); margin-bottom: var(--space-7); }
+  h1 { font-size: var(--text-xl); margin: 0 0 var(--space-1); letter-spacing: -0.02em; }
+  .sub { color: var(--muted); font-size: var(--text-md); margin: 0; }
+  .controls { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; margin-bottom: var(--space-6); }
   select, button {
-    font: inherit; padding: .5rem .8rem; border-radius: 6px;
+    font: inherit; padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
     border: 1px solid var(--border); background: var(--panel); color: var(--ink);
+    transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
   }
-  button { cursor: pointer; font-weight: 550; }
-  button:hover:not(:disabled) { border-color: var(--accent); }
-  button:disabled { opacity: .55; cursor: default; }
+  button { cursor: pointer; font-weight: 600; }
+
+  /* Interactive state contract (issue #285) -------------------------------
+     Four states, defined once here and never redefined per component.
+     Specified concretely in docs/ui-states.md; this block is the
+     implementation of that spec.
+
+       rest      panel background, border colour
+       hover     pointer over an enabled control: accent border, raised bg.
+                 Wrapped in (hover: hover) so a touch device never gets a
+                 sticky hover it cannot move a pointer out of.
+       focus     keyboard focus only (:focus-visible): accent border plus the
+                 focus ring. A mouse click does not trigger it, so pointer
+                 users are not shown a ring they did not need.
+       active    the control is being pressed: inset shadow via --press-shadow
+                 and the raised background. No translate — moving the element
+                 under the finger shifts the press target mid-press.
+       disabled  reduced opacity, muted ink, default cursor, and no hover or
+                 active feedback: a control that cannot act must not look as
+                 if it is about to.
+
+     The boundary the issue sets: how a state looks is decided here; when a
+     state fires is the browser's own semantics — this stylesheet adds no
+     class toggling and no script-driven state.
+
+     Colour here is affordance only. The interactive tokens (accent, border,
+     panel, focus-ring, press-shadow) say "this can be acted on" and nothing
+     else; verdicts (GOOD/FAIR/POOR/UNUSABLE), integrity states and the
+     UNDETERMINED metric state keep their own palette and are never
+     referenced from these rules. */
+  @media (hover: hover) {
+    button:hover:not(:disabled), select:hover:not(:disabled) {
+      border-color: var(--accent); background: var(--panel-alt);
+    }
+  }
+  button:active:not(:disabled) {
+    background: var(--panel-alt); box-shadow: var(--press-shadow);
+  }
+  button:focus-visible, select:focus-visible {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring);
+  }
+  /* The reload link inside an error banner is the only inline anchor; it
+     takes keyboard focus and must say so (issue #293 made it focusable, this
+     makes the focus visible). */
+  a:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-xs);
+  }
+  button:disabled, select:disabled {
+    opacity: .55; cursor: default; color: var(--muted);
+  }
+  /* Disabled is the end of the interaction story: explicitly cancel any
+     hover carry-over so a pointer resting on a disabled control shows rest
+     styling. Sits after the hover rule so equal specificity resolves here. */
+  button:disabled:hover, select:disabled:hover {
+    border-color: var(--border); background: var(--panel); box-shadow: none;
+  }
+
+  /* Reduced motion: the state changes stay (they are the feedback), the
+     animation does not. The loading dots freeze at a steady visible opacity
+     so the cold-start state still reads without the pulse. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important;
+    }
+    .loading-dots span { animation: none; opacity: .7; }
+  }
+  /* Motion (#307): the only animated states are the cold-start dots and the
+     panel entrance on a result render — both wayfinding, neither ever
+     delaying a figure: they run outside the reading flow, finish in well
+     under half a second, and touch no metric text. Under
+     prefers-reduced-motion every animation and transition collapses to an
+     opacity change only, so state still changes visibly without any
+     movement. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+  @media (max-width: 640px) {
+    .controls { align-items: stretch; }
+    .controls > * { flex: 1 1 100%; }
+  }
   .panel {
     background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; padding: 1.15rem 1.25rem; margin-bottom: 1.25rem;
+    border-radius: var(--radius-md); padding: var(--space-5) var(--space-5); margin-bottom: var(--space-5);
   }
-  .integrity-card { display: grid; grid-template-columns: auto 1fr; gap: .75rem 1rem; align-items: start; margin-bottom: .35rem; }
+  /* Panel entrance: a 240ms fade-and-settle that reads as the result having
+     arrived, not as decoration. Under reduced motion the global override
+     turns it into an instantaneous appear. */
+  .panel { animation: panel-in 240ms ease-out; }
+  @keyframes panel-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .integrity-card { display: grid; grid-template-columns: auto 1fr; gap: var(--space-3) var(--space-4); align-items: start; margin-bottom: var(--space-1); }
   .badge {
-    display: inline-flex; align-items: center; gap: .45rem; width: fit-content;
+    display: inline-flex; align-items: center; gap: var(--space-2); width: fit-content;
     font: 700 .78rem/1 var(--mono); letter-spacing: .06em;
-    padding: .55rem .7rem; border-radius: 7px; border: 2px solid currentColor;
+    padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); border: 2px solid currentColor;
     text-transform: uppercase; white-space: nowrap;
+    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.02);
   }
   .badge::before { font-size: 1rem; line-height: 1; }
-  .b-direct { color: var(--ok); background: var(--ok-soft); }
+  .b-direct { color: var(--brand-navy); background: var(--neutral-soft); }
   .b-direct::before { content: "◆"; }
-  .b-derivative { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--panel)); }
+  .b-derivative { color: var(--brand-slate); background: var(--warning-soft); }
   .b-derivative::before { content: "↪"; }
-  .b-nomarket { color: var(--bad); background: var(--bad-soft); }
+  .b-nomarket { color: var(--brand-coral); background: rgba(249, 115, 22, 0.12); }
   .b-nomarket::before { content: "∅"; }
   .integrity-copy { min-width: 0; }
   .integrity-title { font-weight: 700; margin: 0; }
-  .integrity-help { color: var(--muted); font-size: .88rem; margin: .15rem 0 0; }
-  .integrity-dependency { font-family: var(--mono); font-size: .8rem; margin: .35rem 0 0; color: var(--warn); }
+  .integrity-help { color: var(--muted); font-size: .88rem; margin: var(--space-1) 0 0; }
+  .integrity-dependency { font-family: var(--mono); font-size: .8rem; margin: var(--space-1) 0 0; color: var(--warn); }
   .integrity-card .badge[title] { cursor: help; }
-  @media (max-width: 520px) { .integrity-card { grid-template-columns: 1fr; gap: .45rem; } }
-  .finding { font-size: 1.02rem; margin: .85rem 0 0; }
+  @media (max-width: 520px) { .integrity-card { grid-template-columns: 1fr; gap: var(--space-2); } }
+  .finding { font-size: 1.02rem; margin: var(--space-3) 0 0; }
   .rec-none {
-    margin-top: .9rem; padding: .7rem .85rem; border-radius: 6px;
+    margin-top: var(--space-4); padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
     border: 1px solid var(--bad); color: var(--bad); font-size: .9rem;
   }
   .rec-some {
-    margin-top: .9rem; padding: .7rem .85rem; border-radius: 6px;
+    margin-top: var(--space-4); padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
     border: 1px solid var(--ok); color: var(--ok); font-size: .9rem;
   }
   table { width: 100%; border-collapse: collapse; font-size: .88rem; }
-  th, td { text-align: right; padding: .42rem .5rem; border-bottom: 1px solid var(--grid); }
+  th, td { text-align: right; padding: var(--space-2) var(--space-2); border-bottom: 1px solid var(--grid); }
   th:first-child, td:first-child, th:last-child, td:last-child { text-align: left; }
   th { color: var(--muted); font-weight: 550; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
   td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -101,82 +295,82 @@
   .v-poor { color: var(--warn); }
   .v-good, .v-fair { color: var(--ok); }
   .scroll { overflow-x: auto; }
-  .finding-row { display: flex; gap: .7rem; align-items: baseline; padding: .5rem 0;
+  .finding-row { display: flex; gap: var(--space-3); align-items: baseline; padding: var(--space-2) 0;
                  border-bottom: 1px solid var(--grid); }
   .finding-row:last-child { border-bottom: 0; }
-  .f-state { font: 600 .68rem/1.5 var(--mono); letter-spacing: .05em; padding: .1rem .45rem;
-             display: inline-flex; align-items: center; gap: .28rem; min-width: 5.3rem;
-             border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }
+  .f-state { font: 600 .68rem/1.5 var(--mono); letter-spacing: .05em; padding: var(--space-1) var(--space-2);
+             display: inline-flex; align-items: center; gap: var(--space-1); min-width: 5.3rem;
+             border-radius: var(--radius-xs); border: 1px solid currentColor; white-space: nowrap; }
   .f-state::before { font: 700 .8rem/1 var(--mono); }
-  .f-pass { color: var(--ok); background: var(--ok-soft); }
+  .f-pass { color: var(--success); background: var(--success-soft); }
   .f-pass::before { content: "✓"; }
-  .f-fail { color: var(--bad); background: var(--bad-soft); }
+  .f-fail { color: var(--critical); background: var(--critical-soft); }
   .f-fail::before { content: "×"; }
-  .f-unknown { color: var(--unknown); background: var(--unknown-soft); }
+  .f-unknown { color: var(--brand-slate); background: var(--neutral-soft); }
   .f-unknown::before { content: "?"; }
-  .finding-row:has(.f-pass) { background: var(--ok-soft); border-left: 3px solid var(--ok); padding-left: .65rem; }
-  .finding-row:has(.f-fail) { background: var(--bad-soft); border-left: 3px solid var(--bad); padding-left: .65rem; }
-  .finding-row:has(.f-unknown) { background: var(--unknown-soft); border-left: 3px solid var(--unknown); padding-left: .65rem; }
+  .finding-row:has(.f-pass) { background: var(--ok-soft); border-left: 3px solid var(--ok); padding-left: var(--space-3); }
+  .finding-row:has(.f-fail) { background: var(--bad-soft); border-left: 3px solid var(--bad); padding-left: var(--space-3); }
+  .finding-row:has(.f-unknown) { background: var(--unknown-soft); border-left: 3px solid var(--unknown); padding-left: var(--space-3); }
   .f-body { flex: 1; min-width: 0; }
   .f-id { font-family: var(--mono); font-size: .76rem; color: var(--muted); }
   .f-summary { font-size: .9rem; }
-  .f-limit { font-size: .8rem; color: var(--muted); margin-top: .2rem; }
+  .f-limit { font-size: .8rem; color: var(--muted); margin-top: var(--space-1); }
   .f-evidence { font-family: var(--mono); font-size: .74rem; color: var(--muted);
-                margin-top: .3rem; word-break: break-all; }
+                margin-top: var(--space-1); word-break: break-all; }
   .m-value {
     font: 700 1.2rem/1.15 var(--mono); font-variant-numeric: tabular-nums;
-    margin-top: .3rem; color: var(--ink);
+    margin-top: var(--space-1); color: var(--ink);
   }
   .m-unit {
     color: var(--muted); font: 600 .72rem/1 var(--mono);
-    text-transform: uppercase; letter-spacing: .05em; margin-left: .45rem;
+    text-transform: uppercase; letter-spacing: .05em; margin-left: var(--space-2);
   }
   .m-state {
     display: inline-block; font: 600 .68rem/1.5 var(--mono); letter-spacing: .05em;
-    padding: .1rem .45rem; border-radius: 4px; border: 1px solid currentColor;
-    color: var(--unknown); background: var(--unknown-soft); white-space: nowrap;
-    margin-right: .5rem;
+    padding: var(--space-1) var(--space-2); border-radius: var(--radius-xs); border: 1px solid currentColor;
+    color: var(--brand-slate); background: var(--neutral-soft); white-space: nowrap;
+    margin-right: var(--space-2);
   }
-  .m-unknown { color: var(--unknown); }
-  .meta { color: var(--muted); font-size: .82rem; margin-top: .9rem; }
+  .m-unknown { color: var(--brand-slate); }
+  .meta { color: var(--muted); font-size: .82rem; margin-top: var(--space-4); }
   .err { color: var(--bad); }
-  .provenance { margin-bottom: .9rem; padding: .7rem .85rem; border-radius: 6px;
+  .provenance { margin-bottom: var(--space-4); padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
                 border: 1px solid var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
   .provenance-live { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
-  h2 { font-size: .95rem; margin: 0 0 .8rem; letter-spacing: .01em; }
-  .legend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .55rem; margin-top: .9rem; }
-  .legend-item { display: flex; align-items: center; gap: .45rem; min-width: 0; }
+  h2 { font-size: .95rem; margin: 0 0 var(--space-3); letter-spacing: .01em; }
+  .legend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin-top: var(--space-4); }
+  .legend-item { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
   .legend-item span:last-child { font-size: .8rem; }
   .case { font-size: .88rem; color: var(--muted); }
   .integrity-cell { white-space: nowrap; }
-  .integrity-cell .badge { font-size: .65rem; padding: .3rem .45rem; border-width: 1px; }
+  .integrity-cell .badge { font-size: .65rem; padding: var(--space-1) var(--space-2); border-width: 1px; }
   .integrity-cell .badge::before { font-size: .8rem; }
-  .integrity-cell .integrity-via { font-family: var(--mono); font-size: .72rem; color: var(--warn); margin-left: .35rem; }
+  .integrity-cell .integrity-via { font-family: var(--mono); font-size: .72rem; color: var(--warn); margin-left: var(--space-1); }
   .case strong { color: var(--ink); font-weight: 600; }
-  .cs-info { font-size: .8rem; color: var(--muted); margin-left: .3rem; }
+  .cs-info { font-size: .8rem; color: var(--muted); margin-left: var(--space-1); }
   .cs-info .cs-state { font: 600 .72rem/1 var(--mono); letter-spacing: .04em;
-    padding: .15rem .4rem; border-radius: 3px; border: 1px solid currentColor;
+    padding: var(--space-1) var(--space-2); border-radius: var(--radius-xs); border: 1px solid currentColor;
     vertical-align: middle; }
-  .cs-info .cs-state.cs-direct { color: var(--muted); }
-  .cs-info .cs-state.cs-derivative { color: var(--warn); }
-  .cs-info .cs-state.cs-nomarket { color: var(--bad); }
+  .cs-info .cs-state.cs-direct { color: var(--brand-navy); background: var(--neutral-soft); }
+  .cs-info .cs-state.cs-derivative { color: var(--brand-slate); background: var(--warning-soft); }
+  .cs-info .cs-state.cs-nomarket { color: var(--brand-coral); background: rgba(249, 115, 22, 0.12); }
   svg { width: 100%; height: auto; display: block; }
   .axis { fill: var(--muted); font: 10px var(--mono); }
-  .trend-legend { display: flex; gap: 1.1rem; margin-top: .4rem;
+  .trend-legend { display: flex; gap: var(--space-4); margin-top: var(--space-2);
                   font: 550 .72rem/1 var(--mono); letter-spacing: .05em; color: var(--muted); }
-  .trend-legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
-                      margin-right: .35rem; vertical-align: -1px; }
-  footer { color: var(--muted); font-size: .82rem; border-top: 1px solid var(--border); padding-top: 1.1rem; margin-top: 2rem; }
+  .trend-legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: var(--radius-xs);
+                      margin-right: var(--space-1); vertical-align: -1px; }
+  footer { color: var(--muted); font-size: .82rem; border-top: 1px solid var(--border); padding-top: var(--space-4); margin-top: var(--space-8); }
   code { font-family: var(--mono); font-size: .85em; }
 
   /* Loading / cold-start state ------------------------------------------- */
   .loading-panel {
     background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; padding: 1.5rem 1.25rem; margin-bottom: 1.25rem;
-    display: flex; flex-direction: column; gap: .9rem;
+    border-radius: var(--radius-md); padding: var(--space-6) var(--space-5); margin-bottom: var(--space-5);
+    display: flex; flex-direction: column; gap: var(--space-4);
   }
   .loading-dots {
-    display: flex; gap: .45rem; align-items: center;
+    display: flex; gap: var(--space-2); align-items: center;
   }
   .loading-dots span {
     width: 8px; height: 8px; border-radius: 50%;
@@ -186,16 +380,46 @@
   .loading-dots span:nth-child(2) { animation-delay: .22s; }
   .loading-dots span:nth-child(3) { animation-delay: .44s; }
   @keyframes pulse {
-    0%, 80%, 100% { opacity: .25; transform: scale(.9); }
-    40%            { opacity: 1;   transform: scale(1); }
+    0%, 80%, 100% { opacity: .25; }
+    40%            { opacity: .85; }
   }
   .loading-what {
     font-size: .97rem; color: var(--ink);
   }
   .loading-wake {
     font-size: .85rem; color: var(--muted);
-    border-left: 3px solid var(--border); padding-left: .7rem;
+    border-left: 3px solid var(--border); padding-left: var(--space-3);
   }
+
+  /* Empty states (issue #300) --------------------------------------------
+   * One component, deliberately distinct per cause. An empty state is an
+   * *absence of data*, so it is rendered neutral (a grey `?`/`∅`/`—` glyph),
+   * never with a severity colour — "nothing was measured here" must not read
+   * as "this is bad." Each variant carries a word and a glyph, not colour
+   * alone (WCAG SC 1.4.1), and stays keyboard-reachable because it is plain
+   * text with no interactive parts. */
+  .empty-state {
+    display: flex; gap: var(--space-3); align-items: flex-start;
+    padding: var(--space-1) 0;
+  }
+  .empty-state .es-glyph {
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    width: 2rem; height: 2rem; border-radius: var(--radius-md);
+    border: 1px solid var(--availability-undetermined);
+    color: var(--availability-undetermined);
+    font: var(--weight-bold) 1.1rem/1 var(--font-mono);
+  }
+  .empty-state .es-copy { min-width: 0; }
+  .empty-state .es-title {
+    font-weight: var(--weight-semibold); margin: 0; color: var(--ink);
+  }
+  .empty-state .es-body {
+    margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-base);
+  }
+  /* A no-market empty state belongs to the integrity family, so it borrows
+   * that role's glyph but stays neutral — the distinction (structural absence,
+   * not a bad price) is carried by the copy, per docs/state-vocabulary.md. */
+  .empty-state.es-structural .es-glyph { border-color: var(--muted); color: var(--muted); }
 </style>
 </head>
 <body>
@@ -225,11 +449,14 @@
       </div>
       <p class="loading-what">
         Wayfare prices a stablecoin&nbsp;&rarr;&nbsp;fiat-token corridor against
-        an independent reference rate and states plainly when no route is worth taking.
+        an independent reference rate, scores every route against that benchmark,
+        and states plainly when no route is worth taking.
       </p>
       <p class="loading-wake">
-        The instance may be waking up from sleep &mdash; Render free-tier pauses
-        after 15&nbsp;minutes of inactivity. This usually takes under a minute.
+        Select a corridor above and press <strong>Measure live</strong> to fetch a fresh
+        reading, or <strong>Show trend</strong> to inspect recorded history. The instance may
+        be waking up from sleep &mdash; Render free-tier pauses after 15&nbsp;minutes of
+        inactivity (this usually takes under a minute).
       </p>
     </div>
   </div>
@@ -252,6 +479,32 @@ const formatPct = (s) => {
   const n = parseFloat(s);
   return isNaN(n) ? s : n.toFixed(2);
 };
+
+// emptyState renders a labelled absence of data (issue #300). Six distinct
+// causes route through this one component so "empty" is never ambiguous: the
+// caller names the cause in the title and explains it in the body. It is
+// deliberately neutral — an absence of data is not a verdict — so it uses the
+// availability-undetermined role, never a severity colour. The glyph is
+// aria-hidden because the words already say everything: it is decoration, and
+// removing colour (or the glyph) leaves a fully meaningful state (WCAG SC 1.4.1).
+const emptyState = ({ glyph = '—', title, body = '', structural = false }) =>
+  `<div class="empty-state${structural ? ' es-structural' : ''}">
+    <span class="es-glyph" aria-hidden="true">${esc(glyph)}</span>
+    <div class="es-copy">
+      <p class="es-title">${esc(title)}</p>
+      ${body ? `<p class="es-body">${esc(body)}</p>` : ''}
+    </div>
+  </div>`;
+
+// capabilityGap is the one empty state that is not an absence of *data* but an
+// absence of *implementation*: a request this build cannot serve at all. It is
+// kept visually distinct (its own glyph) so it is never mistaken for a corridor
+// that was measured and found empty.
+const capabilityGap = (what) => emptyState({
+  glyph: '∅',
+  title: 'Not available in this build',
+  body: what,
+});
 
 const badgeClass = (i) =>
   i === 'NO-MARKET' ? 'b-nomarket' : i === 'DERIVATIVE' ? 'b-derivative' : 'b-direct';
@@ -306,13 +559,20 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // --- Asset / corridor selector -----------------------------------------------
-
-const CORRIDOR_NAMES = {
-  NGNC: 'NGNC (naira)', GHSC: 'GHSC (cedi)', KESC: 'KESC (shilling)',
-};
+//
+// Everything the selector shows comes from GET /api/assets (issue #290): the
+// set of corridors from `can_be_destination`, the send asset at the head of
+// each label from the one entry that is not a destination, and the peg in the
+// label from the entry itself. This file names no asset code, so a corridor
+// the endpoint starts returning appears here without a UI change and one it
+// stops returning disappears with it.
 
 let assetData = null; // cached /api/assets response
 
+// loadAssets fills the selector and resolves to whether a corridor is
+// actually selectable. boot() uses that to tell "the list loaded" apart from
+// "the list could not be loaded", instead of substituting a corridor the
+// endpoint never confirmed.
 async function loadAssets() {
   try {
     const r = await fetch('/api/assets');
@@ -321,16 +581,36 @@ async function loadAssets() {
     assetData = data;
     buildSelector(data);
   } catch (e) {
-    // Fallback: keep the loading placeholder so the user sees the
-    // corridor is unavailable rather than silently defaulting.
+    // No default is substituted here: the reader is told the list could not
+    // be loaded rather than handed a corridor this build never verified, and
+    // the reason stays available to boot() as a false return.
     const sel = $('to');
     sel.innerHTML = '<option value="" disabled selected>Could not load corridors</option>';
+    return false;
   }
+  return $('to').value !== '';
 }
 
 function buildSelector(data) {
   const sel = $('to');
-  const assets = (data.assets || []).filter(a => a.can_be_destination);
+  const all = data.assets || [];
+  const assets = all.filter(a => a.can_be_destination);
+  // The send side of every label is the settlement asset: the one entry the
+  // endpoint reports with can_be_destination false (server/api.go). Read from
+  // the response rather than written into this file, so the label is wrong
+  // only if the API is. When no such entry exists the prefix is omitted — an
+  // unknown send asset is unknown, never assumed to be USDC.
+  const settlement = (all.find(a => !a.can_be_destination) || {}).code || '';
+  if (assets.length === 0) {
+    // Nothing measurable: say so as its own state rather than leaving an empty
+    // dropdown that looks like a loading bug (issue #300).
+    sel.innerHTML = '<option value="" disabled selected>No corridors available</option>';
+    $('out').innerHTML = `<div class="panel">${emptyState({
+      title: 'No corridors to measure',
+      body: 'This instance has verified no destination assets.',
+    })}</div>`;
+    return;
+  }
   // Sort: corridors with history first, then alphabetically.
   assets.sort((a, b) => {
     const ah = a.state && a.state.has_history ? 0 : 1;
@@ -340,16 +620,24 @@ function buildSelector(data) {
   });
 
   sel.innerHTML = assets.map((a, i) => {
-    const label = CORRIDOR_NAMES[a.code] || a.code;
+    // Destination from the entry's own code, the peg it reports beside it,
+    // and the settlement asset found above: `USDC \u2192 NGNC (NGN)` built
+    // entirely from the response. The optional bracketed note is the stored
+    // integrity state the endpoint attached, not a figure this file knows.
+    const dest = `${a.code}${a.peg ? ` (${a.peg})` : ''}`;
+    const label = settlement ? `${settlement} \u2192 ${dest}` : dest;
     const note = a.state && a.state.has_history
       ? ` [${a.state.last_integrity}]` : '';
     return `<option value="${esc(a.code)}"${i === 0 ? ' selected' : ''}>` +
-      `USDC \u2192 ${esc(label)}${esc(note)}</option>`;
+      `${esc(label)}${esc(note)}</option>`;
   }).join('');
 
   // Show the detail line for the initially selected corridor.
   updateCorridorDetail(sel.value);
-  sel.addEventListener('change', () => updateCorridorDetail(sel.value));
+  sel.addEventListener('change', () => {
+    updateCorridorDetail(sel.value);
+    loadCorridor(sel.value);
+  });
 }
 
 function updateCorridorDetail(code) {
@@ -377,25 +665,66 @@ function fmtISOTime(v) {
   return `${MONTHS[d.getUTCMonth()]} ${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`;
 }
 
+// --- Error presentation ------------------------------------------------------
+
+// showErrorBanner drops an error banner at the top of #out without clearing
+// what is already there (issue #293). A failed live measurement or history
+// load must never leave an empty page: the reader keeps the reading that was
+// on screen and their corridor and size selections stay intact, so recovery
+// is a retry, not re-entering everything. Any earlier banner is removed
+// first, so banners never stack when a reader retries and fails again.
+//
+// The banner is role="alert" (announced to assistive tech) and always
+// carries the failure reason in text, never colour alone.
+function showErrorBanner(message) {
+  const out = $('out');
+  const prior = out.querySelector('.panel.err');
+  if (prior) prior.remove();
+  out.insertAdjacentHTML('afterbegin',
+    `<div class="panel err" role="alert">${message}</div>`);
+}
+
 // --- Measurement -------------------------------------------------------------
 
 async function measure() {
   const to = $('to').value;
+  if (!to) {
+    // No corridor selected is its own empty state — distinct from a corridor
+    // that was measured and returned nothing (issue #300).
+    $('out').innerHTML =
+      `<div class="panel">${emptyState({
+        title: 'No corridor selected',
+        body: 'Choose a destination asset above, then measure it.',
+      })}</div>`;
+    return;
+  }
   $('run').disabled = true;
   $('status').textContent = 'measuring live — a full ladder is a dozen round trips…';
-  $('out').innerHTML = '';
   try {
     const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}&live=1`);
     const data = await r.json();
-    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code });
     render(data);
     $('status').textContent = '';
   } catch (e) {
-    $('out').innerHTML = `<div class="panel err">Could not measure: ${esc(e.message)}</div>`;
+    showErrorBanner(`Could not measure: ${esc(e.message)}`);
     $('status').textContent = '';
   } finally {
     $('run').disabled = false;
   }
+}
+
+// errorPanel turns a fetch/measurement failure into the right absence. A code
+// the server uses to say "this build cannot service that request at all" is a
+// capability gap, not a corridor that measured empty, so it renders as one;
+// everything else is a genuine unavailable-data error naming the cause.
+function errorPanel(prefix, e) {
+  if (e.code === 'unknown_receive_asset') {
+    return `<div class="panel">${capabilityGap(
+      'Wayfare measures a fixed set of verified corridors and cannot price an ' +
+      'arbitrary asset. Choose a verified destination from the selector.')}</div>`;
+  }
+  return `<div class="panel err">${esc(prefix)}: ${esc(e.message)}</div>`;
 }
 
 function render(d) {
@@ -450,8 +779,16 @@ function unscoredBlock(d) {
 // never falls back to "the best of a bad set".
 function recommendationBlock(d) {
   if (d.integrity === 'NO-MARKET') {
-    return `<div class="rec-none">No route exists at any size tested.
-      There is nothing to recommend, and nothing to price.</div>`;
+    // A no-market corridor is a structural absence, not a bad price, so it
+    // renders as the no-market empty state rather than a red recommendation
+    // box — the distinction issue #299 makes binding (issue #300).
+    return emptyState({
+      glyph: '∅',
+      structural: true,
+      title: 'No market exists',
+      body: 'No route reaches this destination at any size tested. There is no ' +
+        'price to grade here, which is a different result from an expensive one.',
+    });
   }
   if (!d.recommended) {
     return `<div class="rec-none">No recommendation. Every size tested is graded
@@ -482,12 +819,12 @@ function curve(rungs) {
 
   // The 20% line is the Unusable threshold; everything above it is refused.
   const thresh = `<line x1="${P}" y1="${sy(20)}" x2="${W - P}" y2="${sy(20)}"
-      stroke="var(--bad)" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
-    <text class="axis" x="${W - P - 96}" y="${sy(20) - 5}" fill="var(--bad)">unusable above</text>`;
+      stroke="var(--chart-threshold)" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+    <text class="axis" x="${W - P - 96}" y="${sy(20) - 5}" fill="var(--chart-threshold)">unusable above</text>`;
 
   const dots = xs.map((x, i) =>
     `<circle cx="${sx(x).toFixed(1)}" cy="${sy(ys[i]).toFixed(1)}" r="3"
-       fill="var(--bad)"><title>${esc(rungs[i].send_amount)} → ${formatPct(rungs[i].quote.loss_pct)}% loss</title></circle>`).join('');
+       fill="var(--chart-point)"><title>${esc(rungs[i].send_amount)} → ${formatPct(rungs[i].quote.loss_pct)}% loss</title></circle>`).join('');
 
   const labels = rungs.map((r, i) =>
     (i === 0 || i === rungs.length - 1 || i === Math.floor(rungs.length / 2))
@@ -497,7 +834,7 @@ function curve(rungs) {
   return `<svg viewBox="0 0 ${W} ${H}" role="img"
     aria-label="Loss against mid rising with trade size">
     ${grid}${thresh}
-    <polyline points="${pts.join(' ')}" fill="none" stroke="var(--bad)" stroke-width="2"/>
+    <polyline points="${pts.join(' ')}" fill="none" stroke="var(--chart-line)" stroke-width="2"/>
     ${dots}${labels}
     <text class="axis" x="${W / 2}" y="${H - 4}" text-anchor="middle">send amount (log scale)</text>
   </svg>`;
@@ -713,7 +1050,6 @@ async function loadTrend() {
   const to = $('to').value;
   $('trend').disabled = true;
   $('status').textContent = 'loading stored history…';
-  $('out').innerHTML = '';
   try {
     const r = await fetch(`/api/corridor/trend?to=${encodeURIComponent(to)}`);
     const data = await r.json();
@@ -722,8 +1058,9 @@ async function loadTrend() {
     renderTrend();
     $('status').textContent = '';
   } catch (e) {
-    trendState = null;
-    $('out').innerHTML = `<div class="panel err">Could not load history: ${esc(e.message)}</div>`;
+    // trendState keeps its previous value: the last good history load stays
+    // readable (and its size control usable) under the banner.
+    showErrorBanner(`Could not load history: ${esc(e.message)}`);
     $('status').textContent = '';
   } finally {
     $('trend').disabled = false;
@@ -756,10 +1093,13 @@ function renderTrend() {
   if (runs.length === 0) {
     parts.push(`<div class="panel">
       <h2>Trend &mdash; ${esc(d.corridor)}</h2>
-      <p>No stored runs for this corridor yet. The scheduler records a run
-      every 6 hours, and the trend appears as history exists. Nothing is
-      interpolated, estimated, or borrowed from another corridor in the
-      meantime.</p></div>`);
+      ${emptyState({
+        glyph: '…',
+        title: 'No stored runs yet',
+        body: 'The scheduler records a run every 6 hours, and the trend appears ' +
+          'as history exists. Nothing is interpolated, estimated, or borrowed ' +
+          'from another corridor in the meantime.',
+      })}</div>`);
     $('out').innerHTML = parts.join('');
     return;
   }
@@ -775,7 +1115,7 @@ function renderTrend() {
 
   parts.push(`<div class="panel">
     <h2>Loss against mid over time</h2>
-    <div class="controls" style="margin-bottom:.75rem">
+    <div class="controls" style="margin-bottom:var(--space-3)">
       <label for="trend-size">Size</label>
       <select id="trend-size">
         ${trendSizes(d).map(s =>
@@ -867,7 +1207,7 @@ function trendChart(d, size) {
   }).filter(p => !isNaN(p.t));
 
   if (!pts.length)
-    return `<div class="panel" style="border:0; padding:1rem 0">
+    return `<div class="panel" style="border:0; padding: var(--space-4) 0">
       No usable runs for this corridor.</div>`;
 
   const t0 = Math.min(...pts.map(p => p.t));
@@ -887,11 +1227,17 @@ function trendChart(d, size) {
 
   // The 20% line is the Unusable threshold; everything above it is refused.
   const thresh = `<line x1="${P}" y1="${sy(20)}" x2="${W - P}" y2="${sy(20)}"
-      stroke="var(--bad)" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
-    <text class="axis" x="${W - P - 96}" y="${sy(20) - 5}" fill="var(--bad)">unusable above</text>`;
+      stroke="var(--chart-threshold)" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+    <text class="axis" x="${W - P - 96}" y="${sy(20) - 5}" fill="var(--chart-threshold)">unusable above</text>`;
 
+  // Structural integrity states are not severities: they use the chart's own
+  // structural roles, never --warn/--bad, so a NO-MARKET run does not read as
+  // a failure. Anything the engine did not determine stays neutral --muted.
   const dotFill = (i) =>
-    i === 'DERIVATIVE' ? 'var(--warn)' : i === 'NO-MARKET' ? 'var(--bad)' : 'var(--muted)';
+    i === 'DIRECT' ? 'var(--chart-direct)'
+      : i === 'DERIVATIVE' ? 'var(--chart-derivative)'
+      : i === 'NO-MARKET' ? 'var(--chart-nomarket)'
+      : 'var(--muted)';
 
   const segments = [];
   for (let i = 1; i < pts.length; i++) {
@@ -900,7 +1246,7 @@ function trendChart(d, size) {
     const gap = (b.t - a.t) / 3600e3;
     segments.push(`<line x1="${sx(a.t).toFixed(1)}" y1="${sy(a.loss).toFixed(1)}"
        x2="${sx(b.t).toFixed(1)}" y2="${sy(b.loss).toFixed(1)}"
-       stroke="var(--bad)" stroke-width="2"${gap > GAP_HOURS ? ' stroke-dasharray="5 4"' : ''}/>`);
+       stroke="var(--chart-line)" stroke-width="2"${gap > GAP_HOURS ? ' stroke-dasharray="5 4"' : ''}/>`);
   }
 
   const priced = pts.filter(p => p.loss != null);
@@ -958,9 +1304,9 @@ function trendChart(d, size) {
   const ticks = span === 0 ? tick(t0) : [t0, (t0 + t1) / 2, t1].map(tick).join('');
 
   const legend = `<div class="trend-legend">
-      <span><span class="sw" style="background:var(--muted)"></span>DIRECT</span>
-      <span><span class="sw" style="background:var(--warn)"></span>DERIVATIVE</span>
-      <span><span class="sw" style="background:var(--bad)"></span>NO-MARKET</span>
+      <span><span class="sw" style="background:var(--chart-direct)"></span>DIRECT</span>
+      <span><span class="sw" style="background:var(--chart-derivative)"></span>DERIVATIVE</span>
+      <span><span class="sw" style="background:var(--chart-nomarket)"></span>NO-MARKET</span>
     </div>`;
 
   return `<svg viewBox="0 0 ${W} ${H}" role="img"
@@ -997,23 +1343,41 @@ function runsTable(runs) {
 $('run').addEventListener('click', measure);
 $('trend').addEventListener('click', loadTrend);
 
-// On page load, fetch the default corridor from recorded history (no &live=1)
-// so the loading state disappears as soon as the server responds, regardless
-// of whether this is a cold start or a warm one.  A cold start on Render's
-// free tier can take ~60 s; the loading panel explains this to the reader.
-(async function boot() {
-  const to = $('to').value; // NGNC by default
+async function loadCorridor(to) {
+  if (!to) {
+    $('out').innerHTML =
+      `<div class="panel">${emptyState({
+        title: 'No corridor selected',
+        body: 'Choose a destination asset above.',
+      })}</div>`;
+    return;
+  }
   try {
     const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}`);
     const data = await r.json();
-    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code });
     render(data);
   } catch (e) {
-    $('out').innerHTML =
-      `<div class="panel err">Could not load corridor data: ${esc(e.message)}.
-       If the instance is still waking up, wait a moment and
-       <a href="" style="color:inherit">reload</a>.</div>`;
+    showErrorBanner(
+      `Could not load corridor data: ${esc(e.message)}. If the instance is still waking up, wait a moment and <a href="" style="color:inherit">reload</a>.`);
   }
+}
+
+// On page load, populate the corridor selector from /api/assets first, then
+// fetch the corridor it selected from recorded history (no &live=1) so the
+// loading state disappears as soon as the server responds, whether this is a
+// cold start or a warm one. A cold start on Render's free tier can take
+// ~60 s; the loading panel explains this to the reader.
+//
+// The fetch happens only when the endpoint actually offered a corridor: there
+// is no hardcoded default here. A failed or empty asset list leaves the state
+// buildSelector() wrote — "could not load", or "no corridors to measure" — on
+// screen instead of silently measuring a corridor the reader was never given
+// (issue #290).
+(async function boot() {
+  const ready = await loadAssets();
+  if (!ready) return;
+  await loadCorridor($('to').value);
 })();
 </script>
 <script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a30a05c3d811663d',t:'MTc4NzY1NDg4Nw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
