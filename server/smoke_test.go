@@ -35,12 +35,17 @@ func TestSmokeHealthReportsOK(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	var body map[string]string
+	// /healthz also reports per-corridor data freshness now (backlog #41):
+	// only the status field is asserted here, decoded permissively so the
+	// freshness envelope can evolve without breaking the smoke contract.
+	var body struct {
+		Status string `json:"status"`
+	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decoding /healthz: %v", err)
 	}
-	if body["status"] != "ok" {
-		t.Errorf("/healthz status = %q, want %q", body["status"], "ok")
+	if body.Status != "ok" {
+		t.Errorf("/healthz status = %q, want %q", body.Status, "ok")
 	}
 }
 
