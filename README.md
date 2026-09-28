@@ -664,7 +664,9 @@ contribution and has its own guide:
 **[docs/adding-a-corridor.md](docs/adding-a-corridor.md)**
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) first. The invariants there are hard
-constraints, not style preferences.
+constraints, not style preferences. Submissions follow the templates in
+[.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/) and
+[.github/pull_request_template.md](.github/pull_request_template.md).
 
 **Questions?** The [contributor FAQ](docs/contributor-faq.md) covers what the
 project does and does not do, how to get set up, what is not built yet, and how

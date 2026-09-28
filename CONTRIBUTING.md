@@ -166,9 +166,15 @@ Changes to `server/index.html` are only covered by the source-text assertions in
 [docs/qa/README.md](docs/qa/README.md) is a harness that drives the real binary in
 Chromium, Firefox and WebKit and records what it saw.
 
-In the pull request, describe what changed and why. If it touches pricing,
+In the pull request, describe what changed and why using the form at
+[.github/pull_request_template.md](.github/pull_request_template.md). If it touches pricing,
 say how you verified correctness — and if you measured something live,
 include the raw figures and the timestamp.
+
+## Opening an issue
+
+Issues should follow the templates in [.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/)
+(covering features/hardening, spikes/research, documentation, and bug reports).
 
 ## Reporting a corridor
 

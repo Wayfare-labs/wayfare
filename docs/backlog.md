@@ -1765,6 +1765,12 @@ Enabled during this sweep and currently empty.
 repository is high and currently transmitted by example only.
 `V1` `area:ecosystem` `good first issue` `difficulty:easy` `ready`
 
+> **Templates added:** [.github/ISSUE_TEMPLATE/](../.github/ISSUE_TEMPLATE/) and
+> [.github/pull_request_template.md](../.github/pull_request_template.md)
+> (2026-09-28). Derived from real repository issues and CONTRIBUTING.md.
+> Note: issue #328's "Done when" specified `docs/`, but GitHub issue/PR
+> templates must live in `.github/`.
+
 **#276 — A "good first issue" audit** *(filed: [#329](https://github.com/Wayfare-labs/wayfare/issues/329))*
 Seven issues carry the label; confirm each is genuinely completable by a
 stranger with only the README and CONTRIBUTING.
