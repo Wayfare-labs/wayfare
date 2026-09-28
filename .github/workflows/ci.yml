@@ -150,3 +150,53 @@ jobs:
 
       - name: binary runs in the image
         run: docker run --rm wayfare:ci -verify-store -data /tmp/empty
+
+      # The Dockerfile says what the image is made of; nothing in this
+      # repository said whether any of it is known-bad. This is that
+      # inspection, run against the image this job just built, so the gate and
+      # the artifact can never be different artifacts.
+      #
+      # Both steps are pinned to a version and a scanner release, the rule the
+      # lint job follows: a scanner that moved under us would silently change
+      # what "passing" means.
+      #
+      # The report comes first because it never fails. It covers the whole
+      # image — OS packages and language packages — which today means the Go
+      # standard library compiled into /wayfared. On 2026-09-25 that scan
+      # reported 22 HIGH/CRITICAL advisories with fixes, all in `stdlib` at Go
+      # 1.22.12, and every fix is on a later release line (1.24.13+, 1.25.7+,
+      # 1.26.0-rc.3+): not reachable without leaving the toolchain this
+      # repository is pinned to. Those findings are real and are recorded here
+      # rather than gated, because a job that is always red teaches people to
+      # ignore it.
+      - name: report known vulnerabilities in the image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          version: v0.74.0
+          scan-type: image
+          image-ref: wayfare:ci
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: "0"
+
+      # The gate covers what this repository can actually change: the packages
+      # the base image ships. A finding here is always actionable — a newer
+      # distroless tag — so the job never asks for a fix that does not exist.
+      # Unfixed findings are excluded for the same reason: an advisory with no
+      # available patch cannot be acted on, and failing on it would block every
+      # pull request while announcing nothing new.
+      - name: fail on a fixable vulnerability in the image's packages
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          version: v0.74.0
+          scan-type: image
+          image-ref: wayfare:ci
+          scanners: vuln
+          vuln-type: os
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: "1"

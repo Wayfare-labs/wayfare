@@ -21,6 +21,7 @@ findings in:
 | #269 cross-browser matrix | [`artifacts/269-cross-browser.md`](artifacts/269-cross-browser.md) |
 | #270 mobile device QA | [`artifacts/270-mobile.md`](artifacts/270-mobile.md) |
 | #272 QA both colour schemes | [`artifacts/272-color-schemes.md`](artifacts/272-color-schemes.md) |
+| #293 errors preserve the page | [`artifacts/293-error-preservation.md`](artifacts/293-error-preservation.md) |
 
 ## Setup
 
@@ -54,6 +55,7 @@ node run-error-paths.mjs --engine=chromium,firefox,webkit   # #266
 node run-cross-browser.mjs                                  # #269
 node run-mobile.mjs                                         # #270
 node run-color-schemes.mjs                                  # #272
+node run-error-preservation.mjs                             # #293
 ./servers.sh stop
 ```
 

@@ -10,6 +10,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/checks"
 )
 
 func testUSDC() asset.Asset { return asset.USDC() }
@@ -210,6 +211,30 @@ func TestCostComponentsDoNotOverlap(t *testing.T) {
 // computes and carries each priced rung's decomposition — the change that
 // takes Decompose from a test-only function to the value behind every priced
 // rung on the wire. An unpriced rung carries none.
+func TestReconcileComponents(t *testing.T) {
+	total := decimal.NewFromInt(100)
+	comps := map[string]decimal.Decimal{
+		"fx_loss":  decimal.NewFromInt(60),
+		"slippage": decimal.NewFromInt(30),
+	}
+	undetermined := decimal.NewFromInt(10)
+	tolerance := decimal.NewFromFloat(0.1)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+
+	// Mismatch case
+	badComps := map[string]decimal.Decimal{
+		"fx_loss": decimal.NewFromInt(50),
+	}
+	err = ReconcileComponents(total, badComps, undetermined, tolerance)
+	if !errors.Is(err, ErrComponentSumMismatch) {
+		t.Errorf("expected ErrComponentSumMismatch, got %v", err)
+	}
+}
+
 func TestLadderAttachesDecompositionToPricedRungs(t *testing.T) {
 	q := Quote{
 		Kind:          KindDEX,
@@ -526,6 +551,20 @@ func TestAnchorFeeSeparateFromNetworkFees(t *testing.T) {
 // unavailable quantity is unknown, not a default: every component that is
 // genuinely unmeasured must report Determined: false, so that no consumer is
 // told a number was established when nothing was observed.
+func TestSweepCostClassBounding(t *testing.T) {
+	if got := SweepCostClass(1); got != checks.CostOneRequest {
+		Errorf(t, "SweepCostClass(1) = %v, want CostOneRequest", got)
+	}
+	if got := SweepCostClass(5); got != checks.CostExpensive {
+		Errorf(t, "SweepCostClass(5) = %v, want CostExpensive", got)
+	}
+}
+
+func Errorf(t *testing.T, format string, args ...any) {
+	t.Helper()
+	t.Errorf(format, args...)
+}
+
 func TestCostNoDeterminedComponentDefaultsToZero(t *testing.T) {
 	q := Quote{
 		Kind:          KindDEX,
@@ -563,5 +602,72 @@ func TestCostNoDeterminedComponentDefaultsToZero(t *testing.T) {
 				t.Errorf("undetermined %s must name what would determine it", p.Component)
 			}
 		}
+	}
+}
+
+func TestReconcileComponents_ExactMatch(t *testing.T) {
+	total := decimal.NewFromFloat(10.50)
+	comps := map[string]decimal.Decimal{
+		"fee":     decimal.NewFromFloat(0.50),
+		"fx_loss": decimal.NewFromFloat(10.00),
+	}
+	tolerance := decimal.NewFromFloat(0.001)
+	undetermined := decimal.NewFromFloat(0)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+}
+
+func TestReconcileComponents_WithinTolerance(t *testing.T) {
+	total := decimal.NewFromFloat(10.50)
+	comps := map[string]decimal.Decimal{
+		"fee":     decimal.NewFromFloat(0.501),
+		"fx_loss": decimal.NewFromFloat(10.00),
+	}
+	tolerance := decimal.NewFromFloat(0.01)
+	undetermined := decimal.NewFromFloat(0)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != nil {
+		t.Fatalf(
+			"expected nil error within tolerance, got %v",
+			err,
+		)
+	}
+}
+
+func TestReconcileComponents_CoveredByUndetermined(t *testing.T) {
+	total := decimal.NewFromFloat(15.00)
+	comps := map[string]decimal.Decimal{
+		"fee": decimal.NewFromFloat(5.00),
+	}
+	undetermined := decimal.NewFromFloat(10.00)
+	tolerance := decimal.NewFromFloat(0.001)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != nil {
+		t.Fatalf(
+			"expected undetermined shortfall to reconcile, got %v",
+			err,
+		)
+	}
+}
+
+func TestReconcileComponents_MismatchError(t *testing.T) {
+	total := decimal.NewFromFloat(20.00)
+	comps := map[string]decimal.Decimal{
+		"fee": decimal.NewFromFloat(5.00),
+	}
+	undetermined := decimal.NewFromFloat(2.00)
+	tolerance := decimal.NewFromFloat(0.001)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != ErrComponentSumMismatch {
+		t.Fatalf(
+			"expected ErrComponentSumMismatch, got %v",
+			err,
+		)
 	}
 }

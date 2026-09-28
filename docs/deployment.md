@@ -225,6 +225,8 @@ put a secret into the deployment, and this service holds none.
 | `-verify-store` | | | Walk every chain and exit |
 | `-rotate-store` | | | Trim every chain over the window ceiling and exit |
 | `-rotate-records` | | `366` | Per-corridor record ceiling for `-rotate-store` |
+| `-check-fresh` | | | Report corridors whose newest record is older than `-max-age` (or missing) and exit |
+| `-max-age` | | `12h` | Staleness ceiling for `-check-fresh`; default is two missed sweeps |
 | `-log-level` | `WAYFARE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 No secrets. No credentials to rotate — the store rotates itself, trimming chains
@@ -233,6 +235,40 @@ over the window ceiling; see [run-store.md](run-store.md#rotating-a-chain).
 **A store that fails to open is fatal.** On a deployment with a volume
 attached, that means the volume did not mount, and running anyway would record
 nothing while the health check stayed green.
+
+---
+
+## Alerting when a scheduled measurement fails
+
+A scheduled sweep that stops is the one failure mode that is invisible from
+the outside: the server keeps answering from history, the workflow that
+didn't run produces no failure log, and the gap is noticed days later. So
+detection has two independent halves.
+
+**In-process.** `wayfared -once` exits non-zero when the sweep itself fails
+(all corridors failed). The scheduled `measure` workflow gates on that, so a
+failing sweep is a red run.
+
+**Out-of-process.** A red run only exists if the schedule fired at all. To
+catch the cases no in-process failure can report — the cron never ran, the
+workflow was disabled, or the measurement PR was rejected — run the
+staleness detector on any independent clock (cron, another workflow, an
+uptime check):
+
+```bash
+go run ./cmd/wayfared -check-fresh -data ./data -max-age 12h
+```
+
+It reads only the store — no network — and exits `0` when every corridor has
+a record within `-max-age`, `1` when any corridor is stale or has never
+recorded, and `2` when the check itself could not run (unreadable store,
+non-positive `-max-age`). The checked set is the scheduler's expected
+corridors unioned with whatever the store holds, so a corridor whose history
+vanished fails exactly like a stale one: unknown is never a silent pass. A
+non-zero exit from either half should be made loud by the runner — the
+`measure` workflow carries an alert step that opens or updates a single
+tracking issue rather than emitting one new issue per failure (detection is
+idempotent; see [spike-alerting-semantics.md](spike-alerting-semantics.md)).
 
 ---
 

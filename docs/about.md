@@ -142,5 +142,6 @@ the issuer account is the identity (`asset/`, checked 2026-09-25).
 - The HTTP API: [docs/api.md](api.md)
 - Why a monitor and not a router: the README's [Why a monitor](../README.md#why-a-monitor-and-not-a-router)
   section
+- Why Stellar-native and what the code uses: [docs/why-stellar-native.md](why-stellar-native.md)
 - What this project will never build: [docs/non-goals.md](non-goals.md)
 - The contributor backlog: [docs/backlog.md](backlog.md)
