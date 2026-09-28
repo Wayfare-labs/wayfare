@@ -10,6 +10,37 @@ backlog section. Each artifact states its own target, timestamps and endpoints.
 | #264 | QA the NO-MARKET corridor end to end | [264-nomarket-corridor.md](264-nomarket-corridor.md) | `qa/issues-257-263-264-265` |
 | #265 | QA the DERIVATIVE corridor end to end | [265-derivative-corridor.md](265-derivative-corridor.md) | `qa/issues-257-263-264-265` |
 | #261 | Time a full live ladder against the server timeout | [261-live-ladder-timeout.md](261-live-ladder-timeout.md) | `full-live-ladder` |
+| #258 | Record the cold-start behaviour properly | [258-cold-start-distribution.md](258-cold-start-distribution.md) | `verify-claims` |
+| #259 | Verify the deployed instance against the repository it claims to be | [259-served-history-vs-committed.md](259-served-history-vs-committed.md) | `verify-claims` |
+| #260 | QA the API from a consumer's perspective, not the UI's | [260-api-consumer-qa.md](260-api-consumer-qa.md) | `verify-claims` |
+| #262 | Verify /healthz behaviour during a cold start | [262-healthz-cold-start.md](262-healthz-cold-start.md) | `verify-claims` |
+
+---
+
+## Bundle: #258, #259, #260, #262
+
+**Branch:** `verify-claims`
+**Target:** https://wayfare-cdb9.onrender.com/
+**Tested by:** chiprime
+**Timestamp:** 2026-09-26T01:26Z – 2026-09-26T01:27Z (API and history), with a
+separate cold-start measurement recorded in the artifacts.
+
+Reusable harness: [`../api/`](../api/). Recorded results:
+[`../api/results/`](../api/results/).
+
+### Key findings
+
+1. The served history matches the committed chain on every field the API
+   exposes, and the committed chain verifies locally (#259). ✅
+2. `/api/assets` and `/healthz` return 200 for `POST`/`PUT`, contradicting
+   `docs/api.md`'s "unsupported methods return 405" (#260). ❌
+3. Error `code` casing differs between `/api/corridor` (lowercase) and
+   `/api/corridor/trend` (uppercase) (#260). ⚠️
+4. `pretty`, the `/healthz` `data` block and CORS preflight are implemented but
+   undocumented (#260). ⚠️
+
+The method-handling and code-casing mismatches are the findings filed
+separately, per the issue constraints.
 
 ---
 

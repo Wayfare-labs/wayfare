@@ -8,6 +8,15 @@
 # than a hosted instance in one respect: anyone can clone it and run
 # `wayfared -verify-store -data ./data` to check that no past record was
 # edited. Nobody has to trust a server they cannot inspect.
+#
+# The committed store is a bounded window, not the whole chain (ADR 007,
+# issue #201). Each corridor keeps its newest 366 records — one calendar
+# quarter at this cadence — and a chain that has outgrown the window is
+# rotated down to the ceiling. Rotation re-seals the surviving records (their
+# prev_hash chain restarts from the genesis hash), so the window still
+# verifies; the dropped, older records remain in the repository's own git
+# history, which is the archive this workflow commits to. Measurement data
+# itself is never edited: only the two hash fields move.
 
 name: measure
 
@@ -44,6 +53,14 @@ jobs:
 
       - name: Measure corridors
         run: go run ./cmd/wayfared -once -data ./data
+
+      # After measuring, before verifying: a chain that has outgrown the
+      # window ceiling is rotated down to the newest 366 records and the
+      # surviving window is re-sealed so it still verifies. Dropped records
+      # are not lost to the archive — they live in the repository's history,
+      # which this workflow grows on every run.
+      - name: Rotate chains over the window ceiling
+        run: go run ./cmd/wayfared -rotate-store -data ./data
 
       # Before committing, not after. A chain that does not verify must never
       # reach the repository: appending to a broken one buries the break under

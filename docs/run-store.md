@@ -176,7 +176,8 @@ chains**, exactly like the Version 2 migration:
 Concretely:
 
 - A record written as Version 1 or Version 2 stays that version on disk
-  forever. Nothing is relabelled or rewritten — the store is append-only.
+  forever. Nothing is relabelled or rewritten — the store is append-only
+  except for rotation (see [Rotating a chain](#rotating-a-chain)).
 - New records are written `version: 3`, carrying `fetched_at` when the
   measurement knew when its rate was fetched and omitting it when it did not
   (an older build's record, or a provider that left the stamp unset — the
@@ -211,7 +212,8 @@ chains**, and intentionally so:
 Concretely:
 
 - A record written as Version 1 stays `version: 1` on disk forever. Nothing
-  is relabelled or rewritten — the store is append-only.
+  is relabelled or rewritten — the store is append-only except for rotation
+  (see [Rotating a chain](#rotating-a-chain)).
 - New records are written `version: 2`, with a `checks`/`metrics` block when
   checks ran and both blocks omitted when none did.
 - A corridor's file can therefore become a **mixed-version chain** (older
@@ -297,6 +299,42 @@ reconcile:
 runstore: USDC-NGNC: record seq 3 has hash 1872c8f15412… but its contents
 hash to 8a4eecd77b48…; it was modified after it was written
 ```
+
+### Rotating a chain
+
+The committed store is a **bounded window**, not the whole chain (ADR 007,
+[issue #201](https://github.com/Wayfare-labs/wayfare/issues/201)). At the
+six-hour cadence a corridor gains ~1,460 records a year; left alone the
+embedded history would outgrow the repository. The answer is to keep, per
+corridor, the newest `runstore.MaxWindow` (366, one quarter) records and drop
+the rest.
+
+```bash
+wayfared -rotate-store                # trim every chain over the ceiling
+wayfared -rotate-store -rotate-records 1000   # custom ceiling, if you must
+```
+
+`Rotate` is the one place the store is not append-only. A chain that has
+outgrown the ceiling is truncated to its newest `n` records and **re-sealed**:
+the new window head's `prev_hash` is set back to the genesis hash and every
+subsequent `prev_hash` is re-derived, so the surviving window verifies as a
+self-contained chain. Before writing, rotation re-verifies the chain it is
+about to stand on, and refuses a chain that is already broken.
+
+What rotation is **not**:
+
+- It does not touch measured contents. Only `hash` and `prev_hash` move.
+- It does not destroy dropped records. The archive is the repository's own
+  git history: every prior commit contains the chain as it stood, and this is
+  the copy a reader who wants the deep history consults. Rotation is what
+  lets the committed window stay bounded *and* the whole story stay verifiable.
+- It does not edit records whole. `seq` values are preserved, so a reader can
+  tell where the window begins relative to the run.
+
+A rotation is visible from outside: compared with an older commit, the window
+head's `hash` has changed even though its measurements are byte-identical.
+That is deliberate — a re-sealed window must not masquerade as the original
+chain — and `TestRotateChangesTheWindowHashes` pins it.
 
 ### Backups
 

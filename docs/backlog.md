@@ -907,6 +907,15 @@ label derived from an unexplained cutoff is a verdict in disguise.
 forever and the deployment embeds it at build time.
 `V3` `area:data` `needs-maintainer-review` `difficulty:hard` `ready`
 
+> **Implemented.** The committed store is a bounded, always-verifiable window:
+> each corridor keeps its newest `runstore.MaxWindow` (366) records, and
+> `FileStore.Rotate` rotates a chain that has outgrown the ceiling — dropping
+> the oldest above it, re-sealing the surviving window (new head back to the
+> genesis `prev_hash`), touching only the two hash fields. `measure.yml` now
+> measures, rotates, then verifies before committing; the dropped records
+> remain archived in the repository's git history. See ADR 007,
+> `docs/run-store.md#rotating-a-chain`.
+
 **#132 — Support a storage backend behind the Store interface** *(filed: [#202](https://github.com/Wayfare-labs/wayfare/issues/202))*
 `runstore/fsstore.go` implements the interface; the README lists storage
 backends as open contributor territory.
@@ -921,6 +930,10 @@ package exists for is lost.
 A reader who records today's head can prove later that no earlier record
 changed; nothing currently exposes it.
 `V3` `area:data` `difficulty:medium` `ready`
+
+> **Implemented:** `GET /api/chain-heads` publishes each corridor's current
+> sequence, recorded time and full record hash in stable order. The API and
+> rolling-window caveat are documented in [docs/api.md](api.md#get-apichain-heads).
 
 ---
 
@@ -941,6 +954,12 @@ contribution.
 At a six-hour cadence, three corridors, that is roughly 1,080 records. Determine
 what is answerable at that sample size and what is not.
 `V4+` `area:research` `difficulty:medium` `research`
+
+> **Finding written:** [docs/spike-90-day-history.md](spike-90-day-history.md)
+> (2026-09-26). About 360 observations per corridor can support descriptive
+> summaries and the existing gated slope calculation, but not a general
+> seasonal or predictive claim; the present checkout still has one record per
+> corridor, so the nominal 1,080 is a planning count, not observed evidence.
 
 **#136 — Spike: which V2 measurements are worth storing longitudinally** *(filed: [#334](https://github.com/Wayfare-labs/wayfare/issues/334))*
 Storage is not free and the record layout is hash-pinned; choosing badly is
@@ -993,6 +1012,14 @@ writing down before any model exists.
 Prior art, cited, with what is adoptable and what is not.
 `V4+` `area:research` `difficulty:medium` `research`
 
+> **Finding written:** [docs/spike-confidence-expression.md](spike-confidence-expression.md)
+> (2026-09-25). Surveyed Pyth, Chainlink, Lighthouse, Moody's and CoinGecko,
+> each cited. Finding: the tree's confidence expression — gating, abstention
+> and qualifiers carried alongside — is already stricter than every surveyed
+> tool; the only adoptable shape (a measured magnitude beside the figure) is
+> gated on a frequency basis the tree does not have yet. Mildly negative
+> result, reported as such.
+
 **#146 — Spike: would a model add anything over the deterministic measurements?** *(filed: [#207](https://github.com/Wayfare-labs/wayfare/issues/207))*
 The honest possible answer is no, and establishing that would save the project
 an entire version.
@@ -1015,9 +1042,24 @@ Integrity is deliberately carried alongside the verdict because collapsing them
 discards the reason. A score collapses further. Write down the cost.
 `V4+` `area:research` `difficulty:medium` `research`
 
+> **Finding written:** [docs/spike-single-number-cost.md](spike-single-number-cost.md)
+> (2026-09-25). Seven concrete costs, worked on the tree's own corridors
+> (NO-MARKET and a saturated UNUSABLE become indistinguishable; unscored
+> corridors acquire a number; the ladder's floor-vs-depth diagnosis
+> disappears), plus the honest counterweight. Negative for the composite,
+> with the adoptable core placed in the consumer rather than the contract.
+
 **#150 — Spike: how a composite score would handle undetermined components** *(filed: [#210](https://github.com/Wayfare-labs/wayfare/issues/210))*
 The default-to-zero failure has an obvious new home here.
 `V4+` `area:research` `difficulty:medium` `research`
+
+> **Finding written:** [docs/spike-composite-undetermined.md](spike-composite-undetermined.md)
+> (2026-09-25). The tree already contains a composite implementation
+> (`route/health_score.go`, no production caller) that solves default-to-zero
+> by abstaining — and the multiplicative consequence is that a rule-abiding
+> score is undetermined in its realistic steady state on the measured
+> corridors. Partial-blend escape hatches are shown to reintroduce the
+> failure through a side door.
 
 ### E4 — Verifiable intelligence (V6)
 
@@ -1244,10 +1286,18 @@ What it measures, what it refuses to do, who it is for, and the non-custodial
 position stated once, clearly.
 `V1` `area:docs` `good first issue` `difficulty:easy` `ready`
 
+> **Implemented.** [docs/about.md](about.md) landed (2026-09-25), with every
+> claim checked against the tree at `a89d985` and linked from the README's
+> shared-contracts section and [docs/first-15-minutes.md](first-15-minutes.md).
+
 **#193 — "Why Stellar-native?" grounded in what the code uses** *(filed: [#253](https://github.com/Wayfare-labs/wayfare/issues/253))*
 On-chain assets, pathfinding, order books, anchors, SEP-1 and SEP-38 — with no
 claim of exclusivity the repository cannot support.
 `V1` `area:docs` `difficulty:medium` `ready`
+
+> **Implemented.** [docs/why-stellar-native.md](why-stellar-native.md) landed (2026-09-27),
+> with every claim checked against the tree at `c45bbbc` and linked from the README's
+> shared-contracts section, [docs/about.md](about.md), and [docs/first-15-minutes.md](first-15-minutes.md).
 
 **#194 — "How Wayfare works" for a non-engineer** *(filed: [#254](https://github.com/Wayfare-labs/wayfare/issues/254))*
 Reference rate → market data → executable quote → comparison → checks → verdict,
@@ -1698,6 +1748,14 @@ Named wallets, PSPs and anchors, with what each would need from the API — the
 input #157 needs to be worth answering.
 `V1` `area:ecosystem` `area:research` `difficulty:medium` `research`
 
+> **Finding written:** [docs/ecosystem-mapping.md](ecosystem-mapping.md)
+> (2026-09-25). Named projects with dated sources for wallets, PSPs and
+> anchors, each tied to a Wayfare capability verified in code the same day;
+> the anchor-RFQ angle closes with no live subject in the measured corridor
+> set, and the PSP entries are corridor-overlapping but unverified Stellar
+> integrations. Also records that #326's "input #157" is backlog entry
+> `#157` (GitHub #217), not GitHub issue #157.
+
 **#274 — Seed Discussions with the questions contributors actually ask** *(filed: [#327](https://github.com/Wayfare-labs/wayfare/issues/327))*
 Enabled during this sweep and currently empty.
 `V1` `area:ecosystem` `good first issue` `difficulty:easy` `ready`
@@ -1711,6 +1769,12 @@ repository is high and currently transmitted by example only.
 Seven issues carry the label; confirm each is genuinely completable by a
 stranger with only the README and CONTRIBUTING.
 `V1` `area:ecosystem` `good first issue` `difficulty:easy` `ready`
+
+> **Audit written:** [docs/good-first-issue-audit.md](good-first-issue-audit.md)
+> (2026-09-26). The issue's seven-item count does not match GitHub's event
+> history: 20 open issues were labelled before #329 was opened, then #329 was
+> labelled two seconds later. The audit records the discrepancy and assesses
+> the full current set of 21.
 
 ---
 

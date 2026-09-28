@@ -53,6 +53,15 @@ type Server struct {
 	// Timeout bounds a single corridor measurement. A full ladder is a
 	// dozen round trips to Horizon, so this is generous by HTTP standards.
 	Timeout time.Duration
+
+	// Limiter bounds what each client can cost the service (issue #320). A
+	// live measurement is a dozen Horizon round trips, more with sizes=, and
+	// the free deployment has no platform rate limiting in front of it. Nil
+	// disables limiting, which keeps the zero-value Server's behaviour
+	// unchanged; wayfared installs one by default and -rate-limit=0 removes
+	// it. Tests that hammer one endpoint build their own Server or call
+	// NewRateLimiter with a disabled configuration.
+	Limiter *RateLimiter
 }
 
 // pkgLogger is the package-level logger for request and upstream logging.
@@ -77,14 +86,31 @@ func (s *Server) timeout() time.Duration {
 }
 
 // Handler returns the routed handler for the whole service.
+//
+// The limiter wraps every route, including /healthz: a deployment probe and
+// a browser page load are both requests a client chose to make, and the
+// free instance's cost is upstream calls plus CPU regardless of path. CORS
+// stays outermost so a rate-limited response still carries the origin
+// policy and remains readable to a browser client.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/corridor", s.handleCorridor)
 	mux.HandleFunc("/api/corridor/trend", s.handleTrend)
+	mux.HandleFunc("/api/chain-heads", s.handleChainHeads)
 	mux.HandleFunc("/api/assets", s.handleAssets)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.Handle("/", uiHandler())
-	return withCORS(mux)
+	return withCORS(s.limit(mux))
+}
+
+// limit applies the configured rate limiter, or passes through unchanged
+// when none is set. The nil case is the zero-value Server: every existing
+// constructor that does not mention limiting keeps its old behaviour.
+func (s *Server) limit(next http.Handler) http.Handler {
+	if s.Limiter == nil {
+		return next
+	}
+	return s.Limiter.middleware(next)
 }
 
 // withCORS makes the API callable from any origin, and records the policy
@@ -385,14 +411,85 @@ type healthCorridorJSON struct {
 	AgeHuman   string `json:"age_human"`
 }
 
+// chainHeadBudget bounds the Horizon root lookup inside /healthz. The health
+// endpoint must stay cheap and fast for deployment probes, so a slow chain
+// head becomes an unknown after this budget rather than a slow answer.
+const chainHeadBudget = 5 * time.Second
+
+// healthFreshnessJSON is the cross-corridor freshness block on /healthz:
+// chain head, newest stored record and total record count, so a reader can
+// tell how old the served data is without parsing any corridor response
+// (backlog #257 / issue #311).
+//
+// Every field is a pointer because every field can be unknown, and unknown
+// is never rendered as zero: a nil chain_head means "could not ask Horizon",
+// not ledger 0; a nil newest_record_at means the store holds nothing or
+// could not be read, not "now".
+type healthFreshnessJSON struct {
+	ChainHead      *int64  `json:"chain_head"`
+	NewestRecordAt *string `json:"newest_record_at"`
+	RecordCount    *int64  `json:"record_count"`
+}
+
+// healthFreshness assembles the freshness block. The store is small by
+// construction — the run window is capped by rotation — so reading the full
+// history for a count is deliberate rather than something to optimise away.
+func (s *Server) healthFreshness(ctx context.Context) healthFreshnessJSON {
+	f := healthFreshnessJSON{}
+
+	if s.Engine != nil && s.Engine.DEX != nil {
+		headCtx, cancel := context.WithTimeout(ctx, chainHeadBudget)
+		defer cancel()
+		if head, err := s.Engine.DEX.ChainHead(headCtx); err == nil {
+			f.ChainHead = &head
+		} else {
+			log().Debug("healthz: chain head unavailable, reporting unknown", "error", err)
+		}
+	}
+
+	if s.Store != nil {
+		corridors, err := s.Store.Corridors(ctx)
+		if err != nil {
+			log().Debug("healthz: corridor listing failed, reporting unknown", "error", err)
+			return f
+		}
+		var count int64
+		var newest time.Time
+		for _, c := range corridors {
+			recs, err := s.Store.All(ctx, c)
+			if err != nil {
+				// A partial count of an unknown total would be a fabricated
+				// figure; one unreadable corridor makes the whole block's
+				// store-derived fields unknown.
+				log().Debug("healthz: corridor history unreadable, reporting unknown",
+					"corridor", c, "error", err)
+				return f
+			}
+			count += int64(len(recs))
+			for _, r := range recs {
+				if r.RecordedAt.After(newest) {
+					newest = r.RecordedAt
+				}
+			}
+		}
+		f.RecordCount = &count
+		if !newest.IsZero() {
+			ts := newest.UTC().Format(time.RFC3339)
+			f.NewestRecordAt = &ts
+		}
+	}
+	return f
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if err := checkParams(r, "pretty"); err != nil {
 		writeError(w, r, http.StatusBadRequest, codeInvalidQuery, err.Error())
 		return
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
-		"status": "ok",
-		"data":   s.healthData(r.Context()),
+		"status":    "ok",
+		"data":      s.healthData(r.Context()),
+		"freshness": s.healthFreshness(r.Context()),
 	})
 }
 
@@ -415,6 +512,7 @@ const (
 	codeInvalidLimit        = "invalid_limit"
 	codeStoreRead           = "store_read_error"
 	codeDivergenceHistory   = "divergence_history_error"
+	codeRateLimited         = "rate_limited"
 )
 
 // checkParams rejects any query parameter outside the endpoint's allow-list.

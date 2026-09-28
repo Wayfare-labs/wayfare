@@ -49,8 +49,16 @@ asserts in CI that the embedded history loads and verifies.
 ## Freshness depends on redeploys, not on the scheduler
 
 The clock is `.github/workflows/measure.yml`: every six hours it runs
-`wayfared -once -data ./data`, verifies the chain, and commits new records back
+`wayfared -once -data ./data`, rotates any chain that has outgrown the window
+ceiling (`-rotate-store`), verifies the result, and commits the records back
 to `data/` in the repository. That is where new measurements go.
+
+The committed store is a **bounded window**, not the whole chain (ADR 007):
+each corridor keeps its newest 366 records (one quarter at this cadence), and
+older records are trimmed by rotation. Rotation re-seals the surviving window
+so it still verifies and never touches measured contents; the dropped records
+are archived where the repository itself keeps history — in its git log, at
+the commits they were swept into. See [run-store.md](run-store.md#rotating-a-chain).
 
 They reach the deployed instance **only when a new image is built and deployed**
 from a repository whose `data/` contains them. Between redeploys the instance
