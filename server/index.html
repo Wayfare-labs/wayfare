@@ -142,21 +142,6 @@
     }
   }
   * { box-sizing: border-box; }
-
-  /* Motion (#307): the only animated states are the cold-start dots and the
-     panel entrance on a result render — both wayfinding, neither ever
-     delaying a figure: they run outside the reading flow, finish in well
-     under half a second, and touch no metric text. Under
-     prefers-reduced-motion every animation and transition collapses to an
-     opacity change only, so state still changes visibly without any
-     movement. */
-  @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after {
-      animation-duration: 0.01ms !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
-    }
-  }
   body {
     margin: 0;
     background: var(--bg);
@@ -240,6 +225,20 @@
       transition-duration: .01ms !important;
     }
     .loading-dots span { animation: none; opacity: .7; }
+  }
+  /* Motion (#307): the only animated states are the cold-start dots and the
+     panel entrance on a result render — both wayfinding, neither ever
+     delaying a figure: they run outside the reading flow, finish in well
+     under half a second, and touch no metric text. Under
+     prefers-reduced-motion every animation and transition collapses to an
+     opacity change only, so state still changes visibly without any
+     movement. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
   @media (max-width: 640px) {
     .controls { align-items: stretch; }
