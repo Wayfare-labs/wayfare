@@ -14,6 +14,7 @@ backlog section. Each artifact states its own target, timestamps and endpoints.
 | #259 | Verify the deployed instance against the repository it claims to be | [259-served-history-vs-committed.md](259-served-history-vs-committed.md) | `verify-claims` |
 | #260 | QA the API from a consumer's perspective, not the UI's | [260-api-consumer-qa.md](260-api-consumer-qa.md) | `verify-claims` |
 | #262 | Verify /healthz behaviour during a cold start | [262-healthz-cold-start.md](262-healthz-cold-start.md) | `verify-claims` |
+| #275 | Reproduce every figure in docs/corridor-measurements.md | [275-reproduce-corridor-measurements.md](275-reproduce-corridor-measurements.md) | — |
 
 ---
 

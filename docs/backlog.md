@@ -1025,6 +1025,16 @@ The honest possible answer is no, and establishing that would save the project
 an entire version.
 `V4+` `area:research` `difficulty:hard` `research`
 
+> **Finding written:** [docs/spike-model-vs-deterministic.md](spike-model-vs-deterministic.md)
+> (2026-09-29). Worked all three candidate contributions (failure probability,
+> expected slippage, anomaly flags) against the tree at `c44c55b`. Finding:
+> **negative** — a model adds nothing publishable over the deterministic
+> measurements on the evidence the repository has. Failure has no observational
+> definition and no labelled history; expected slippage is redundant at measured
+> sizes and forbidden (interpolation) at unmeasured ones; and the one genuine
+> gap (an anomaly baseline) is gated on history and a baseline definition the
+> tree does not have. Reported as the held-out negative the entry anticipated.
+
 **#147 — Design: the boundary between measurement and inference in the UI** *(filed: [#208](https://github.com/Wayfare-labs/wayfare/issues/208))*
 If inference is ever published it must be unmistakable at a glance; that visual
 contract can be designed now.
@@ -1630,6 +1640,15 @@ financial figure.
 The results region is a div soup assembled from template strings; headings,
 lists and tables are available and mostly unused.
 `V1` `area:ui` `difficulty:medium` `ready`
+
+> **Implemented.** `#out` is now `<main tabindex="-1">` with a skip link, and
+> every renderer emits named `<section>`s instead of bare panels; findings,
+> metrics and evidence are lists, the legend is a `<dl>`, table headers carry
+> `scope="col"`, the loading line is `role="status"`, and render moves focus
+> to the results. Unreadable dark-mode chips (raw brand tokens on DIRECT,
+> DERIVATIVE and the undetermined states) moved to the theme-aware
+> `--unknown`/`--warn` tokens. Pinned by `TestUISemanticHTMLPass`. No build
+> step; no API field was needed, so the data-contract rule never triggered.
 
 **#254 — A first-impression pass on the landing state** *(filed: [#309](https://github.com/Wayfare-labs/wayfare/issues/309))*
 Before a measurement runs the page is a heading, a select and a button. It

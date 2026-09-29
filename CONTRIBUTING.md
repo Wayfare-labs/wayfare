@@ -118,7 +118,10 @@ measurements rather than breaking a feature:
 
 **This is about blast radius, not gatekeeping.** Individual checks and metrics
 are exactly the contribution this project wants — see
-[docs/checks.md](docs/checks.md) and the issues labelled `good first issue`.
+[docs/checks.md](docs/checks.md), the two worked examples
+([docs/adding-a-check.md](docs/adding-a-check.md),
+[docs/adding-a-metric.md](docs/adding-a-metric.md)) and the issues labelled
+`good first issue`.
 
 The per-area reasoning — exactly what is owned, what a mistake in it would
 publish, what defends it today, and what is open contribution — is
@@ -161,13 +164,23 @@ namespace). All must pass without outbound network access. See
 [docs/offline-testing.md](docs/offline-testing.md); for the loop itself, and
 what each target needs installed, [docs/development-loop.md](docs/development-loop.md).
 
+CI also scans the container image it has just built for known vulnerabilities.
+If you change the Dockerfile, the base image or the Go toolchain, mirror it
+locally with `make docker-build image-scan`.
+
 Changes to `server/index.html` are only covered by the source-text assertions in
 `go test`, which cannot tell you how a panel renders. Check them in a browser:
 [docs/qa/README.md](docs/qa/README.md) is a harness that drives the real binary in
 Chromium, Firefox and WebKit and records what it saw.
 
-In the pull request, describe what changed and why using the form at
-[.github/pull_request_template.md](.github/pull_request_template.md). If it touches pricing,
+Pull requests are also read by the auto-merge gate. It merges a change it can
+verify mechanically — every check green, no maintainer-owned path, no new
+dependency, a ticked checklist, and a diff inside the scope its issue named —
+and labels anything else `needs-maintainer-review` with the exact reasons.
+Being held is not a rejection. The gate is exercised offline by
+`go test ./automerge`: **[docs/auto-merge.md](docs/auto-merge.md)**.
+
+In the pull request, describe what changed and why. If it touches pricing,
 say how you verified correctness — and if you measured something live,
 include the raw figures and the timestamp.
 

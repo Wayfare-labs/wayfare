@@ -142,6 +142,12 @@
     }
   }
   * { box-sizing: border-box; }
+  .skip-link {
+    position: absolute; left: -9999px; top: var(--space-2); z-index: 10;
+    background: var(--panel); color: var(--ink); font: 600 var(--text-md)/1 inherit;
+    padding: var(--space-3) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  .skip-link:focus { left: var(--space-2); }
   body {
     margin: 0;
     background: var(--bg);
@@ -153,11 +159,13 @@
   h1 { font-size: var(--text-xl); margin: 0 0 var(--space-1); letter-spacing: -0.02em; }
   .sub { color: var(--muted); font-size: var(--text-md); margin: 0; }
   .controls { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; margin-bottom: var(--space-6); }
-  select, button {
+  select, button, input {
     font: inherit; padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
     border: 1px solid var(--border); background: var(--panel); color: var(--ink);
     transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
   }
+  input { width: 16rem; max-width: 100%; }
+  @media (max-width: 640px) { input { width: 100%; } }
   button { cursor: pointer; font-weight: 600; }
 
   /* Interactive state contract (issue #285) -------------------------------
@@ -189,14 +197,14 @@
      UNDETERMINED metric state keep their own palette and are never
      referenced from these rules. */
   @media (hover: hover) {
-    button:hover:not(:disabled), select:hover:not(:disabled) {
+    button:hover:not(:disabled), select:hover:not(:disabled), input:hover:not(:disabled) {
       border-color: var(--accent); background: var(--panel-alt);
     }
   }
   button:active:not(:disabled) {
     background: var(--panel-alt); box-shadow: var(--press-shadow);
   }
-  button:focus-visible, select:focus-visible {
+  button:focus-visible, select:focus-visible, input:focus-visible {
     outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring);
   }
   /* The reload link inside an error banner is the only inline anchor; it
@@ -205,13 +213,13 @@
   a:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-xs);
   }
-  button:disabled, select:disabled {
+  button:disabled, select:disabled, input:disabled {
     opacity: .55; cursor: default; color: var(--muted);
   }
   /* Disabled is the end of the interaction story: explicitly cancel any
      hover carry-over so a pointer resting on a disabled control shows rest
      styling. Sits after the hover rule so equal specificity resolves here. */
-  button:disabled:hover, select:disabled:hover {
+  button:disabled:hover, select:disabled:hover, input:disabled:hover {
     border-color: var(--border); background: var(--panel); box-shadow: none;
   }
 
@@ -265,9 +273,9 @@
     box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.02);
   }
   .badge::before { font-size: 1rem; line-height: 1; }
-  .b-direct { color: var(--brand-navy); background: var(--neutral-soft); }
+  .b-direct { color: var(--unknown); background: var(--neutral-soft); }
   .b-direct::before { content: "◆"; }
-  .b-derivative { color: var(--brand-slate); background: var(--warning-soft); }
+  .b-derivative { color: var(--warn); background: var(--warning-soft); }
   .b-derivative::before { content: "↪"; }
   .b-nomarket { color: var(--brand-coral); background: rgba(249, 115, 22, 0.12); }
   .b-nomarket::before { content: "∅"; }
@@ -279,11 +287,11 @@
   @media (max-width: 520px) { .integrity-card { grid-template-columns: 1fr; gap: var(--space-2); } }
   .finding { font-size: 1.02rem; margin: var(--space-3) 0 0; }
   .rec-none {
-    margin-top: var(--space-4); padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
+    margin: var(--space-4) 0 0; padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
     border: 1px solid var(--bad); color: var(--bad); font-size: .9rem;
   }
   .rec-some {
-    margin-top: var(--space-4); padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
+    margin: var(--space-4) 0 0; padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
     border: 1px solid var(--ok); color: var(--ok); font-size: .9rem;
   }
   table { width: 100%; border-collapse: collapse; font-size: .88rem; }
@@ -298,6 +306,7 @@
   .finding-row { display: flex; gap: var(--space-3); align-items: baseline; padding: var(--space-2) 0;
                  border-bottom: 1px solid var(--grid); }
   .finding-row:last-child { border-bottom: 0; }
+  .finding-list { list-style: none; margin: 0; padding: 0; }
   .f-state { font: 600 .68rem/1.5 var(--mono); letter-spacing: .05em; padding: var(--space-1) var(--space-2);
              display: inline-flex; align-items: center; gap: var(--space-1); min-width: 5.3rem;
              border-radius: var(--radius-xs); border: 1px solid currentColor; white-space: nowrap; }
@@ -306,7 +315,7 @@
   .f-pass::before { content: "✓"; }
   .f-fail { color: var(--critical); background: var(--critical-soft); }
   .f-fail::before { content: "×"; }
-  .f-unknown { color: var(--brand-slate); background: var(--neutral-soft); }
+  .f-unknown { color: var(--unknown); background: var(--neutral-soft); }
   .f-unknown::before { content: "?"; }
   .finding-row:has(.f-pass) { background: var(--ok-soft); border-left: 3px solid var(--ok); padding-left: var(--space-3); }
   .finding-row:has(.f-fail) { background: var(--bad-soft); border-left: 3px solid var(--bad); padding-left: var(--space-3); }
@@ -317,6 +326,7 @@
   .f-limit { font-size: .8rem; color: var(--muted); margin-top: var(--space-1); }
   .f-evidence { font-family: var(--mono); font-size: .74rem; color: var(--muted);
                 margin-top: var(--space-1); word-break: break-all; }
+  .f-evidence-list { list-style: none; margin: 0; padding: 0; }
   .m-value {
     font: 700 1.2rem/1.15 var(--mono); font-variant-numeric: tabular-nums;
     margin-top: var(--space-1); color: var(--ink);
@@ -328,18 +338,20 @@
   .m-state {
     display: inline-block; font: 600 .68rem/1.5 var(--mono); letter-spacing: .05em;
     padding: var(--space-1) var(--space-2); border-radius: var(--radius-xs); border: 1px solid currentColor;
-    color: var(--brand-slate); background: var(--neutral-soft); white-space: nowrap;
+    color: var(--unknown); background: var(--neutral-soft); white-space: nowrap;
     margin-right: var(--space-2);
   }
-  .m-unknown { color: var(--brand-slate); }
+  .m-unknown { color: var(--unknown); }
   .meta { color: var(--muted); font-size: .82rem; margin-top: var(--space-4); }
   .err { color: var(--bad); }
-  .provenance { margin-bottom: var(--space-4); padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
+  .provenance { margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
                 border: 1px solid var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
   .provenance-live { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
   h2 { font-size: .95rem; margin: 0 0 var(--space-3); letter-spacing: .01em; }
-  .legend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin-top: var(--space-4); }
-  .legend-item { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .legend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin: var(--space-4) 0 0; padding: 0; }
+  .legend-item { display: flex; align-items: center; gap: var(--space-2); min-width: 0; margin: 0; }
+  .legend-item dt { margin: 0; }
+  .legend-item dd { font-size: .8rem; margin: 0; }
   .legend-item span:last-child { font-size: .8rem; }
   .case { font-size: .88rem; color: var(--muted); }
   .integrity-cell { white-space: nowrap; }
@@ -351,8 +363,8 @@
   .cs-info .cs-state { font: 600 .72rem/1 var(--mono); letter-spacing: .04em;
     padding: var(--space-1) var(--space-2); border-radius: var(--radius-xs); border: 1px solid currentColor;
     vertical-align: middle; }
-  .cs-info .cs-state.cs-direct { color: var(--brand-navy); background: var(--neutral-soft); }
-  .cs-info .cs-state.cs-derivative { color: var(--brand-slate); background: var(--warning-soft); }
+  .cs-info .cs-state.cs-direct { color: var(--unknown); background: var(--neutral-soft); }
+  .cs-info .cs-state.cs-derivative { color: var(--warn); background: var(--warning-soft); }
   .cs-info .cs-state.cs-nomarket { color: var(--brand-coral); background: rgba(249, 115, 22, 0.12); }
   svg { width: 100%; height: auto; display: block; }
   .axis { fill: var(--muted); font: 10px var(--mono); }
@@ -362,6 +374,10 @@
                       margin-right: var(--space-1); vertical-align: -1px; }
   footer { color: var(--muted); font-size: .82rem; border-top: 1px solid var(--border); padding-top: var(--space-4); margin-top: var(--space-8); }
   code { font-family: var(--mono); font-size: .85em; }
+
+  /* Results focus target ------------------------------------------------- */
+  #out:focus { outline: none; }
+  #out:focus-visible { outline: none; }
 
   /* Loading / cold-start state ------------------------------------------- */
   .loading-panel {
@@ -431,16 +447,37 @@
     rate, and states plainly when none are worth taking.</p>
   </header>
 
+  <a class="skip-link" href="#out">Skip to results</a>
   <div class="controls">
     <label for="to">Corridor</label>
     <select id="to" aria-label="Select a corridor to measure">
       <option value="" disabled selected>Loading corridors…</option>
     </select>
     <span id="cs-detail" class="cs-info"></span>
+    <label for="sizes">Send sizes (USDC, comma-separated)</label>
+    <input id="sizes" name="sizes" inputmode="decimal" autocomplete="off"
+      placeholder="Default: 0.1 to 5000"
+      aria-describedby="sizes-help" spellcheck="false">
+    <span id="sizes-help" class="cs-info" title="The engine sorts the chosen sizes ascending before pricing, and an unpriced size is reported as such — never as a zero.">Leave empty for the default ladder:
+    0.1, 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500 and 5000. Why these sizes:
+    the bottom rung isolates the corridor's spread, the top rung exposes exhaustion.</span>
     <button id="run">Measure live</button>
     <button id="trend">Show trend</button>
-    <span id="status" class="sub"></span>
+    <span id="status" class="sub" role="status"></span>
   </div>
+
+  <details class="compare-controls">
+    <summary>Compare shared measurements</summary>
+    <div class="controls">
+      <label for="compare-to">Compare with</label>
+      <select id="compare-to" aria-label="Select the second corridor to compare" disabled>
+        <option value="">Loading corridors…</option>
+      </select>
+      <button id="compare" type="button" aria-controls="compare-out" disabled>Compare corridors</button>
+      <span id="compare-status" class="sub" role="status" aria-live="polite"></span>
+    </div>
+  </details>
+  <div id="compare-out" aria-live="polite"></div>
 
   <div id="out">
     <div class="loading-panel" id="loading">
@@ -459,7 +496,7 @@
         inactivity (this usually takes under a minute).
       </p>
     </div>
-  </div>
+  </main>
 
   <footer>
     <span id="footer-provenance">Wayfare is non-custodial and read-only: it never holds funds,
@@ -534,6 +571,8 @@ const integrityInfo = (state, dependsOn = []) => {
 function integrityElement(state, dependsOn = '') {
   const info = integrityInfo(state, Array.isArray(dependsOn) ? dependsOn : []);
   const dependency = info.dependency ? `<p class="integrity-dependency">${esc(info.dependency)}</p>` : '';
+  // The structural state badge comes first, then the explanation: the state
+  // is the finding, the copy qualifies it.
   return `<div class="integrity-card">
     <span class="badge ${badgeClass(state)}" title="${esc(info.tooltip)}" aria-label="${esc(state)}: ${esc(info.tooltip)}">${esc(state)}</span>
     <div class="integrity-copy"><p class="integrity-title">${esc(info.title)}</p><p class="integrity-help">${esc(info.help)}</p>${dependency}</div>
@@ -631,6 +670,14 @@ function buildSelector(data) {
     return `<option value="${esc(a.code)}"${i === 0 ? ' selected' : ''}>` +
       `${esc(label)}${esc(note)}</option>`;
   }).join('');
+  sel.innerHTML = options;
+  compareSel.innerHTML = '<option value="" disabled>Select a different corridor</option>' + options;
+  compareSel.value = assets.find(a => a.code !== sel.value)?.code || '';
+  compareSel.disabled = assets.length < 2;
+  $('compare').disabled = assets.length < 2;
+  if (assets.length < 2) {
+    compareSel.innerHTML = '<option value="">A second corridor is not available</option>';
+  }
 
   // Show the detail line for the initially selected corridor.
   updateCorridorDetail(sel.value);
@@ -684,6 +731,44 @@ function showErrorBanner(message) {
     `<div class="panel err" role="alert">${message}</div>`);
 }
 
+// The sizes control lets the reader choose the send amounts a live ladder
+// prices (issue #291). The engine owns the semantics: parseSizes on the
+// server accepts at most 24 positive decimal amounts, sorts them ascending,
+// and falls back to DefaultSizes when the parameter is absent — the control
+// only decides which of those requests to send. Whatever the API answers
+// with is what is rendered: rungs the engine could not price stay unpriced,
+// and nothing here fabricates or reorders a figure (docs/ladder-sizes.md
+// documents the default set).
+const MAX_SIZES = 24;
+
+// readSizes returns the trimmed input, or '' when it is empty. Validation is
+// deliberately server-side only: parseSizes is the contract, and the UI
+// showing the API's own error beats a second validator drifting from it.
+function readSizes() {
+  return $('sizes').value.trim();
+}
+
+// sizesValidation reports why the current input cannot be sent, or '' when it
+// can. Colour alone never carries this (the message text is the signal); the
+// invalid state is also mirrored onto the input via aria-invalid so screen
+// readers get it without a repaint.
+function sizesValidation(raw) {
+  if (raw === '') return '';
+  const parts = raw.split(',');
+  if (parts.length > MAX_SIZES)
+    return `At most ${MAX_SIZES} sizes can be measured in one request.`;
+  for (const p of parts) {
+    const t = p.trim();
+    if (t === '') continue;
+    if (!/^[+]?\d*\.?\d+([eE][+-]?\d+)?$/.test(t))
+      return `“${t}” is not a number the engine can measure.`;
+    const n = parseFloat(t);
+    if (!isFinite(n) || n <= 0)
+      return 'Every size must be a positive amount.';
+  }
+  return '';
+}
+
 // --- Measurement -------------------------------------------------------------
 
 async function measure() {
@@ -698,10 +783,22 @@ async function measure() {
       })}</div>`;
     return;
   }
+  const sizesRaw = readSizes();
+  const problem = sizesValidation(sizesRaw);
+  const sizesInput = $('sizes');
+  if (problem) {
+    sizesInput.setAttribute('aria-invalid', 'true');
+    $('status').textContent = problem;
+    return;
+  }
+  sizesInput.removeAttribute('aria-invalid');
+  lastRequestedSizes = sizesRaw;
   $('run').disabled = true;
-  $('status').textContent = 'measuring live — a full ladder is a dozen round trips…';
+  $('status').textContent = 'measuring live — each size is its own round trip to Horizon, so more sizes take longer…';
   try {
-    const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}&live=1`);
+    const q = new URLSearchParams({ to });
+    if (sizesRaw !== '') q.set('sizes', sizesRaw);
+    const r = await fetch(`/api/corridor?${q}&live=1`);
     const data = await r.json();
     if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code });
     render(data);
@@ -727,31 +824,43 @@ function errorPanel(prefix, e) {
   return `<div class="panel err">${esc(prefix)}: ${esc(e.message)}</div>`;
 }
 
+// The sizes the last live measurement asked for, '' when it used the default
+// ladder. Purely a display label: the rendered figures are always the rungs
+// the API actually returned, whatever was requested.
+let lastRequestedSizes = '';
+
 function render(d) {
   const parts = [];
   const provenance = d.live
-    ? `<div class="provenance provenance-live"><strong>LIVE MEASUREMENT</strong> · measured ${esc(d.measured_at)}</div>`
-    : `<div class="provenance"><strong>RECORDED — NOT CURRENT MARKET DATA</strong> · ${esc(d.stale?.age_human || 'historical reading')} · recorded ${esc(d.stale?.recorded_at || d.measured_at)}</div>`;
+    ? `<p class="provenance provenance-live"><strong>LIVE MEASUREMENT</strong> · measured ${esc(d.measured_at)}</p>`
+    : `<p class="provenance"><strong>RECORDED — NOT CURRENT MARKET DATA</strong> · ${esc(d.stale?.age_human || 'historical reading')} · recorded ${esc(d.stale?.recorded_at || d.measured_at)}</p>`;
   $('footer-provenance').textContent = d.live
     ? `Every figure below was fetched live from Horizon pathfinding and an independent rate provider at ${d.measured_at}. Nothing is cached, estimated, or interpolated. Wayfare is non-custodial and read-only: it never holds funds, issues tokens, or moves money.`
     : `The reading below was recorded ${d.stale?.age_human || 'in the past'} at ${d.stale?.recorded_at || d.measured_at}; it is not a live market measurement. Wayfare is non-custodial and read-only: it never holds funds, issues tokens, or moves money.`;
 
   // Headline: integrity state and the finding, before any numbers.
-  parts.push(`${provenance}<div class="panel">
+  parts.push(`${provenance}<section class="panel" aria-label="Corridor integrity and verdict">
     ${integrityElement(d.integrity, d.depends_on || [])}
     <p class="finding">${esc(d.finding)}</p>
     ${d.scored ? recommendationBlock(d) : unscoredBlock(d)}
     <p class="meta">Reference ${esc(d.reference_pair)} mid
       <strong>${esc(d.reference_mid)}</strong> via ${esc(d.reference_source)} ·
       measured ${esc(d.measured_at)}</p>
-  </div>`);
+  </section>`);
 
   const priced = d.rungs.filter(r => r.priced);
   if (d.scored && priced.length) {
-    parts.push(`<div class="panel"><h2>Loss against mid, by size</h2>${curve(priced)}</div>`);
+    // The heading names the ladder that was actually measured: the sizes
+    // requested when the reader chose them, the default set otherwise
+    // (dex.DefaultSizes — 0.1 through 5000, documented in
+    // docs/ladder-sizes.md). The rungs below are the API's own.
+    const ladderNote = lastRequestedSizes
+      ? `at the sizes you asked for: ${esc(lastRequestedSizes)}`
+      : 'at the default sizes (0.1 to 5000)';
+    parts.push(`<div class="panel"><h2>Loss against mid, by size</h2><p class="meta">Measured ${esc(ladderNote)}.</p>${curve(priced)}</div>`);
   }
 
-  parts.push(`<div class="panel"><h2>Measurements</h2><div class="scroll">${table(d.rungs, d.scored, d.depends_on || [])}</div></div>`);
+  parts.push(`<section class="panel" aria-label="Ladder measurements"><h2>Measurements</h2><div class="scroll">${table(d.rungs, d.scored, d.depends_on || [])}</div></section>`);
 
   if (d.scored) parts.push(legend());
 
@@ -759,6 +868,102 @@ function render(d) {
 
   parts.push(caseStudy(d));
   $('out').innerHTML = parts.join('');
+  $('out').focus({ preventScroll: true });
+}
+
+// The comparison is deliberately narrow: loss percentages are dimensionless
+// and comparable only when both API responses scored the same send size and
+// both produced a priced quote. Receive amounts and effective rates use
+// different destination currencies, so they are not compared across corridors.
+function sharedLosses(a, b) {
+  const leftAsset = a.send_asset || {};
+  const rightAsset = b.send_asset || {};
+  if (!leftAsset.code || leftAsset.code !== rightAsset.code ||
+      (leftAsset.issuer || '') !== (rightAsset.issuer || '') ||
+      (leftAsset.asset && rightAsset.asset && leftAsset.asset !== rightAsset.asset) ||
+      a.scored !== true || b.scored !== true || !Array.isArray(a.rungs) || !Array.isArray(b.rungs)) return [];
+  const right = new Map(b.rungs
+    .filter(r => typeof r.send_amount === 'string' && r.send_amount !== '')
+    .map(r => [r.send_amount, r]));
+  return a.rungs.flatMap(left => {
+    if (typeof left.send_amount !== 'string' || left.send_amount === '') return [];
+    const other = right.get(left.send_amount);
+    const lq = left.priced === true && left.quote;
+    const rq = other && other.priced === true && other.quote;
+    if (!lq || !rq || typeof lq.loss_pct !== 'string' || !lq.loss_pct ||
+        typeof rq.loss_pct !== 'string' || !rq.loss_pct) return [];
+    return [{ size: left.send_amount, left: lq.loss_pct, right: rq.loss_pct }];
+  });
+}
+
+function comparisonSide(d) {
+  const source = d.send_asset?.code || 'source asset';
+  const destination = d.receive_asset?.code || 'Unknown corridor';
+  const freshness = d.live
+    ? `Live measurement · ${d.measured_at || 'time not supplied'}`
+    : `Recorded, not current · ${d.stale?.age_human || 'historical reading'} · ${d.stale?.recorded_at || d.measured_at || 'time not supplied'}`;
+  const dependency = (d.depends_on || []).map(a => a.code || a).filter(Boolean).join(', ');
+  const structure = dependency ? `${d.integrity} · depends on ${dependency}` : String(d.integrity || 'Not supplied');
+  return `<section class="compare-side" aria-label="${esc(destination)} response details">
+    <h3>${esc(source)} → ${esc(destination)}</h3>
+    <p>Market structure: ${esc(structure)}</p>
+    <p>${esc(freshness)}</p>
+  </section>`;
+}
+
+function compareRender(a, b) {
+  const common = sharedLosses(a, b);
+  const sendCode = a.send_asset?.code || 'source token';
+  const left = a.receive_asset?.code || 'first corridor';
+  const right = b.receive_asset?.code || 'second corridor';
+  const rows = common.map(row => `<tr>
+    <td class="num">${esc(row.size)} ${esc(sendCode)}</td>
+    <td class="num compare-value">${esc(formatPct(row.left))}%</td>
+    <td class="num compare-value">${esc(formatPct(row.right))}%</td>
+  </tr>`).join('');
+  const unscored = [
+    a.scored === false ? left : '',
+    b.scored === false ? right : '',
+  ].filter(Boolean);
+  const table = common.length
+    ? `<div class="scroll"><table><thead><tr><th>Shared send amount (${esc(sendCode)})</th><th>${esc(left)} loss against mid</th><th>${esc(right)} loss against mid</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<p class="compare-note">${unscored.length ? '<span class="m-state">UNDETERMINED</span>' : ''}No shared scored loss measurements are available for the same source asset and send amounts.${unscored.length ? ` The API reports no scored loss for ${esc(unscored.join(' and '))}.` : ''} Nothing has been filled in or inferred.</p>`;
+  return `<section class="panel compare-panel" aria-labelledby="compare-heading">
+    <h2 id="compare-heading">Shared measurements</h2>
+    <div class="compare-grid">${comparisonSide(a)}${comparisonSide(b)}</div>
+    ${table}
+    <p class="meta">Only API-produced loss percentages for identical send sizes appear here. Values are shown as returned by each corridor; no difference, ranking, or recommendation is calculated.</p>
+  </section>`;
+}
+
+async function compareCorridors() {
+  const first = $('to').value;
+  const second = $('compare-to').value;
+  const status = $('compare-status');
+  const button = $('compare');
+  if (!first || !second || first === second) {
+    status.textContent = 'Choose two different corridors.';
+    $('compare-out').innerHTML = '';
+    return;
+  }
+  button.disabled = true;
+  status.textContent = 'Loading corridor responses…';
+  $('compare-out').innerHTML = '';
+  try {
+    const responses = await Promise.all([first, second].map(async code => {
+      const r = await fetch(`/api/corridor?to=${encodeURIComponent(code)}`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      return data;
+    }));
+    $('compare-out').innerHTML = compareRender(responses[0], responses[1]);
+    status.textContent = '';
+  } catch (e) {
+    $('compare-out').innerHTML = `<p class="compare-note" role="alert">Could not load both corridor responses: ${esc(e.message)}</p>`;
+    status.textContent = '';
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function unscoredBlock(d) {
@@ -769,7 +974,7 @@ function unscoredBlock(d) {
   }
   const divergence = d.reference_divergence_pct
     ? ` — ${esc(d.reference_divergence_pct)}% apart` : '';
-  return `<div class="rec-none">No verdict can be issued. The two reference providers
+  return `<div class="rec-none" role="note">No verdict can be issued. The two reference providers
     disagreed: ${primary}${secondary}${divergence}. Per the scoring contract,
     no loss figure or recommendation is derived from a benchmark the engine
     could not trust.</div>`;
@@ -791,7 +996,7 @@ function recommendationBlock(d) {
     });
   }
   if (!d.recommended) {
-    return `<div class="rec-none">No recommendation. Every size tested is graded
+    return `<div class="rec-none" role="note">No recommendation. Every size tested is graded
       Unusable, so presenting a &ldquo;best&rdquo; route here would imply one is
       worth taking.</div>`;
   }
@@ -884,14 +1089,14 @@ function table(rungs, scored, depends) {
   if (scored) {
     return `<table>
       <thead><tr>
-        <th>Send</th><th>Receive</th><th>Rate</th><th>Loss</th><th>Verdict</th><th>Path</th>
+        <th scope="col">Send</th><th scope="col">Receive</th><th scope="col">Rate</th><th scope="col">Loss</th><th scope="col">Verdict</th><th scope="col">Path</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
   }
   return `<table>
     <thead><tr>
-      <th>Send</th><th>Receive</th><th>Rate</th><th>Path</th>
+      <th scope="col">Send</th><th scope="col">Receive</th><th scope="col">Rate</th><th scope="col">Path</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
@@ -912,16 +1117,16 @@ function findings(f) {
     const text = c.determined ? c.summary : (c.reason || c.summary);
 
     const evidence = (c.evidence || []).map(e =>
-      `<div class="f-evidence">${esc(e.source)} → ${esc(e.observed)}</div>`).join('');
+      `<li class="f-evidence">${esc(e.source)} → ${esc(e.observed)}</li>`).join('');
 
-    return `<div class="finding-row">
+    return `<li class="finding-row">
       <span class="f-state ${state[1]}">${state[0]}</span>
       <div class="f-body">
         <div class="f-summary">${esc(text)}</div>
         <div class="f-id">${esc(c.id)}${c.determined && !c.passed ? ' · ' + esc(c.severity) : ''}</div>
-        ${evidence}
+        ${evidence ? `<ul class="f-evidence-list">${evidence}</ul>` : ''}
       </div>
-    </div>`;
+    </li>`;
   }).join('');
 
   const counts = [];
@@ -929,20 +1134,20 @@ function findings(f) {
   if (f.undetermined) counts.push(`${f.undetermined} undetermined`);
   if (f.passed) counts.push(`${f.passed} passed`);
 
-  // Metrics are a distinct shape and get a distinct panel: a value with a
-  // unit, never a verdict. The panel is absent — not empty — when no metric
+  // Metrics are a distinct shape and get a distinct section: a value with a
+  // unit, never a verdict. The section is absent — not empty — when no metric
   // was run, so "no metrics" and "metrics, nothing found" cannot look alike.
   const metricsBlock = (f.metrics && f.metrics.length) ? metrics(f.metrics) : '';
 
-  return `${metricsBlock}<div class="panel">
+  return `${metricsBlock}<section class="panel" aria-label="Counterparty checks">
     <h2>Counterparty checks &mdash; ${esc(counts.join(', '))}</h2>
-    ${rows}
+    <ul class="finding-list">${rows}</ul>
     <p class="meta">These describe the issuer and anchor this corridor depends on.
     They qualify the result above and never change it: the integrity state and every
     verdict are computed from pathfinding and the reference rate alone.
     <strong>Undetermined is not a failure</strong> &mdash; an anchor that publishes
     nothing is a different fact from one that publishes something broken.</p>
-  </div>`;
+  </section>`;
 }
 
 // Metrics are measured quantities, reported alongside checks. They are not
@@ -964,35 +1169,38 @@ function metrics(ms) {
       : `<div class="m-value">${esc(m.value)}<span class="m-unit">${esc(m.unit)}</span></div>`;
 
     const evidence = (m.evidence || []).map(e =>
-      `<div class="f-evidence">${esc(e.source)} &rarr; ${esc(e.observed)} &middot; ${esc(e.observed_at)}</div>`).join('');
+      `<li class="f-evidence">${esc(e.source)} &rarr; ${esc(e.observed)} &middot; ${esc(e.observed_at)}</li>`).join('');
 
-    return `<div class="finding-row">
+    return `<li class="finding-row">
       <div class="f-body">
         ${m.determined ? `<div class="f-summary">${esc(m.summary)}</div>` : ''}
         ${value}
         <div class="f-id">${esc(m.id)} &middot; ${esc(m.subject)} &middot; observed ${esc(m.observed_at)}</div>
-        ${evidence}
+        ${evidence ? `<ul class="f-evidence-list">${evidence}</ul>` : ''}
       </div>
-    </div>`;
+    </li>`;
   }).join('');
 
   const count = undetermined
     ? `${measured} measured, ${undetermined} undetermined`
     : `${measured} measured`;
 
-  return `<div class="panel">
+  return `<section class="panel" aria-label="Metrics">
     <h2>Metrics &mdash; ${count}</h2>
-    ${rows}
+    <ul class="finding-list">${rows}</ul>
     <p class="meta">These are measured quantities, not verdicts: each is a
     number with its unit, and a metric that could not be measured says why
     instead of reporting a number. No threshold exists for any of them, so
     none is graded good or bad, and <strong>undetermined is not a
     failure</strong>.</p>
-  </div>`;
+  </section>`;
 }
 
+// The legend is a definition list: verdict thresholds map to their bands,
+// and each finding state maps to what it means. STATE/VALUE pairs render
+// correctly without the grid, so the semantics survive any stylesheet.
 function legend() {
-  return `<div class="panel" style="font-size:.85rem; color:var(--muted)">
+  return `<section class="panel" aria-label="Verdict thresholds" style="font-size:.85rem; color:var(--muted)">
     <h2>Verdict thresholds</h2>
     <p>Loss is how far the achieved rate falls below the reference mid.</p>
     <p>
@@ -1001,13 +1209,13 @@ function legend() {
       <span class="v-poor">POOR</span> ≤ 20% &middot;
       <span class="v-unusable">UNUSABLE</span> &gt; 20%
     </p>
-    <div class="legend-grid" aria-label="Finding state legend">
-      <div class="legend-item"><span class="f-state f-pass">PASS</span><span>Observed and clear</span></div>
-      <div class="legend-item"><span class="f-state f-fail">FAIL</span><span>Observed concern</span></div>
-      <div class="legend-item"><span class="f-state f-unknown">UNKNOWN</span><span>Could not determine</span></div>
-    </div>
+    <dl class="legend-grid" aria-label="Finding state legend">
+      <div class="legend-item"><dt><span class="f-state f-pass">PASS</span></dt><dd>Observed and clear</dd></div>
+      <div class="legend-item"><dt><span class="f-state f-fail">FAIL</span></dt><dd>Observed concern</dd></div>
+      <div class="legend-item"><dt><span class="f-state f-unknown">UNKNOWN</span></dt><dd>Could not determine</dd></div>
+    </dl>
     <p>When no size produces a verdict of POOR or better, nothing is recommended.</p>
-  </div>`;
+  </section>`;
 }
 
 function caseStudy(d) {
@@ -1020,7 +1228,7 @@ function caseStudy(d) {
         expensive pricing and is reported as such.`
     : '';
 
-  return `<div class="panel case">
+  return `<section class="panel case" aria-label="Case study">
     <h2>Case study #1 &mdash; one issuer&rsquo;s African-fiat set</h2>
     <p>NGNC, GHSC and KESC are issued from a single Stellar account. Their issuer
     declares NGNC <code>status="live"</code> and the other two
@@ -1034,7 +1242,7 @@ function caseStudy(d) {
     so its own rails cannot be priced programmatically and are not measured here.
     Wayfare works on any stablecoin &rarr; fiat-token corridor; this set is simply
     the first one measured.</p>
-  </div>`;
+  </section>`;
 }
 
 // --- Trend -----------------------------------------------------------------
@@ -1091,7 +1299,7 @@ function renderTrend() {
   const parts = [];
 
   if (runs.length === 0) {
-    parts.push(`<div class="panel">
+    parts.push(`<section class="panel" aria-label="Trend">
       <h2>Trend &mdash; ${esc(d.corridor)}</h2>
       ${emptyState({
         glyph: '…',
@@ -1099,21 +1307,22 @@ function renderTrend() {
         body: 'The scheduler records a run every 6 hours, and the trend appears ' +
           'as history exists. Nothing is interpolated, estimated, or borrowed ' +
           'from another corridor in the meantime.',
-      })}</div>`);
+      })}</section>`);
     $('out').innerHTML = parts.join('');
+    $('out').focus({ preventScroll: true });
     return;
   }
 
   const latest = runs[runs.length - 1];
-  parts.push(`<div class="panel">
+  parts.push(`<section class="panel" aria-label="Trend">
     <h2>Trend &mdash; ${esc(d.corridor)}</h2>
     ${integrityElement(latest.integrity, latest.depends_on || [])}
     <span class="case">&nbsp; latest of ${runs.length} stored run(s) &middot;
     ${esc(fmtRunTime(runs[0].recorded_at))} &rarr; ${esc(fmtRunTime(latest.recorded_at))} UTC</span>
     <p class="meta">${referenceSummary(runs)}${integritySummary(runs)}</p>
-  </div>`);
+  </section>`);
 
-  parts.push(`<div class="panel">
+  parts.push(`<section class="panel" aria-label="Loss over time">
     <h2>Loss against mid over time</h2>
     <div class="controls" style="margin-bottom:var(--space-3)">
       <label for="trend-size">Size</label>
@@ -1130,16 +1339,17 @@ function renderTrend() {
     normal cadence) are dashed to say so. Dot colour and the strip under the
     axis mark the integrity state at each run; the dashed line is the 20%
     unusable threshold, as on the live curve.</p>
-  </div>`);
+  </section>`);
 
-  parts.push(`<div class="panel">
+  parts.push(`<section class="panel" aria-label="Stored runs">
     <h2>Stored runs</h2>
     <div class="scroll">${runsTable(runs)}</div>
     <p class="meta">Newest first. The reference column names the provider each
     run was scored against, so a benchmark change sits next to the numbers it
-    affects.</p></div>`);
+    affects.</p></section>`);
 
   $('out').innerHTML = parts.join('');
+  $('out').focus({ preventScroll: true });
   $('trend-size').addEventListener('change', (e) => {
     trendState.size = e.target.value;
     $('trend-chart').innerHTML = trendChart(d, trendState.size);
@@ -1334,7 +1544,7 @@ function runsTable(runs) {
 
   return `<table>
     <thead><tr>
-      <th>Recorded (UTC)</th><th>#</th><th>Integrity</th><th>Floor loss</th><th>Worst loss</th><th>Reference</th>
+      <th scope="col">Recorded (UTC)</th><th scope="col">#</th><th scope="col">Integrity</th><th scope="col">Floor loss</th><th scope="col">Worst loss</th><th scope="col">Reference</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
@@ -1342,6 +1552,7 @@ function runsTable(runs) {
 
 $('run').addEventListener('click', measure);
 $('trend').addEventListener('click', loadTrend);
+$('compare').addEventListener('click', compareCorridors);
 
 async function loadCorridor(to) {
   if (!to) {
@@ -1353,6 +1564,9 @@ async function loadCorridor(to) {
     return;
   }
   try {
+    await loadAssets();
+    const to = $('to').value;
+    if (!to) throw new Error('No corridor is available to load.');
     const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}`);
     const data = await r.json();
     if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code });
