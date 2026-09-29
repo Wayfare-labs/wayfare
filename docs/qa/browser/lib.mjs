@@ -41,8 +41,12 @@ export function parseArgs(argv = process.argv.slice(2)) {
   return out;
 }
 
-export async function launch(engine, contextOptions = {}) {
-  const browser = await ENGINES[engine].launch();
+// launch starts an engine and a context. launchOptions is passed to the engine
+// itself, which is how a machine without Playwright's own browser download
+// points at an installed Chrome or Edge (`{ executablePath }` or
+// `{ channel }`).
+export async function launch(engine, contextOptions = {}, launchOptions = {}) {
+  const browser = await ENGINES[engine].launch(launchOptions);
   const context = await browser.newContext({
     // The UI reads no storage or permissions, but a fixed locale and timezone
     // make the recorded output comparable between runs.

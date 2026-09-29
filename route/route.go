@@ -217,6 +217,12 @@ type Quote struct {
 
 	Verdict Verdict
 
+	// PathCount is the number of distinct routes Horizon returned for this
+	// size. The value is published alongside the selected quote so a client
+	// can tell whether a route was unique or part of a fragmented market,
+	// without re-deriving it from the raw Horizon response.
+	PathCount int
+
 	// Warnings are conditions the user must see before acting.
 	Warnings []string
 
@@ -535,6 +541,14 @@ func unknownHopNote(unknown []asset.Asset) []string {
 // classification: an unknown hop is treated exactly like a bridge hop, which
 // is the known, bounded false-negative documented in asset/known.go. It is
 // returned so the caller can surface it rather than let it stay silent.
+func distinctPathCount(paths []dex.Path) int {
+	seen := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		seen[p.Describe()] = struct{}{}
+	}
+	return len(seen)
+}
+
 func classify(paths []dex.Path, dest asset.Asset) (Integrity, []asset.Asset, []asset.Asset) {
 	if len(paths) == 0 {
 		return IntegrityNoMarket, nil, nil
@@ -618,6 +632,7 @@ func (e *Engine) quoteDEX(ctx context.Context, req Request, ref refrate.Rate) (*
 		SendAmount:    req.SendAmount,
 		ReceiveAsset:  req.ReceiveAsset,
 		ReceiveAmount: best.DestAmount,
+		PathCount:     distinctPathCount(paths),
 		QuotedAt:      time.Now(),
 	}
 	q.score(ref.Mid, ref.Source)

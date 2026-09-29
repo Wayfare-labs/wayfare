@@ -72,6 +72,14 @@
     --chart-derivative: var(--brand-slate);
     --chart-nomarket: var(--brand-coral);
     --focus-ring: rgba(15, 118, 110, 0.28);
+    /* The halo above gives the indicator area; this is the edge that carries
+       it. A focus indicator has to reach 3:1 against the surfaces it sits on
+       (SC 1.4.11 / 2.4.11), and a 28% teal wash over a white panel is nowhere
+       near that, so the ring is drawn twice: a solid outline that clears the
+       contrast and the halo that makes it easy to find. Dark takes the light
+       end of the same ramp for the same reason — the token flips with the
+       scheme, the rule that uses it does not. */
+    --focus-outline: #0F766E;
     --press-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.18);
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     --text-xs: .72rem;
@@ -138,6 +146,7 @@
       --success-soft: rgba(16, 185, 129, 0.18);
       --neutral-soft: rgba(148, 163, 184, 0.18);
       --focus-ring: rgba(110, 231, 183, 0.35);
+      --focus-outline: #5EEAD4;
       --press-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
@@ -178,6 +187,12 @@
 
   }
   * { box-sizing: border-box; }
+  .skip-link {
+    position: absolute; left: -9999px; top: var(--space-2); z-index: 10;
+    background: var(--panel); color: var(--ink); font: 600 var(--text-md)/1 inherit;
+    padding: var(--space-3) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  .skip-link:focus { left: var(--space-2); }
   body {
     margin: 0;
     background: var(--bg);
@@ -189,11 +204,13 @@
   h1 { font-size: var(--text-xl); margin: 0 0 var(--space-1); letter-spacing: -0.02em; }
   .sub { color: var(--muted); font-size: var(--text-md); margin: 0; }
   .controls { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; margin-bottom: var(--space-6); }
-  select, button {
+  select, button, input {
     font: inherit; padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
     border: 1px solid var(--border); background: var(--panel); color: var(--ink);
     transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
   }
+  input { width: 16rem; max-width: 100%; }
+  @media (max-width: 640px) { input { width: 100%; } }
   button { cursor: pointer; font-weight: 600; }
 
   /* Interactive state contract (issue #285) -------------------------------
@@ -225,29 +242,32 @@
      UNDETERMINED metric state keep their own palette and are never
      referenced from these rules. */
   @media (hover: hover) {
-    button:hover:not(:disabled), select:hover:not(:disabled) {
+    button:hover:not(:disabled), select:hover:not(:disabled), input:hover:not(:disabled) {
       border-color: var(--accent); background: var(--panel-alt);
     }
   }
   button:active:not(:disabled) {
     background: var(--panel-alt); box-shadow: var(--press-shadow);
   }
-  button:focus-visible, select:focus-visible {
+  button:focus-visible, select:focus-visible, input:focus-visible {
     outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring);
   }
-  /* The reload link inside an error banner is the only inline anchor; it
-     takes keyboard focus and must say so (issue #293 made it focusable, this
-     makes the focus visible). */
+  /* Every focusable thing in the page carries the same indicator (issue
+     #303): the solid outline in the scheme's own token, so a control, a link
+     and the skip target all read as one kind of event. The reload link inside
+     an error banner is the only inline anchor; it takes keyboard focus and
+     must say so (issue #293 made it focusable, this makes the focus visible). */
   a:focus-visible {
-    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-xs);
+    outline: 2px solid var(--focus-outline); outline-offset: 2px;
+    border-radius: var(--radius-xs);
   }
-  button:disabled, select:disabled {
+  button:disabled, select:disabled, input:disabled {
     opacity: .55; cursor: default; color: var(--muted);
   }
   /* Disabled is the end of the interaction story: explicitly cancel any
      hover carry-over so a pointer resting on a disabled control shows rest
      styling. Sits after the hover rule so equal specificity resolves here. */
-  button:disabled:hover, select:disabled:hover {
+  button:disabled:hover, select:disabled:hover, input:disabled:hover {
     border-color: var(--border); background: var(--panel); box-shadow: none;
   }
 
@@ -280,6 +300,26 @@
     .controls { align-items: stretch; }
     .controls > * { flex: 1 1 100%; }
   }
+  /* Touch targets (#306): every interactive control gets a 44×44px hit area
+     via min-height plus padding, whichever way the text wraps at small
+     widths. Selects keep their native arrow affordance. Press feedback and
+     :focus-visible outlines come from the state contract above, so keyboard
+     reachability is unchanged. */
+  select, button {
+    min-height: 44px;
+    min-width: 44px;
+    padding: var(--space-3) var(--space-4);
+    touch-action: manipulation;
+  }
+  select { padding-right: var(--space-8); }
+
+  /* The corridor label points at the select it names; give it the same
+     comfortable height so the whole control row stays a steady target. */
+  .controls label {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
   .panel {
     background: var(--panel); border: 1px solid var(--border);
     border-radius: var(--radius-md); padding: var(--space-5) var(--space-5); margin-bottom: var(--space-5);
@@ -301,9 +341,9 @@
     box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.02);
   }
   .badge::before { font-size: 1rem; line-height: 1; }
-  .b-direct { color: var(--brand-navy); background: var(--neutral-soft); }
+  .b-direct { color: var(--unknown); background: var(--neutral-soft); }
   .b-direct::before { content: "◆"; }
-  .b-derivative { color: var(--brand-slate); background: var(--warning-soft); }
+  .b-derivative { color: var(--warn); background: var(--warning-soft); }
   .b-derivative::before { content: "↪"; }
   .b-nomarket { color: var(--brand-coral); background: rgba(249, 115, 22, 0.12); }
   .b-nomarket::before { content: "∅"; }
@@ -315,11 +355,11 @@
   @media (max-width: 520px) { .integrity-card { grid-template-columns: 1fr; gap: var(--space-2); } }
   .finding { font-size: 1.02rem; margin: var(--space-3) 0 0; }
   .rec-none {
-    margin-top: var(--space-4); padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
+    margin: var(--space-4) 0 0; padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
     border: 1px solid var(--bad); color: var(--bad); font-size: .9rem;
   }
   .rec-some {
-    margin-top: var(--space-4); padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
+    margin: var(--space-4) 0 0; padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
     border: 1px solid var(--ok); color: var(--ok); font-size: .9rem;
   }
   table { width: 100%; border-collapse: collapse; font-size: .88rem; }
@@ -330,10 +370,27 @@
   .v-unusable { color: var(--bad); font-weight: 600; }
   .v-poor { color: var(--warn); }
   .v-good, .v-fair { color: var(--ok); }
+  /* A verdict's mark is its channel when the colour is gone — greyscale,
+     forced-colors, or a reader who does not separate these four hues. It
+     travels inside the coloured cell, so one class still paints both, and
+     it is always set beside the word: the mark never carries a verdict on
+     its own. */
+  .v-mark {
+    display: inline-flex; align-items: center; gap: .28rem;
+    width: 1.1rem; height: 1.1rem; margin-right: .4rem;
+    font: 700 .74rem/1 var(--mono);
+    border: 1px solid currentColor; border-radius: 3px;
+  }
+  /* The mark and the grade it names stay on one line. At 320px the verdict
+     column is 86px wide and a mark plus a grade does not fit across it:
+     wrapped, the mark ends up alone on the line above, a line away from the
+     word it stands for. The table already scrolls sideways there. */
+  .v-cell { white-space: nowrap; }
   .scroll { overflow-x: auto; }
   .finding-row { display: flex; gap: var(--space-3); align-items: baseline; padding: var(--space-2) 0;
                  border-bottom: 1px solid var(--grid); }
   .finding-row:last-child { border-bottom: 0; }
+  .finding-list { list-style: none; margin: 0; padding: 0; }
   .f-state { font: 600 .68rem/1.5 var(--mono); letter-spacing: .05em; padding: var(--space-1) var(--space-2);
              display: inline-flex; align-items: center; gap: var(--space-1); min-width: 5.3rem;
              border-radius: var(--radius-xs); border: 1px solid currentColor; white-space: nowrap; }
@@ -342,7 +399,7 @@
   .f-pass::before { content: "✓"; }
   .f-fail { color: var(--critical); background: var(--critical-soft); }
   .f-fail::before { content: "×"; }
-  .f-unknown { color: var(--brand-slate); background: var(--neutral-soft); }
+  .f-unknown { color: var(--unknown); background: var(--neutral-soft); }
   .f-unknown::before { content: "?"; }
   .finding-row:has(.f-pass) { background: var(--ok-soft); border-left: 3px solid var(--ok); padding-left: var(--space-3); }
   .finding-row:has(.f-fail) { background: var(--bad-soft); border-left: 3px solid var(--bad); padding-left: var(--space-3); }
@@ -353,12 +410,7 @@
   .f-limit { font-size: .8rem; color: var(--muted); margin-top: var(--space-1); }
   .f-evidence { font-family: var(--mono); font-size: .74rem; color: var(--muted);
                 margin-top: var(--space-1); word-break: break-all; }
-  /* Issue #294: per-finding evidence disclosure. */
-  .f-ev { margin-top: var(--space-1); }
-  .f-ev > summary { cursor: pointer; font-size: .74rem; color: var(--muted); }
-  .f-ev > summary:hover { color: var(--ink); }
-  .f-ev[open] .f-evidence:first-of-type { margin-top: var(--space-1); }
-
+  .f-evidence-list { list-style: none; margin: 0; padding: 0; }
   .m-value {
     font: 700 1.2rem/1.15 var(--mono); font-variant-numeric: tabular-nums;
     margin-top: var(--space-1); color: var(--ink);
@@ -370,18 +422,20 @@
   .m-state {
     display: inline-block; font: 600 .68rem/1.5 var(--mono); letter-spacing: .05em;
     padding: var(--space-1) var(--space-2); border-radius: var(--radius-xs); border: 1px solid currentColor;
-    color: var(--brand-slate); background: var(--neutral-soft); white-space: nowrap;
+    color: var(--unknown); background: var(--neutral-soft); white-space: nowrap;
     margin-right: var(--space-2);
   }
-  .m-unknown { color: var(--brand-slate); }
+  .m-unknown { color: var(--unknown); }
   .meta { color: var(--muted); font-size: .82rem; margin-top: var(--space-4); }
   .err { color: var(--bad); }
-  .provenance { margin-bottom: var(--space-4); padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
+  .provenance { margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
                 border: 1px solid var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
   .provenance-live { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
   h2 { font-size: .95rem; margin: 0 0 var(--space-3); letter-spacing: .01em; }
-  .legend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin-top: var(--space-4); }
-  .legend-item { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .legend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin: var(--space-4) 0 0; padding: 0; }
+  .legend-item { display: flex; align-items: center; gap: var(--space-2); min-width: 0; margin: 0; }
+  .legend-item dt { margin: 0; }
+  .legend-item dd { font-size: .8rem; margin: 0; }
   .legend-item span:last-child { font-size: .8rem; }
   .case { font-size: .88rem; color: var(--muted); }
   .integrity-cell { white-space: nowrap; }
@@ -393,8 +447,8 @@
   .cs-info .cs-state { font: 600 .72rem/1 var(--mono); letter-spacing: .04em;
     padding: var(--space-1) var(--space-2); border-radius: var(--radius-xs); border: 1px solid currentColor;
     vertical-align: middle; }
-  .cs-info .cs-state.cs-direct { color: var(--brand-navy); background: var(--neutral-soft); }
-  .cs-info .cs-state.cs-derivative { color: var(--brand-slate); background: var(--warning-soft); }
+  .cs-info .cs-state.cs-direct { color: var(--unknown); background: var(--neutral-soft); }
+  .cs-info .cs-state.cs-derivative { color: var(--warn); background: var(--warning-soft); }
   .cs-info .cs-state.cs-nomarket { color: var(--brand-coral); background: rgba(249, 115, 22, 0.12); }
   svg { width: 100%; height: auto; display: block; }
   .axis { fill: var(--muted); font: 10px var(--mono); }
@@ -404,6 +458,10 @@
                       margin-right: var(--space-1); vertical-align: -1px; }
   footer { color: var(--muted); font-size: .82rem; border-top: 1px solid var(--border); padding-top: var(--space-4); margin-top: var(--space-8); }
   code { font-family: var(--mono); font-size: .85em; }
+
+  /* Results focus target ------------------------------------------------- */
+  #out:focus { outline: none; }
+  #out:focus-visible { outline: none; }
 
   /* Loading / cold-start state ------------------------------------------- */
   .loading-panel {
@@ -474,6 +532,7 @@
 </script>
 </head>
 <body>
+<a class="skip-link" href="#out">Skip to the results</a>
 <div class="wrap">
   <header>
     <h1>Wayfare</h1>
@@ -482,21 +541,30 @@
     rate, and states plainly when none are worth taking.</p>
   </header>
 
+  <a class="skip-link" href="#out">Skip to results</a>
   <div class="controls">
     <label for="to">Corridor</label>
     <select id="to" aria-label="Select a corridor to measure">
       <option value="" disabled selected>Loading corridors…</option>
     </select>
+    <label for="sizes">Sizes</label>
+    <input id="sizes" name="sizes" type="text" inputmode="decimal"
+      autocomplete="off" spellcheck="false" class="sizes-input"
+      value="0.1,1,5,10,25,50,100,250,500,1000,2500,5000"
+      aria-label="Comma-separated send sizes in USDC; leave unchanged for the default ladder"
+      aria-describedby="sizes-help">
+    <span id="sizes-help" class="case">USDC, comma-separated</span>
     <span id="cs-detail" class="cs-info"></span>
+    <label for="sizes">Send sizes (USDC, comma-separated)</label>
+    <input id="sizes" name="sizes" inputmode="decimal" autocomplete="off"
+      placeholder="Default: 0.1 to 5000"
+      aria-describedby="sizes-help" spellcheck="false">
+    <span id="sizes-help" class="cs-info" title="The engine sorts the chosen sizes ascending before pricing, and an unpriced size is reported as such — never as a zero.">Leave empty for the default ladder:
+    0.1, 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500 and 5000. Why these sizes:
+    the bottom rung isolates the corridor's spread, the top rung exposes exhaustion.</span>
     <button id="run">Measure live</button>
     <button id="trend">Show trend</button>
-    <label for="theme">Theme</label>
-    <select id="theme" aria-label="Colour theme">
-      <option value="system">System</option>
-      <option value="light">Light</option>
-      <option value="dark">Dark</option>
-    </select>
-    <span id="status" class="sub"></span>
+    <span id="status" class="sub" role="status"></span>
   </div>
 
   <details class="compare-controls">
@@ -529,7 +597,7 @@
         inactivity (this usually takes under a minute).
       </p>
     </div>
-  </div>
+  </main>
 
   <footer>
     <span id="footer-provenance">Wayfare is non-custodial and read-only: it never holds funds,
@@ -541,6 +609,21 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, c => (
   {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// setOut replaces the results region. It exists for focus (issue #303):
+// replacing content that holds the keyboard's focus drops focus to the
+// document body, which strands a keyboard reader at the top of the page with
+// no indication of where they were. So when focus was inside #out — the
+// reader followed the skip link, or was working through the results — it
+// lands back on the region and the next Tab continues from the new content.
+// Pointer readers are untouched: their focus sits on a control outside #out,
+// so the branch does not fire and nothing moves under the cursor.
+function setOut(html) {
+  const out = $('out');
+  const focusWasInside = out.contains(document.activeElement);
+  out.innerHTML = html;
+  if (focusWasInside) out.focus();
+}
 
 // formatPct rounds a loss percentage string to 2 decimal places for display.
 // The server publishes full-precision decimals (per issue #83) so the verdict
@@ -604,6 +687,8 @@ const integrityInfo = (state, dependsOn = []) => {
 function integrityElement(state, dependsOn = '') {
   const info = integrityInfo(state, Array.isArray(dependsOn) ? dependsOn : []);
   const dependency = info.dependency ? `<p class="integrity-dependency">${esc(info.dependency)}</p>` : '';
+  // The structural state badge comes first, then the explanation: the state
+  // is the finding, the copy qualifies it.
   return `<div class="integrity-card">
     <span class="badge ${badgeClass(state)}" title="${esc(info.tooltip)}" aria-label="${esc(state)}: ${esc(info.tooltip)}">${esc(state)}</span>
     <div class="integrity-copy"><p class="integrity-title">${esc(info.title)}</p><p class="integrity-help">${esc(info.help)}</p>${dependency}</div>
@@ -625,8 +710,73 @@ function integrityCell(state, dependsOn = []) {
 
 const verdictClass = (v) => 'v-' + String(v).toLowerCase();
 
+// The mark beside a verdict. Colour was the only thing separating GOOD from
+// POOR once the word was out of view, and a hue is exactly what a greyscale
+// print, a forced-colors mode and some readers remove. The mark is that
+// second channel: a shape per grade, always printed next to the word, so
+// neither one has to carry the verdict alone.
+//
+// The four keys are the four grades the engine publishes. Nothing else gets a
+// mark: an unrecognised verdict is rendered as the bare word the API sent,
+// with no colour and no mark, because dressing a grade this client has never
+// heard of would be inventing one.
+const VERDICT_MARKS = { GOOD: '✓', FAIR: '≈', POOR: '!', UNUSABLE: '✕' };
+
+const verdictMark = (v) => {
+  const m = VERDICT_MARKS[String(v).toUpperCase()];
+  // aria-hidden: the word beside it is what assistive tech should read, and
+  // announcing both would say the grade twice.
+  return m ? `<span class="v-mark" aria-hidden="true">${m}</span>` : '';
+};
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// --- Assistive technology announcements (#302) ------------------------------
+// An innerHTML replacement is silent to assistive technology, so results are
+// mirrored into the polite live region above: nothing is interrupted, the
+// message lands after the paint, and every figure in it is one the engine
+// produced — read straight off the served document, never derived here. An
+// undetermined state is announced as exactly that: unknown, not failure.
+const announce = (message) => {
+  const region = $('out-status');
+  if (!region) return;
+  // Clearing first makes an identical message re-announce.
+  region.textContent = '';
+  window.setTimeout(() => { region.textContent = message; }, 50);
+};
+
+// One announcement for a measurement document: the integrity state the
+// engine issued, the finding in the engine's own words, then the
+// recommendation or its explicit absence.
+const announceResult = (d) => {
+  const send = (d.send_asset && d.send_asset.code) || '';
+  const recv = (d.receive_asset && d.receive_asset.code) || '';
+  const corridor = [send, recv].filter(Boolean).join(' → ');
+  if (d.recommended) {
+    announce(`${corridor}: ${d.integrity}. ${d.finding} Recommended at ` +
+      `${d.recommended_size} ${send}: ${d.recommended.loss_pct}% below mid, ` +
+      `graded ${d.recommended.verdict}.`);
+  } else if (d.scored) {
+    announce(`${corridor}: ${d.integrity}. ${d.finding} No size tested is worth taking.`);
+  } else {
+    announce(`${corridor}: no verdict could be issued. ${d.finding}`);
+  }
+};
+
+// Same for the trend view: the window and the latest state, read off the
+// stored runs.
+const announceTrend = (d) => {
+  const runs = d.runs || [];
+  if (runs.length === 0) {
+    announce(`No stored runs for the ${d.corridor} corridor yet.`);
+    return;
+  }
+  const latest = runs[runs.length - 1];
+  announce(`Trend for the ${d.corridor} corridor: ${runs.length} stored ` +
+    `run${runs.length === 1 ? '' : 's'} from ${fmtRunTime(runs[0].recorded_at)} ` +
+    `to ${fmtRunTime(latest.recorded_at)} UTC. Latest integrity ${latest.integrity}.`);
+};
 
 // --- Asset / corridor selector -----------------------------------------------
 //
@@ -675,10 +825,10 @@ function buildSelector(data) {
     // Nothing measurable: say so as its own state rather than leaving an empty
     // dropdown that looks like a loading bug (issue #300).
     sel.innerHTML = '<option value="" disabled selected>No corridors available</option>';
-    $('out').innerHTML = `<div class="panel">${emptyState({
+    setOut(`<div class="panel">${emptyState({
       title: 'No corridors to measure',
       body: 'This instance has verified no destination assets.',
-    })}</div>`;
+    })}</div>`);
     return;
   }
   // Sort: corridors with history first, then alphabetically.
@@ -714,6 +864,9 @@ function buildSelector(data) {
   updateCorridorDetail(sel.value);
   sel.addEventListener('change', () => {
     updateCorridorDetail(sel.value);
+    // URL-first (issue #292): a corridor change is a navigation. The sizes
+    // the reader typed carry over — they describe how to measure, not which
+    // corridor — and the URL bar is updated through the shared path.
     loadCorridor(sel.value);
   });
 }
@@ -762,6 +915,44 @@ function showErrorBanner(message) {
     `<div class="panel err" role="alert">${message}</div>`);
 }
 
+// The sizes control lets the reader choose the send amounts a live ladder
+// prices (issue #291). The engine owns the semantics: parseSizes on the
+// server accepts at most 24 positive decimal amounts, sorts them ascending,
+// and falls back to DefaultSizes when the parameter is absent — the control
+// only decides which of those requests to send. Whatever the API answers
+// with is what is rendered: rungs the engine could not price stay unpriced,
+// and nothing here fabricates or reorders a figure (docs/ladder-sizes.md
+// documents the default set).
+const MAX_SIZES = 24;
+
+// readSizes returns the trimmed input, or '' when it is empty. Validation is
+// deliberately server-side only: parseSizes is the contract, and the UI
+// showing the API's own error beats a second validator drifting from it.
+function readSizes() {
+  return $('sizes').value.trim();
+}
+
+// sizesValidation reports why the current input cannot be sent, or '' when it
+// can. Colour alone never carries this (the message text is the signal); the
+// invalid state is also mirrored onto the input via aria-invalid so screen
+// readers get it without a repaint.
+function sizesValidation(raw) {
+  if (raw === '') return '';
+  const parts = raw.split(',');
+  if (parts.length > MAX_SIZES)
+    return `At most ${MAX_SIZES} sizes can be measured in one request.`;
+  for (const p of parts) {
+    const t = p.trim();
+    if (t === '') continue;
+    if (!/^[+]?\d*\.?\d+([eE][+-]?\d+)?$/.test(t))
+      return `“${t}” is not a number the engine can measure.`;
+    const n = parseFloat(t);
+    if (!isFinite(n) || n <= 0)
+      return 'Every size must be a positive amount.';
+  }
+  return '';
+}
+
 // --- Measurement -------------------------------------------------------------
 
 async function measure() {
@@ -769,23 +960,38 @@ async function measure() {
   if (!to) {
     // No corridor selected is its own empty state — distinct from a corridor
     // that was measured and returned nothing (issue #300).
-    $('out').innerHTML =
-      `<div class="panel">${emptyState({
-        title: 'No corridor selected',
-        body: 'Choose a destination asset above, then measure it.',
-      })}</div>`;
+    setOut(`<div class="panel">${emptyState({
+      title: 'No corridor selected',
+      body: 'Choose a destination asset above, then measure it.',
+    })}</div>`);
     return;
   }
+  const sizesRaw = readSizes();
+  const problem = sizesValidation(sizesRaw);
+  const sizesInput = $('sizes');
+  if (problem) {
+    sizesInput.setAttribute('aria-invalid', 'true');
+    $('status').textContent = problem;
+    return;
+  }
+  sizesInput.removeAttribute('aria-invalid');
+  lastRequestedSizes = sizesRaw;
   $('run').disabled = true;
-  $('status').textContent = 'measuring live — a full ladder is a dozen round trips…';
+  $('status').textContent = 'measuring live — each size is its own round trip to Horizon, so more sizes take longer…';
   try {
-    const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}&live=1`);
+    const q = new URLSearchParams({ to });
+    if (sizesRaw !== '') q.set('sizes', sizesRaw);
+    const r = await fetch(`/api/corridor?${q}&live=1`);
     const data = await r.json();
     if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code });
     render(data);
+    // Reflect the exact request that produced this reading.
+    writeURLState({ to, sizes: sizes.norm, live: true });
     $('status').textContent = '';
   } catch (e) {
+    if (e.code === 'invalid_sizes') $('sizes').setAttribute('aria-invalid', 'true');
     showErrorBanner(`Could not measure: ${esc(e.message)}`);
+    announce(`Could not measure: ${e.message}`);
     $('status').textContent = '';
   } finally {
     $('run').disabled = false;
@@ -796,6 +1002,13 @@ async function measure() {
 // the server uses to say "this build cannot service that request at all" is a
 // capability gap, not a corridor that measured empty, so it renders as one;
 // everything else is a genuine unavailable-data error naming the cause.
+//
+// Currently unreferenced: the fetch paths show errors through showErrorBanner
+// (which preserves the page, #293) rather than replacing it. It stays because
+// its unknown_receive_asset branch is the only mapping of that code to the
+// capability-gap empty state, and a future caller that renders an error in
+// place of the page should route through it rather than re-deriving that
+// mapping. Flagged for removal if it gains no caller.
 function errorPanel(prefix, e) {
   if (e.code === 'unknown_receive_asset') {
     return `<div class="panel">${capabilityGap(
@@ -805,31 +1018,43 @@ function errorPanel(prefix, e) {
   return `<div class="panel err">${esc(prefix)}: ${esc(e.message)}</div>`;
 }
 
+// The sizes the last live measurement asked for, '' when it used the default
+// ladder. Purely a display label: the rendered figures are always the rungs
+// the API actually returned, whatever was requested.
+let lastRequestedSizes = '';
+
 function render(d) {
   const parts = [];
   const provenance = d.live
-    ? `<div class="provenance provenance-live"><strong>LIVE MEASUREMENT</strong> · measured ${esc(d.measured_at)}</div>`
-    : `<div class="provenance"><strong>RECORDED — NOT CURRENT MARKET DATA</strong> · ${esc(d.stale?.age_human || 'historical reading')} · recorded ${esc(d.stale?.recorded_at || d.measured_at)}</div>`;
+    ? `<p class="provenance provenance-live"><strong>LIVE MEASUREMENT</strong> · measured ${esc(d.measured_at)}</p>`
+    : `<p class="provenance"><strong>RECORDED — NOT CURRENT MARKET DATA</strong> · ${esc(d.stale?.age_human || 'historical reading')} · recorded ${esc(d.stale?.recorded_at || d.measured_at)}</p>`;
   $('footer-provenance').textContent = d.live
     ? `Every figure below was fetched live from Horizon pathfinding and an independent rate provider at ${d.measured_at}. Nothing is cached, estimated, or interpolated. Wayfare is non-custodial and read-only: it never holds funds, issues tokens, or moves money.`
     : `The reading below was recorded ${d.stale?.age_human || 'in the past'} at ${d.stale?.recorded_at || d.measured_at}; it is not a live market measurement. Wayfare is non-custodial and read-only: it never holds funds, issues tokens, or moves money.`;
 
   // Headline: integrity state and the finding, before any numbers.
-  parts.push(`${provenance}<div class="panel">
+  parts.push(`${provenance}<section class="panel" aria-label="Corridor integrity and verdict">
     ${integrityElement(d.integrity, d.depends_on || [])}
     <p class="finding">${esc(d.finding)}</p>
     ${d.scored ? recommendationBlock(d) : unscoredBlock(d)}
     <p class="meta">Reference ${esc(d.reference_pair)} mid
       <strong>${esc(d.reference_mid)}</strong> via ${esc(d.reference_source)} ·
       measured ${esc(d.measured_at)}</p>
-  </div>`);
+  </section>`);
 
   const priced = d.rungs.filter(r => r.priced);
   if (d.scored && priced.length) {
-    parts.push(`<div class="panel"><h2>Loss against mid, by size</h2>${curve(priced)}</div>`);
+    // The heading names the ladder that was actually measured: the sizes
+    // requested when the reader chose them, the default set otherwise
+    // (dex.DefaultSizes — 0.1 through 5000, documented in
+    // docs/ladder-sizes.md). The rungs below are the API's own.
+    const ladderNote = lastRequestedSizes
+      ? `at the sizes you asked for: ${esc(lastRequestedSizes)}`
+      : 'at the default sizes (0.1 to 5000)';
+    parts.push(`<div class="panel"><h2>Loss against mid, by size</h2><p class="meta">Measured ${esc(ladderNote)}.</p>${curve(priced)}</div>`);
   }
 
-  parts.push(`<div class="panel"><h2>Measurements</h2><div class="scroll">${table(d.rungs, d.scored, d.depends_on || [])}</div></div>`);
+  parts.push(`<section class="panel" aria-label="Ladder measurements"><h2>Measurements</h2><div class="scroll">${table(d.rungs, d.scored, d.depends_on || [])}</div></section>`);
 
   if (d.scored) parts.push(legend());
 
@@ -837,6 +1062,7 @@ function render(d) {
 
   parts.push(caseStudy(d));
   $('out').innerHTML = parts.join('');
+  $('out').focus({ preventScroll: true });
 }
 
 // The comparison is deliberately narrow: loss percentages are dimensionless
@@ -942,7 +1168,7 @@ function unscoredBlock(d) {
   }
   const divergence = d.reference_divergence_pct
     ? ` — ${esc(d.reference_divergence_pct)}% apart` : '';
-  return `<div class="rec-none">No verdict can be issued. The two reference providers
+  return `<div class="rec-none" role="note">No verdict can be issued. The two reference providers
     disagreed: ${primary}${secondary}${divergence}. Per the scoring contract,
     no loss figure or recommendation is derived from a benchmark the engine
     could not trust.</div>`;
@@ -964,14 +1190,14 @@ function recommendationBlock(d) {
     });
   }
   if (!d.recommended) {
-    return `<div class="rec-none">No recommendation. Every size tested is graded
+    return `<div class="rec-none" role="note">No recommendation. Every size tested is graded
       Unusable, so presenting a &ldquo;best&rdquo; route here would imply one is
       worth taking.</div>`;
   }
   const q = d.recommended;
   return `<div class="rec-some">Recommended at ${esc(d.recommended_size)}
     ${esc(d.send_asset.code)}: ${esc(q.description)} &mdash; ${formatPct(q.loss_pct)}%
-    below mid, graded ${esc(q.verdict)}.</div>`;
+    below mid, graded ${verdictMark(q.verdict)}${esc(q.verdict)}.</div>`;
 }
 
 // A log-x line chart. Loss is clamped to 0–100 so the shape of the curve, not
@@ -1034,12 +1260,16 @@ function table(rungs, scored, depends) {
     }
     const q = r.quote;
     if (scored) {
+      // The loss figure keeps its colour as a scanning aid, but the grade
+      // beside it is what the row asserts — the number is the engine's, the
+      // word and the mark are the verdict, and only the last two survive
+      // the loss of colour.
       return `<tr>
         <td class="num">${esc(r.send_amount)}</td>
         <td class="num">${esc(q.receive_amount)}</td>
         <td class="num">${esc(q.effective_rate)}</td>
         <td class="num ${verdictClass(q.verdict)}">${formatPct(q.loss_pct)}%</td>
-        <td class="${verdictClass(q.verdict)}">${esc(q.verdict)}</td>
+        <td class="${verdictClass(q.verdict)}"><span class="v-cell">${verdictMark(q.verdict)}${esc(q.verdict)}</span></td>
         <td>${esc(q.description)}</td>
       </tr>`;
     }
@@ -1057,14 +1287,14 @@ function table(rungs, scored, depends) {
   if (scored) {
     return `<table>
       <thead><tr>
-        <th>Send</th><th>Receive</th><th>Rate</th><th>Loss</th><th>Verdict</th><th>Path</th>
+        <th scope="col">Send</th><th scope="col">Receive</th><th scope="col">Rate</th><th scope="col">Loss</th><th scope="col">Verdict</th><th scope="col">Path</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
   }
   return `<table>
     <thead><tr>
-      <th>Send</th><th>Receive</th><th>Rate</th><th>Path</th>
+      <th scope="col">Send</th><th scope="col">Receive</th><th scope="col">Rate</th><th scope="col">Path</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
@@ -1084,21 +1314,17 @@ function findings(f) {
 
     const text = c.determined ? c.summary : (c.reason || c.summary);
 
-    // Issue #294: the raw source-and-timestamp lines sit one step away in a
-    // native <details> disclosure, so the finding summary leads.
-    const evidence = (c.evidence || []).length
-      ? `<details class="f-ev"><summary>Evidence</summary>${(c.evidence || []).map(e =>
-          `<div class="f-evidence">${esc(e.source)} → ${esc(e.observed)} · ${esc(e.observed_at)}</div>`).join('')}</details>`
-      : '';
+    const evidence = (c.evidence || []).map(e =>
+      `<li class="f-evidence">${esc(e.source)} → ${esc(e.observed)}</li>`).join('');
 
-    return `<div class="finding-row">
+    return `<li class="finding-row">
       <span class="f-state ${state[1]}">${state[0]}</span>
       <div class="f-body">
         <div class="f-summary">${esc(text)}</div>
         <div class="f-id">${esc(c.id)}${c.determined && !c.passed ? ' · ' + esc(c.severity) : ''}</div>
-        ${evidence}
+        ${evidence ? `<ul class="f-evidence-list">${evidence}</ul>` : ''}
       </div>
-    </div>`;
+    </li>`;
   }).join('');
 
   const counts = [];
@@ -1106,20 +1332,20 @@ function findings(f) {
   if (f.undetermined) counts.push(`${f.undetermined} undetermined`);
   if (f.passed) counts.push(`${f.passed} passed`);
 
-  // Metrics are a distinct shape and get a distinct panel: a value with a
-  // unit, never a verdict. The panel is absent — not empty — when no metric
+  // Metrics are a distinct shape and get a distinct section: a value with a
+  // unit, never a verdict. The section is absent — not empty — when no metric
   // was run, so "no metrics" and "metrics, nothing found" cannot look alike.
   const metricsBlock = (f.metrics && f.metrics.length) ? metrics(f.metrics) : '';
 
-  return `${metricsBlock}<div class="panel">
+  return `${metricsBlock}<section class="panel" aria-label="Counterparty checks">
     <h2>Counterparty checks &mdash; ${esc(counts.join(', '))}</h2>
-    ${rows}
+    <ul class="finding-list">${rows}</ul>
     <p class="meta">These describe the issuer and anchor this corridor depends on.
     They qualify the result above and never change it: the integrity state and every
     verdict are computed from pathfinding and the reference rate alone.
     <strong>Undetermined is not a failure</strong> &mdash; an anchor that publishes
     nothing is a different fact from one that publishes something broken.</p>
-  </div>`;
+  </section>`;
 }
 
 // Metrics are measured quantities, reported alongside checks. They are not
@@ -1140,54 +1366,54 @@ function metrics(ms) {
       ? `<div class="m-value m-unknown"><span class="m-state">UNDETERMINED</span>${esc(m.reason || m.summary)}</div>`
       : `<div class="m-value">${esc(m.value)}<span class="m-unit">${esc(m.unit)}</span></div>`;
 
-    // Issue #294: metric evidence is disclosed on demand, same as checks.
-    const evidence = (m.evidence || []).length
-      ? `<details class="f-ev"><summary>Evidence</summary>${(m.evidence || []).map(e =>
-          `<div class="f-evidence">${esc(e.source)} &rarr; ${esc(e.observed)} &middot; ${esc(e.observed_at)}</div>`).join('')}</details>`
-      : '';
+    const evidence = (m.evidence || []).map(e =>
+      `<li class="f-evidence">${esc(e.source)} &rarr; ${esc(e.observed)} &middot; ${esc(e.observed_at)}</li>`).join('');
 
-    return `<div class="finding-row">
+    return `<li class="finding-row">
       <div class="f-body">
         ${m.determined ? `<div class="f-summary">${esc(m.summary)}</div>` : ''}
         ${value}
         <div class="f-id">${esc(m.id)} &middot; ${esc(m.subject)} &middot; observed ${esc(m.observed_at)}</div>
-        ${evidence}
+        ${evidence ? `<ul class="f-evidence-list">${evidence}</ul>` : ''}
       </div>
-    </div>`;
+    </li>`;
   }).join('');
 
   const count = undetermined
     ? `${measured} measured, ${undetermined} undetermined`
     : `${measured} measured`;
 
-  return `<div class="panel">
+  return `<section class="panel" aria-label="Metrics">
     <h2>Metrics &mdash; ${count}</h2>
-    ${rows}
+    <ul class="finding-list">${rows}</ul>
     <p class="meta">These are measured quantities, not verdicts: each is a
     number with its unit, and a metric that could not be measured says why
     instead of reporting a number. No threshold exists for any of them, so
     none is graded good or bad, and <strong>undetermined is not a
     failure</strong>.</p>
-  </div>`;
+  </section>`;
 }
 
+// The legend is a definition list: verdict thresholds map to their bands,
+// and each finding state maps to what it means. STATE/VALUE pairs render
+// correctly without the grid, so the semantics survive any stylesheet.
 function legend() {
-  return `<div class="panel" style="font-size:.85rem; color:var(--muted)">
+  return `<section class="panel" aria-label="Verdict thresholds" style="font-size:.85rem; color:var(--muted)">
     <h2>Verdict thresholds</h2>
     <p>Loss is how far the achieved rate falls below the reference mid.</p>
     <p>
-      <span class="v-good" style="font-weight:600">GOOD</span> ≤ 3% &middot;
-      <span class="v-fair">FAIR</span> ≤ 8% &middot;
-      <span class="v-poor">POOR</span> ≤ 20% &middot;
-      <span class="v-unusable">UNUSABLE</span> &gt; 20%
+      <span class="v-good" style="font-weight:600">${verdictMark('GOOD')}GOOD</span> ≤ 3% &middot;
+      <span class="v-fair">${verdictMark('FAIR')}FAIR</span> ≤ 8% &middot;
+      <span class="v-poor">${verdictMark('POOR')}POOR</span> ≤ 20% &middot;
+      <span class="v-unusable">${verdictMark('UNUSABLE')}UNUSABLE</span> &gt; 20%
     </p>
-    <div class="legend-grid" aria-label="Finding state legend">
-      <div class="legend-item"><span class="f-state f-pass">PASS</span><span>Observed and clear</span></div>
-      <div class="legend-item"><span class="f-state f-fail">FAIL</span><span>Observed concern</span></div>
-      <div class="legend-item"><span class="f-state f-unknown">UNKNOWN</span><span>Could not determine</span></div>
-    </div>
+    <dl class="legend-grid" aria-label="Finding state legend">
+      <div class="legend-item"><dt><span class="f-state f-pass">PASS</span></dt><dd>Observed and clear</dd></div>
+      <div class="legend-item"><dt><span class="f-state f-fail">FAIL</span></dt><dd>Observed concern</dd></div>
+      <div class="legend-item"><dt><span class="f-state f-unknown">UNKNOWN</span></dt><dd>Could not determine</dd></div>
+    </dl>
     <p>When no size produces a verdict of POOR or better, nothing is recommended.</p>
-  </div>`;
+  </section>`;
 }
 
 function caseStudy(d) {
@@ -1200,7 +1426,7 @@ function caseStudy(d) {
         expensive pricing and is reported as such.`
     : '';
 
-  return `<div class="panel case">
+  return `<section class="panel case" aria-label="Case study">
     <h2>Case study #1 &mdash; one issuer&rsquo;s African-fiat set</h2>
     <p>NGNC, GHSC and KESC are issued from a single Stellar account. Their issuer
     declares NGNC <code>status="live"</code> and the other two
@@ -1214,7 +1440,7 @@ function caseStudy(d) {
     so its own rails cannot be priced programmatically and are not measured here.
     Wayfare works on any stablecoin &rarr; fiat-token corridor; this set is simply
     the first one measured.</p>
-  </div>`;
+  </section>`;
 }
 
 // --- Trend -----------------------------------------------------------------
@@ -1236,11 +1462,13 @@ async function loadTrend() {
     if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
     trendState = { data, size: defaultTrendSize(data) };
     renderTrend();
+    announceTrend(data);
     $('status').textContent = '';
   } catch (e) {
     // trendState keeps its previous value: the last good history load stays
     // readable (and its size control usable) under the banner.
     showErrorBanner(`Could not load history: ${esc(e.message)}`);
+    announce(`Could not load history: ${e.message}`);
     $('status').textContent = '';
   } finally {
     $('trend').disabled = false;
@@ -1271,7 +1499,7 @@ function renderTrend() {
   const parts = [];
 
   if (runs.length === 0) {
-    parts.push(`<div class="panel">
+    parts.push(`<section class="panel" aria-label="Trend">
       <h2>Trend &mdash; ${esc(d.corridor)}</h2>
       ${emptyState({
         glyph: '…',
@@ -1279,21 +1507,22 @@ function renderTrend() {
         body: 'The scheduler records a run every 6 hours, and the trend appears ' +
           'as history exists. Nothing is interpolated, estimated, or borrowed ' +
           'from another corridor in the meantime.',
-      })}</div>`);
+      })}</section>`);
     $('out').innerHTML = parts.join('');
+    $('out').focus({ preventScroll: true });
     return;
   }
 
   const latest = runs[runs.length - 1];
-  parts.push(`<div class="panel">
+  parts.push(`<section class="panel" aria-label="Trend">
     <h2>Trend &mdash; ${esc(d.corridor)}</h2>
     ${integrityElement(latest.integrity, latest.depends_on || [])}
     <span class="case">&nbsp; latest of ${runs.length} stored run(s) &middot;
     ${esc(fmtRunTime(runs[0].recorded_at))} &rarr; ${esc(fmtRunTime(latest.recorded_at))} UTC</span>
     <p class="meta">${referenceSummary(runs)}${integritySummary(runs)}</p>
-  </div>`);
+  </section>`);
 
-  parts.push(`<div class="panel">
+  parts.push(`<section class="panel" aria-label="Loss over time">
     <h2>Loss against mid over time</h2>
     <div class="controls" style="margin-bottom:var(--space-3)">
       <label for="trend-size">Size</label>
@@ -1310,19 +1539,22 @@ function renderTrend() {
     normal cadence) are dashed to say so. Dot colour and the strip under the
     axis mark the integrity state at each run; the dashed line is the 20%
     unusable threshold, as on the live curve.</p>
-  </div>`);
+  </section>`);
 
-  parts.push(`<div class="panel">
+  parts.push(`<section class="panel" aria-label="Stored runs">
     <h2>Stored runs</h2>
-    <div class="scroll">${runsTable(runs)}</div>
+    <div class="scroll" tabindex="0" role="region" aria-label="Stored runs, newest first">${runsTable(runs)}</div>
     <p class="meta">Newest first. The reference column names the provider each
     run was scored against, so a benchmark change sits next to the numbers it
-    affects.</p></div>`);
+    affects.</p></section>`);
 
   $('out').innerHTML = parts.join('');
+  $('out').focus({ preventScroll: true });
   $('trend-size').addEventListener('change', (e) => {
     trendState.size = e.target.value;
     $('trend-chart').innerHTML = trendChart(d, trendState.size);
+    const sendCode = (d.send_asset && d.send_asset.code) || '';
+    announce(`Trend chart now shows the ${trendState.size} ${sendCode} size.`.trim());
   });
 }
 
@@ -1419,6 +1651,34 @@ function trendChart(d, size) {
       : i === 'NO-MARKET' ? 'var(--chart-nomarket)'
       : 'var(--muted)';
 
+  // One dot per stored run, and its fill alone said which integrity state
+  // that run recorded — a channel that disappears the moment colour does,
+  // with no second cue anywhere in the plot. The shape says it too: a filled
+  // circle for DIRECT, a diamond for DERIVATIVE, a square for NO-MARKET.
+  // Colour stays, as a scanning aid, and the key below draws the shapes.
+  //
+  // An unrecognised state draws the DIRECT circle: it is the neutral shape,
+  // and a state the engine has not defined here must not be dressed as one
+  // of the three that exist.
+  const dotMark = (integrity, cx, cy, r, attrs, title) => {
+    const fill = dotFill(integrity);
+    const tip = title ? `<title>${title}</title>` : '';
+    if (integrity === 'DERIVATIVE')
+      return `<rect x="${(cx - r).toFixed(1)}" y="${(cy - r).toFixed(1)}" width="${(r * 2).toFixed(1)}" height="${(r * 2).toFixed(1)}"
+        transform="rotate(45 ${cx.toFixed(1)} ${cy.toFixed(1)})" fill="${fill}" ${attrs}>${tip}</rect>`;
+    if (integrity === 'NO-MARKET')
+      return `<rect x="${(cx - r).toFixed(1)}" y="${(cy - r).toFixed(1)}" width="${(r * 2).toFixed(1)}" height="${(r * 2).toFixed(1)}"
+        fill="${fill}" ${attrs}>${tip}</rect>`;
+    return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}"
+       fill="${fill}" ${attrs}>${tip}</circle>`;
+  };
+
+  // The same mark at key size, wrapped in its own 12x12 box so the key can
+  // sit in a line of text. Hidden from assistive tech: the word beside it
+  // already names the state.
+  const keySwatch = (integrity) =>
+    `<svg class="sw" viewBox="0 0 12 12" aria-hidden="true">${dotMark(integrity, 6, 6, 4, 'class="key-mark"', '')}</svg>`;
+
   const segments = [];
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1], b = pts[i];
@@ -1439,9 +1699,8 @@ function trendChart(d, size) {
       `reference mid ${esc(ref.mid || 'n/a')} via ${esc(ref.scored_against || ref.source || 'unknown')}`,
       `integrity ${esc(r.integrity)}${(r.depends_on || []).length ? ' via ' + esc(r.depends_on.join(', ')) : ''}`,
     ].join('<br/>');
-    return `<circle cx="${sx(p.t).toFixed(1)}" cy="${sy(p.loss).toFixed(1)}" r="3.5"
-       fill="${dotFill(r.integrity)}" stroke="var(--panel)" stroke-width="1.25">
-       <title>${title}</title></circle>`;
+    return dotMark(r.integrity, sx(p.t), sy(p.loss), 3.5,
+      `class="run-mark" stroke="var(--panel)" stroke-width="1.25"`, title);
   }).join('');
 
   const empty = priced.length
@@ -1514,7 +1773,7 @@ function runsTable(runs) {
 
   return `<table>
     <thead><tr>
-      <th>Recorded (UTC)</th><th>#</th><th>Integrity</th><th>Floor loss</th><th>Worst loss</th><th>Reference</th>
+      <th scope="col">Recorded (UTC)</th><th scope="col">#</th><th scope="col">Integrity</th><th scope="col">Floor loss</th><th scope="col">Worst loss</th><th scope="col">Reference</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
@@ -1560,11 +1819,10 @@ $('compare').addEventListener('click', compareCorridors);
 
 async function loadCorridor(to) {
   if (!to) {
-    $('out').innerHTML =
-      `<div class="panel">${emptyState({
-        title: 'No corridor selected',
-        body: 'Choose a destination asset above.',
-      })}</div>`;
+    setOut(`<div class="panel">${emptyState({
+      title: 'No corridor selected',
+      body: 'Choose a destination asset above.',
+    })}</div>`);
     return;
   }
   try {
@@ -1575,9 +1833,11 @@ async function loadCorridor(to) {
     const data = await r.json();
     if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code });
     render(data);
+    announceResult(data);
   } catch (e) {
     showErrorBanner(
       `Could not load corridor data: ${esc(e.message)}. If the instance is still waking up, wait a moment and <a href="" style="color:inherit">reload</a>.`);
+    announce(`Could not load corridor data: ${e.message}. If the instance is still waking up, wait a moment and reload.`);
   }
 }
 

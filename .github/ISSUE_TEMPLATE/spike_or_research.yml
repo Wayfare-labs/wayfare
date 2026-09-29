@@ -1,0 +1,61 @@
+name: Spike or Research Issue
+description: Propose a research spike, feasibility study, or ecosystem inquiry.
+title: "Spike: "
+labels: ["area:research", "area:ecosystem"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Spike issues require written findings under `docs/` and must explicitly commit to attempting no implementation code.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: Describe the research question, hypothesis, or spike scope.
+      placeholder: "> Backlog entry `#<entry>`, from **[docs/backlog.md](https://github.com/Wayfare-labs/wayfare/blob/main/docs/backlog.md)** — Initiative ...\n\n## What\n..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: roadmap_impact
+    attributes:
+      label: Roadmap impact
+      description: Which roadmap milestone does this spike target?
+      options:
+        - "**V4+ — Future (not active)**"
+        - "**V1 — Hardening**"
+        - "**V2 — Execution economics**"
+        - "**V3 — Multi-corridor & multi-hop**"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints that apply
+      description: Check each box to confirm compliance with repository measurement constraints.
+      options:
+        - label: "assert nothing the repository does not currently support; check claims against the code as it is, not as it is described"
+          required: true
+        - label: "every measurement cited carries its source and the date it was checked"
+          required: true
+        - label: "mark future capabilities as future — do not describe roadmap items as though they are built"
+          required: true
+        - label: "a negative or inconclusive finding is a valid result and should be reported as one"
+          required: true
+
+  - type: checkboxes
+    id: spike_done_when
+    attributes:
+      label: Done when
+      description: Mandatory spike acceptance criteria.
+      options:
+        - label: "a written finding lands under `docs/`"
+          required: true
+        - label: "every claim carries its source and the date it was checked"
+          required: true
+        - label: "a negative or inconclusive result is reported as such — that is a valid outcome and should not be padded into a positive one"
+          required: true
+        - label: "**no implementation is attempted as part of this issue**"
+          required: true

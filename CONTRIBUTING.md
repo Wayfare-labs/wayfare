@@ -22,7 +22,9 @@ cd wayfare
 make test
 ```
 
-Go 1.22 or later. Dependencies are `shopspring/decimal` and `BurntSushi/toml`.
+Go 1.22 or later. Dependencies are `shopspring/decimal` and `BurntSushi/toml` —
+exactly two, pinned, and enforced in CI. The reasoning, and the process for
+changing it: **[docs/dependency-policy.md](docs/dependency-policy.md)**.
 
 For a fuller on-ramp — from the clone above to verifying the recorded data and
 reproducing a published figure — follow **[docs/first-15-minutes.md](docs/first-15-minutes.md)**.
@@ -173,9 +175,21 @@ Changes to `server/index.html` are only covered by the source-text assertions in
 [docs/qa/README.md](docs/qa/README.md) is a harness that drives the real binary in
 Chromium, Firefox and WebKit and records what it saw.
 
+Pull requests are also read by the auto-merge gate. It merges a change it can
+verify mechanically — every check green, no maintainer-owned path, no new
+dependency, a ticked checklist, and a diff inside the scope its issue named —
+and labels anything else `needs-maintainer-review` with the exact reasons.
+Being held is not a rejection. The gate is exercised offline by
+`go test ./automerge`: **[docs/auto-merge.md](docs/auto-merge.md)**.
+
 In the pull request, describe what changed and why. If it touches pricing,
 say how you verified correctness — and if you measured something live,
 include the raw figures and the timestamp.
+
+## Opening an issue
+
+Issues should follow the templates in [.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/)
+(covering features/hardening, spikes/research, documentation, and bug reports).
 
 ## Reporting a corridor
 
