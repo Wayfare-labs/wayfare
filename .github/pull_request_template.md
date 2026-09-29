@@ -4,6 +4,7 @@
      what a reader believes about a corridor? -->
 
 Closes #
+Roadmap entry: Backlog #
 
 ## Confirmations
 
@@ -12,7 +13,7 @@ human instead of merging automatically, which is often the right outcome.
 
 If a line does not apply to your change, tick it and say why underneath.
 
-- [ ] **Unknown is reported as unknown.** When the data is unavailable this
+- [ ] **Unknown is reported as unknown.** When data is unavailable this
       returns UNABLE-TO-DETERMINE — not zero, not a default, not an estimate.
       An anchor that does not publish something is different from one that
       publishes something wrong, and the output says which.
@@ -26,10 +27,17 @@ If a line does not apply to your change, tick it and say why underneath.
 - [ ] **`decimal.Decimal` for all money and rates.** No `float64` anywhere a
       price, amount or percentage is handled.
 - [ ] **No new third-party dependencies.**
-- [ ] **No maintainer-owned file touched** — nothing in `dex/`, `sep38/`,
-      `route/route.go`, `route/ladder.go`, `runstore/runstore.go`, `data/`, or
-      `.github/workflows/`.
-- [ ] **`make fmt vet test race lint` is clean.**
+- [ ] **No maintainer-owned area modified without flagging.** Nothing in `dex/`
+      pricing arithmetic, verdict thresholds, integrity taxonomy/semantics,
+      SEP-38 fee handling, check composition rules (`route.WithFindings`),
+      run-record layout, or corridor health score. (If the work turns out to
+      require changing any of these, stop and flag it — that is a different
+      issue with a different review bar).
+- [ ] **Assert nothing the repository does not support.** Every claim is checked
+      against the code at time of writing; every measurement carries its source
+      and date checked; future capabilities are marked future; a negative or
+      inconclusive finding is reported as a valid result.
+- [ ] **`make fmt vet test race lint offline-test` is clean.**
 
 ## How you verified it
 
@@ -52,6 +60,6 @@ So the first review pass sits with you. The auto-merge gate lands changes it
 can verify mechanically and hands everything else to a maintainer — the boxes
 above are what it reads. Nothing here is ceremony: each line corresponds to a
 failure this repository has actually had, or to an invariant in
-[CONTRIBUTING.md](../CONTRIBUTING.md).
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 </details>

@@ -1,6 +1,7 @@
 # HTTP API reference
 
-**Status:** implemented in the repository as of 2026-08-27. This document describes the handlers and wire fields present in `server/` at that date. It does not describe roadmap capabilities.
+**Status:** implemented API contracts, including `GET /api/chain-heads` added
+2026-09-26. This document does not describe roadmap capabilities.
 
 All endpoints are read-only. The service does not hold funds, issue tokens, sign transactions, or execute payments.
 
@@ -10,11 +11,12 @@ All endpoints are read-only. The service does not hold funds, issue tokens, sign
 |---|---|---|
 | `GET` | `/api/corridor` | Measure or retrieve one corridor |
 | `GET` | `/api/corridor/trend` | Read stored measurements for a corridor |
+| `GET` | `/api/chain-heads` | Publish the current hash-chain tip for each stored corridor |
 | `GET` | `/api/assets` | List verified assets configured in the binary |
 | `GET` | `/healthz` | Return service health |
 | `GET` | `/` | Serve the embedded single-file UI |
 
-Unsupported methods return `405`. JSON errors have the shape `{ "error": "..." }`.
+Unsupported methods return `405`. Requests beyond the per-client rate limit return `429` with a `Retry-After` header (seconds) and the error code `rate_limited` (see [Rate limiting](#rate-limiting)). JSON errors have the shape `{ "error": "...", "code": "..." }`.
 
 ## `GET /api/corridor`
 
@@ -240,6 +242,58 @@ curl -s "https://wayfare-cdb9.onrender.com/api/corridor/trend?to=NGNC&limit=7"
 }
 ```
 
+## `GET /api/chain-heads`
+
+Returns the current stored hash-chain tip for every corridor, sorted by
+corridor key. This endpoint is read-only and does not measure. Each entry
+contains:
+
+**Query parameter:** `pretty=1` is optional and indents the JSON response for
+humans.
+
+Each item in `heads` contains:
+
+- `corridor` — stable corridor key, such as `USDC-NGNC`.
+- `seq` — sequence number of the current tip.
+- `recorded_at` — the tip record's UTC timestamp in RFC 3339 form.
+- `hash` — the full SHA-256 record hash, including its `sha256:` prefix.
+
+An empty or unconfigured store returns `200` with `heads: []`. The endpoint
+does not sign the response or provide a trusted timestamp: a third party should
+retain the returned hash and the time and source at which it observed it. The
+hash is a pin for comparing later observations, not proof that the underlying
+measurement was correct or that the publisher included every scheduled run.
+To establish that a later chain still contains a pinned head, the reader must
+obtain the corresponding NDJSON history from the repository's
+[committed data](../data/) and verify its links; this endpoint publishes the
+tip only and does not return per-record proofs.
+
+At present, the committed store is a rolling window. When rotation trims a
+corridor, its surviving records are re-sealed from a new window head, so its
+published tip hash changes and is not a continuation of the previously pinned
+chain. See [ADR 007](adr/007-why-the-committed-chain-is-a-rolling-window.md).
+
+**cURL:**
+
+```bash
+curl -s https://wayfare-cdb9.onrender.com/api/chain-heads
+```
+
+**Example Response (200 OK):**
+
+```json
+{
+  "heads": [
+    {
+      "corridor": "USDC-NGNC",
+      "seq": 1,
+      "recorded_at": "2026-08-22T12:09:59Z",
+      "hash": "sha256:424b33fcf1202487e493e905a7710247489ccd4d943eb182ce6f0f4f0fb4144f"
+    }
+  ]
+}
+```
+
 ## `GET /api/assets`
 
 Returns an `assets` array. Each entry contains the asset fields and `can_be_destination`, which is true when the binary has a verified fiat peg for that asset.
@@ -288,16 +342,83 @@ A healthy service returns status `200` with:
 
 **cURL:**
 ```bash
-curl -s https://wayfare-cdb9.onrender.com/healthz 
+curl -s https://wayfare-cdb9.onrender.com/healthz
 ```
 
 **Example Response (200 OK):**
 
 ```json
-{ "status": "ok" }
+{
+  "status": "ok",
+  "data": {
+    "USDC-NGNC": {
+      "recorded_at": "2026-09-26T08:00:00Z",
+      "age_seconds": 45,
+      "age_human": "45s"
+    }
+  },
+  "freshness": {
+    "chain_head": 55101724,
+    "newest_record_at": "2026-09-26T08:00:00Z",
+    "record_count": 431
+  }
+}
 ```
 
+`data` maps each corridor that has stored history to its newest run and the
+age of that run; a corridor with no stored run is omitted rather than
+reported as fresh, and the whole field is `null` when no history is
+configured.
+
 This endpoint checks that the HTTP service is responding. It does not perform a live corridor measurement or validate upstream availability.
+
+### Freshness fields
+
+`freshness` describes how current the recorded data is, so a consumer can tell
+"is old" apart from "is down":
+
+- `chain_head`: the Stellar core ledger sequence reported by Horizon's root
+  endpoint at request time.
+- `newest_record_at`: RFC 3339 timestamp of the most recent recorded corridor
+  measurement in the run store (null when the store holds no records).
+- `record_count`: number of records held by the run store.
+
+Unknown values are rendered as `null`, never as zero or a synthesised guess.
+If Horizon's root is unreachable, `chain_head` is `null` while store-derived
+fields are still reported; if the store cannot be read, its fields are `null`
+while `chain_head` is still reported. A `200` with nulls means the check could
+not be made, not that data is absent. The freshness block does not change the
+endpoint's health verdict: it remains `200` as long as the HTTP service is
+answering.
+
+## Rate limiting
+
+Every route — including `/healthz` and the UI — passes through a per-client
+limiter, because the thing being bounded is the service's cost (upstream
+calls, CPU), and that cost is real on every path.
+
+- **Sustained rate:** 4 requests/second per client (`-rate-limit`)
+- **Burst:** 10 requests (`-rate-burst`)
+- **Client identity:** the connecting peer's host, or the client named in
+  `X-Forwarded-For` when the request arrives from loopback or a private-range
+  address (the reverse-proxy shape of the hosted deployment). A directly
+  connected public peer cannot choose its own bucket by setting that header.
+- **Off switch:** `-rate-limit=0` disables limiting entirely — for an
+  operator who already has a limiter in front.
+
+A refused request answers:
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 1
+
+{"error": "rate limit exceeded; ...", "code": "rate_limited"}
+```
+
+`Retry-After` is rounded up to whole seconds so a client that honours it is
+never refused twice for the same bucket. The limit is a fairness mechanism,
+not a security boundary: it bounds what one client can cost, and does not
+authenticate anyone.
 
 ## Freshness and provenance
 
@@ -307,6 +428,8 @@ Reference rates are never averaged. The response identifies the provider and, wh
 
 ## Related contracts
 
+- [Reading the API correctly](api-consumer.md) — a worked consumer that
+  respects `live`, `scored` and a null `recommended`, with its offline tests
 - [Run store](run-store.md) — stored record and hash-chain format
 - [Snapshot format](snapshot-format.md) — recorded upstream bytes
 - [Checks](checks.md) — tri-state counterparty findings and metrics

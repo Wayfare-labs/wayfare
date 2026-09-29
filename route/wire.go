@@ -34,6 +34,7 @@ type QuoteJSON struct {
 	LossPct       string   `json:"loss_pct"`
 	LossAmount    string   `json:"loss_amount,omitempty"`
 	Verdict       string   `json:"verdict"`
+	PathCount     int      `json:"path_count,omitempty"`
 	Warnings      []string `json:"warnings"`
 }
 
@@ -81,6 +82,7 @@ type RungJSON struct {
 	MarginalTo   string         `json:"marginal_to,omitempty"`
 	Priced       bool           `json:"priced"`
 	Integrity    string         `json:"integrity"`
+	PathCount    int            `json:"path_count,omitempty"`
 	Quote        *QuoteJSON     `json:"quote"`
 	Cost         *CostBlockJSON `json:"cost,omitempty"`
 	Notes        []string       `json:"notes"`
@@ -235,6 +237,7 @@ func ToQuoteJSON(q *Quote) *QuoteJSON {
 		LossPct:       q.LossPct.String(),
 		LossAmount:    q.LossAmount.StringFixed(2),
 		Verdict:       q.Verdict.String(),
+		PathCount:     q.PathCount,
 		Warnings:      w,
 	}
 }
@@ -359,7 +362,9 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 				rj.Notes = r.Result.Notes
 			}
 			if len(r.Result.Quotes) > 0 {
-				rj.Quote = ToQuoteJSON(&r.Result.Quotes[0])
+				q := &r.Result.Quotes[0]
+				rj.PathCount = q.PathCount
+				rj.Quote = ToQuoteJSON(q)
 			}
 		}
 		if len(r.Decomposition.Parts) > 0 {

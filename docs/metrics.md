@@ -7,6 +7,13 @@ Every claim about the code is checked against the code at time of writing. Futur
 capabilities are marked as future. A negative or inconclusive finding is a valid
 result and is reported as one.
 
+**Adding a metric** is a separate document:
+[docs/adding-a-metric.md](adding-a-metric.md) walks the interface, the evidence
+rules, the tests, and the one thing this page states in prose and nowhere else —
+that a metric is measurable but **not yet reachable** from `/api/corridor`. A
+metric's page belongs here once it is measured: this document is the figure's
+provenance, the guide is the implementation's.
+
 ---
 
 ## Verdict metrics
@@ -331,3 +338,15 @@ repository supports today and what is planned.
 
 - **Historical trend metrics** — how loss, spread, or depth change over time.
   The run store records per-run data, but trend analysis is not yet computed.
+
+---
+
+## Related
+
+- [adding-a-metric.md](adding-a-metric.md) — how to add a metric, and the
+  reachability gap every metric currently sits behind
+- [checks.md](checks.md) — the two-shape contract metrics and checks share
+- [adding-a-check.md](adding-a-check.md) — the other shape, for facts
+- [liquidity-venues.md](liquidity-venues.md) — why two venues cannot be
+  reconciled by arithmetic
+- [glossary.md](glossary.md) — undetermined, and what it means for a metric

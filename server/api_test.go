@@ -475,6 +475,116 @@ func TestHealthzEmptyStoreIsUnknown(t *testing.T) {
 	}
 }
 
+// freshnessServer wires a store plus a Horizon root fake serving rootBody,
+// the two inputs the /healthz freshness block reads.
+func freshnessServer(t *testing.T, st runstore.Store, rootBody string) *httptest.Server {
+	t.Helper()
+	horizon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.Error(w, "not recorded", http.StatusServiceUnavailable)
+			return
+		}
+		if rootBody == "" {
+			http.Error(w, "horizon down", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/hal+json")
+		_, _ = w.Write([]byte(rootBody))
+	}))
+	t.Cleanup(horizon.Close)
+
+	s := &Server{
+		Store:  st,
+		Engine: &route.Engine{DEX: &dex.Client{HorizonURL: horizon.URL}},
+	}
+	api := httptest.NewServer(s.Handler())
+	t.Cleanup(api.Close)
+	return api
+}
+
+// TestHealthzFreshnessReported is the issue #311 contract: chain head,
+// newest record and total record count are readable straight off /healthz,
+// without parsing any corridor response.
+func TestHealthzFreshnessReported(t *testing.T) {
+	base := time.Now().UTC().Add(-6 * time.Hour).Truncate(time.Second)
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendHealthRecord(t, st, "USDC-NGNC", base)
+	appendHealthRecord(t, st, "USDC-NGNC", base.Add(time.Hour))
+	appendHealthRecord(t, st, "USDC-GHSC", base.Add(-time.Hour))
+
+	srv := freshnessServer(t, st, `{"core_ledger_seq": 55101724}`)
+	_, body := getJSON(t, srv.URL+"/healthz")
+
+	f, _ := body["freshness"].(map[string]any)
+	if f == nil {
+		t.Fatalf("freshness = %v, want an object", body["freshness"])
+	}
+	if f["chain_head"] != float64(55101724) {
+		t.Errorf("chain_head = %v, want 55101724", f["chain_head"])
+	}
+	if f["record_count"] != float64(3) {
+		t.Errorf("record_count = %v, want 3 (two NGNC runs plus one GHSC)", f["record_count"])
+	}
+	if f["newest_record_at"] != base.Add(time.Hour).Format(time.RFC3339) {
+		t.Errorf("newest_record_at = %v, want %s", f["newest_record_at"],
+			base.Add(time.Hour).Format(time.RFC3339))
+	}
+}
+
+// TestHealthzFreshnessChainHeadUnknown covers the unknown half: Horizon
+// refusing the root lookup must null the field, never fill it with 0 — a
+// reader must not be able to mistake "unaskable" for "ledger zero". The
+// store-derived fields keep reporting what they know.
+func TestHealthzFreshnessChainHeadUnknown(t *testing.T) {
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendHealthRecord(t, st, "USDC-NGNC", time.Now().UTC().Add(-time.Hour))
+
+	srv := freshnessServer(t, st, "")
+	_, body := getJSON(t, srv.URL+"/healthz")
+	f, _ := body["freshness"].(map[string]any)
+	if f == nil {
+		t.Fatalf("freshness = %v, want an object even when parts are unknown", body["freshness"])
+	}
+	if head, ok := f["chain_head"]; !ok || head != nil {
+		t.Errorf("chain_head = %v, want null when Horizon refused", head)
+	}
+	if f["record_count"] != float64(1) {
+		t.Errorf("record_count = %v, want 1", f["record_count"])
+	}
+	if ts, ok := f["newest_record_at"].(string); !ok || ts == "" {
+		t.Errorf("newest_record_at = %v, want the stored run's timestamp", f["newest_record_at"])
+	}
+}
+
+// TestHealthzFreshnessNoStoreIsUnknown pins the deployment with no history:
+// the whole freshness block is present and every field is null. Presence
+// with nulls means "looked, unknown" — the honest state a consumer can
+// alert on — where an absent block could be read as "this version does not
+// report it".
+func TestHealthzFreshnessNoStoreIsUnknown(t *testing.T) {
+	srv := freshnessServer(t, nil, `{"core_ledger_seq": 1}`)
+	_, body := getJSON(t, srv.URL+"/healthz")
+	f, _ := body["freshness"].(map[string]any)
+	if f == nil {
+		t.Fatalf("freshness = %v, want an object", body["freshness"])
+	}
+	if f["chain_head"] != float64(1) {
+		t.Errorf("chain_head = %v, want 1", f["chain_head"])
+	}
+	if count, ok := f["record_count"]; !ok || count != nil {
+		t.Errorf("record_count = %v, want null without a store", count)
+	}
+	if ts, ok := f["newest_record_at"]; !ok || ts != nil {
+		t.Errorf("newest_record_at = %v, want null without a store", ts)
+	}
+}
+
 // appendHealthRecord appends one record for the given corridor and time.
 func appendHealthRecord(t *testing.T, st runstore.Store, corridor string, at time.Time) {
 	t.Helper()

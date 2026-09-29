@@ -868,6 +868,16 @@ Uptime of the measurement, not of the service: how many scheduled sweeps
 produced a priced ladder.
 `V3` `area:data` `difficulty:easy` `ready`
 
+> **Implemented.** `runstore.Measurable` classifies one record (measurable
+> = at least one priced rung), `runstore.MeasurabilityHistory` classifies
+> every run oldest-first, and `runstore.MeasurabilityOf` summarises the
+> chain: counts plus a decimal-only `uptime_pct`, empty — unknown, never
+> zero — when no history exists, with the window bounds carried so a reader
+> sees what the figure stands on. A NO-MARKET sweep is a successful
+> measurement of "no market" and is deliberately not measurable: there was
+> no price to measure with. Derived on read; appends nothing. See
+> docs/run-store.md, "Measurability uptime".
+
 ### D3 — Market structure
 
 **#125 — Define what "market structure" means for this project, in writing** *(filed: [#196](https://github.com/Wayfare-labs/wayfare/issues/196))*
@@ -931,6 +941,10 @@ A reader who records today's head can prove later that no earlier record
 changed; nothing currently exposes it.
 `V3` `area:data` `difficulty:medium` `ready`
 
+> **Implemented:** `GET /api/chain-heads` publishes each corridor's current
+> sequence, recorded time and full record hash in stable order. The API and
+> rolling-window caveat are documented in [docs/api.md](api.md#get-apichain-heads).
+
 ---
 
 ## F. Initiative E — V4+ Research and design spikes
@@ -950,6 +964,12 @@ contribution.
 At a six-hour cadence, three corridors, that is roughly 1,080 records. Determine
 what is answerable at that sample size and what is not.
 `V4+` `area:research` `difficulty:medium` `research`
+
+> **Finding written:** [docs/spike-90-day-history.md](spike-90-day-history.md)
+> (2026-09-26). About 360 observations per corridor can support descriptive
+> summaries and the existing gated slope calculation, but not a general
+> seasonal or predictive claim; the present checkout still has one record per
+> corridor, so the nominal 1,080 is a planning count, not observed evidence.
 
 **#136 — Spike: which V2 measurements are worth storing longitudinally** *(filed: [#334](https://github.com/Wayfare-labs/wayfare/issues/334))*
 Storage is not free and the record layout is hash-pinned; choosing badly is
@@ -1014,6 +1034,16 @@ Prior art, cited, with what is adoptable and what is not.
 The honest possible answer is no, and establishing that would save the project
 an entire version.
 `V4+` `area:research` `difficulty:hard` `research`
+
+> **Finding written:** [docs/spike-model-vs-deterministic.md](spike-model-vs-deterministic.md)
+> (2026-09-29). Worked all three candidate contributions (failure probability,
+> expected slippage, anomaly flags) against the tree at `c44c55b`. Finding:
+> **negative** — a model adds nothing publishable over the deterministic
+> measurements on the evidence the repository has. Failure has no observational
+> definition and no labelled history; expected slippage is redundant at measured
+> sizes and forbidden (interpolation) at unmeasured ones; and the one genuine
+> gap (an anomaly baseline) is gated on history and a baseline definition the
+> tree does not have. Reported as the held-out negative the entry anticipated.
 
 **#147 — Design: the boundary between measurement and inference in the UI** *(filed: [#208](https://github.com/Wayfare-labs/wayfare/issues/208))*
 If inference is ever published it must be unmistakable at a glance; that visual
@@ -1284,6 +1314,10 @@ position stated once, clearly.
 On-chain assets, pathfinding, order books, anchors, SEP-1 and SEP-38 — with no
 claim of exclusivity the repository cannot support.
 `V1` `area:docs` `difficulty:medium` `ready`
+
+> **Implemented.** [docs/why-stellar-native.md](why-stellar-native.md) landed (2026-09-27),
+> with every claim checked against the tree at `c45bbbc` and linked from the README's
+> shared-contracts section, [docs/about.md](about.md), and [docs/first-15-minutes.md](first-15-minutes.md).
 
 **#194 — "How Wayfare works" for a non-engineer** *(filed: [#254](https://github.com/Wayfare-labs/wayfare/issues/254))*
 Reference rate → market data → executable quote → comparison → checks → verdict,
@@ -1617,6 +1651,15 @@ The results region is a div soup assembled from template strings; headings,
 lists and tables are available and mostly unused.
 `V1` `area:ui` `difficulty:medium` `ready`
 
+> **Implemented.** `#out` is now `<main tabindex="-1">` with a skip link, and
+> every renderer emits named `<section>`s instead of bare panels; findings,
+> metrics and evidence are lists, the legend is a `<dl>`, table headers carry
+> `scope="col"`, the loading line is `role="status"`, and render moves focus
+> to the results. Unreadable dark-mode chips (raw brand tokens on DIRECT,
+> DERIVATIVE and the undetermined states) moved to the theme-aware
+> `--unknown`/`--warn` tokens. Pinned by `TestUISemanticHTMLPass`. No build
+> step; no API field was needed, so the data-contract rule never triggered.
+
 **#254 — A first-impression pass on the landing state** *(filed: [#309](https://github.com/Wayfare-labs/wayfare/issues/309))*
 Before a measurement runs the page is a heading, a select and a button. It
 should state what Wayfare is and what pressing the button will do.
@@ -1751,10 +1794,22 @@ Enabled during this sweep and currently empty.
 repository is high and currently transmitted by example only.
 `V1` `area:ecosystem` `good first issue` `difficulty:easy` `ready`
 
+> **Templates added:** [.github/ISSUE_TEMPLATE/](../.github/ISSUE_TEMPLATE/) and
+> [.github/pull_request_template.md](../.github/pull_request_template.md)
+> (2026-09-28). Derived from real repository issues and CONTRIBUTING.md.
+> Note: issue #328's "Done when" specified `docs/`, but GitHub issue/PR
+> templates must live in `.github/`.
+
 **#276 — A "good first issue" audit** *(filed: [#329](https://github.com/Wayfare-labs/wayfare/issues/329))*
 Seven issues carry the label; confirm each is genuinely completable by a
 stranger with only the README and CONTRIBUTING.
 `V1` `area:ecosystem` `good first issue` `difficulty:easy` `ready`
+
+> **Audit written:** [docs/good-first-issue-audit.md](good-first-issue-audit.md)
+> (2026-09-26). The issue's seven-item count does not match GitHub's event
+> history: 20 open issues were labelled before #329 was opened, then #329 was
+> labelled two seconds later. The audit records the discrepancy and assesses
+> the full current set of 21.
 
 ---
 

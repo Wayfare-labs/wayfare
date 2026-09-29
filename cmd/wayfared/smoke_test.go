@@ -130,9 +130,15 @@ func TestOpenStoreTempDir(t *testing.T) {
 }
 
 func TestOpenStoreNonexistentDir(t *testing.T) {
-	// runstore.Open creates the directory, so pass a path inside a
-	// read-only parent to trigger a real error.
-	dir := filepath.Join("/dev", "null", "impossible")
+	// runstore.Open creates the directory, so a path that cannot be created
+	// is what must produce the error. A directory placed under an existing
+	// *file* fails MkdirAll on every OS; a POSIX path like /dev/null/x only
+	// fails on Unix, so the test silently passed on Windows.
+	file := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(file, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(file, "impossible")
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	_, err := openStore(dir, logger)
 	if err == nil {
