@@ -1,0 +1,66 @@
+name: Documentation Issue
+description: Propose updates, additions, corrections, or audits to repository documentation.
+title: "docs: "
+labels: ["area:docs", "area:ecosystem"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Documentation issues must check every claim against the code as it is now and cite the source and date checked.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: Describe the documentation gap, audit finding, or guide to be written or updated.
+      placeholder: "> Backlog entry `#<entry>`, from **[docs/backlog.md](https://github.com/Wayfare-labs/wayfare/blob/main/docs/backlog.md)** — Initiative ...\n\n## What\n..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: where
+    attributes:
+      label: Where the work happens
+      description: Specify affected files (e.g. `docs/contributor-faq.md`, `README.md`, `CONTRIBUTING.md`).
+      placeholder: "- `docs/...`"
+
+  - type: dropdown
+    id: roadmap_impact
+    attributes:
+      label: Roadmap impact
+      description: Which roadmap milestone does this documentation work target?
+      options:
+        - "**V1 — Hardening**"
+        - "**V2 — Execution economics**"
+        - "**V3 — Multi-corridor & multi-hop**"
+        - "**V4+ — Future (not active)**"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints that apply
+      description: Check each box to confirm compliance with repository measurement constraints.
+      options:
+        - label: "assert nothing the repository does not currently support; check claims against the code as it is, not as it is described"
+          required: true
+        - label: "every measurement cited carries its source and the date it was checked"
+          required: true
+        - label: "mark future capabilities as future — do not describe roadmap items as though they are built"
+          required: true
+        - label: "a negative or inconclusive finding is a valid result and should be reported as one"
+          required: true
+
+  - type: textarea
+    id: done_when
+    attributes:
+      label: Done when
+      description: Acceptance criteria for documentation work.
+      placeholder: |
+        - [ ] the document lands under `docs/` (or in the README where it belongs there)
+        - [ ] every claim about the code is checked against the code at time of writing
+        - [ ] nothing is asserted that the repository does not support
+        - [ ] it is linked from wherever a reader would look for it
+    validations:
+      required: true

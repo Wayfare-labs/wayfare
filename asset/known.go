@@ -505,3 +505,34 @@ func GHS() Asset { return Fiat("GHS") }
 
 // KES is off-chain Kenyan shilling.
 func KES() Asset { return Fiat("KES") }
+
+// IssuerConcentration identifies issuers that back multiple fiat-pegged
+// corridors. A single issuer behind multiple destination tokens means those
+// corridors share a counterparty — if that issuer fails, every corridor it
+// backs fails together. This is a market-structure fact, not a pricing
+// measurement.
+//
+// Only corridor destination tokens (assets with a non-empty Peg) are counted.
+// USDC, the settlement asset, is excluded because every corridor starts from
+// it; its concentration is a different risk (sender-side, not receiver-side).
+//
+// The result maps issuer account ID to the list of corridor asset codes it
+// issues. Issuers with only one corridor are omitted — concentration only
+// exists when one issuer backs two or more corridors.
+func IssuerConcentration() map[string][]string {
+	issuerToCorridors := make(map[string][]string)
+	for _, e := range registry {
+		if e.Code == "USDC" || e.Peg == "" {
+			continue
+		}
+		issuerToCorridors[e.Issuer] = append(issuerToCorridors[e.Issuer], e.Code)
+	}
+	// Filter to only issuers with multiple corridors.
+	result := make(map[string][]string)
+	for issuer, corridors := range issuerToCorridors {
+		if len(corridors) > 1 {
+			result[issuer] = corridors
+		}
+	}
+	return result
+}

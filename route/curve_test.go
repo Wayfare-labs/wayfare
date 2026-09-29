@@ -80,3 +80,30 @@ func TestCurveRequiresTwoPricedObservations(t *testing.T) {
 		t.Fatalf("curve = %#v, want nil", res.Curve)
 	}
 }
+func TestNeverInterpolateBetweenMeasuredRungs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a := r.URL.Query().Get("source_amount")
+		if a == "10" {
+			http.Error(w, "no liquidity", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"_embedded":{"records":[{"source_asset_type":"credit_alphanum4","source_asset_code":"USDC","source_amount":"` + a + `","destination_asset_type":"credit_alphanum4","destination_asset_code":"NGNC","destination_amount":"1000","path":[]}]}}`))
+	}))
+	defer srv.Close()
+
+	e := &route.Engine{DEX: &dex.Client{HorizonURL: srv.URL}, RefRate: refrate.NewStatic(map[string]decimal.Decimal{"USD/NGN": decimal.NewFromInt(1300)})}
+	res, err := e.Ladder(context.Background(), route.LadderRequest{SendAsset: asset.USDC(), ReceiveAsset: asset.NGNC(), Sizes: []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(10), decimal.NewFromInt(100)}, ReferenceBase: "USD", ReferenceQuote: "NGN"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Curve == nil {
+		t.Fatal("expected curve")
+	}
+	// Ensure middle rung (index 1) is unpriced and has no rate (no interpolation)
+	if res.Curve.Points[1].Priced {
+		t.Error("middle rung marked priced despite failure")
+	}
+	if !res.Curve.Points[1].Rate.IsZero() {
+		t.Errorf("expected zero/unset rate for unpriced hole to prevent interpolation, got %s", res.Curve.Points[1].Rate.String())
+	}
+}

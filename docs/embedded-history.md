@@ -112,5 +112,7 @@ means the served history has not advanced since then — see the README's
 ## Related
 
 - [deployment.md](deployment.md) — running it continuously, costs, backups
+- [rollback.md](rollback.md) — rolling back to an image with older embedded
+  history, and verifying the chain it serves
 - [run-store.md](run-store.md) — the chain, and what verification proves
 - [README.md](../README.md) — what the deployed instance serves, user-facing

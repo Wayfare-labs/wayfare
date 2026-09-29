@@ -230,6 +230,10 @@ New to the project and want the one-page story — what it measures, what it
 refuses to do, who it is for, and the non-custodial position stated once?
 **[docs/about.md](docs/about.md)**
 
+Completely new to the ideas, and want the prose version — what a reference
+rate is, why one corridor is priced at twelve sizes, and what a verdict is
+allowed to claim? **[docs/how-wayfare-works.md](docs/how-wayfare-works.md)**
+
 Why the monitor is Stellar-native, grounded in what the code uses (assets,
 pathfinding, order books, anchors, SEP-1, SEP-38) without unsupported exclusivity claims:
 **[docs/why-stellar-native.md](docs/why-stellar-native.md)**
@@ -396,6 +400,13 @@ a legacy record encodes byte-for-byte as it did when it was written.
 Version 3 added `reference.fetched_at`, which lets a stored reading say how
 old its benchmark was when the reading was taken.
 
+The chain also answers longitudinal questions derived on read, appending
+nothing: `runstore.DetectTransitions` reconstructs integrity-state
+transitions, and `runstore.MeasurabilityOf` reports how often a corridor was
+measurable at all — how many scheduled sweeps produced a priced ladder. A
+corridor that prices nothing measurable reports that plainly; an unmeasured
+one reports unknown, never zero.
+
 Full spec: **[docs/run-store.md](docs/run-store.md)**
 
 What verification looks like — including broken-chain output: **[docs/verify-store.md](docs/verify-store.md)**
@@ -450,7 +461,9 @@ Every `cmd/ladder` run also runs the same counterparty checks the server runs
 then carries no findings block — the difference is a flag the operator chose,
 not an accident of which binary produced the document.
 
-Go 1.22+. Dependencies: `shopspring/decimal` and `BurntSushi/toml`. Both
+Go 1.22+. Dependencies: `shopspring/decimal` and `BurntSushi/toml` — exactly
+two, version-pinned, and enforced in CI so the surface cannot drift quietly
+([docs/dependency-policy.md](docs/dependency-policy.md)). Both
 binaries need live network access — there are no cached figures to fall back
 on, by design.
 
@@ -677,7 +690,9 @@ contribution and has its own guide:
 **[docs/adding-a-corridor.md](docs/adding-a-corridor.md)**
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) first. The invariants there are hard
-constraints, not style preferences.
+constraints, not style preferences. Submissions follow the templates in
+[.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/) and
+[.github/pull_request_template.md](.github/pull_request_template.md).
 
 **Questions?** The [contributor FAQ](docs/contributor-faq.md) covers what the
 project does and does not do, how to get set up, what is not built yet, and how
