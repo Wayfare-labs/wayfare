@@ -88,6 +88,36 @@ These are the bugs that matter most, because someone sends money on the output.
 - **Missing corridors or missing anchors.** A source Wayfare does not price yet
   is a feature request — open an issue.
 
+## Third-party code in the shipped image
+
+The service ships as a static binary on
+`gcr.io/distroless/static-debian12:nonroot`, so its third-party surface is two
+things: the base image, and whatever the Go toolchain compiles into the binary.
+
+CI scans the image it has just built. The report covers OS packages and language
+packages; a fixable `HIGH` or `CRITICAL` finding in the image's own packages
+fails the build, because the fix is a newer base image and that is a change this
+repository can make.
+
+**Measured 2026-09-25** against the image this repository builds: the image's
+own packages were clean, and `/wayfared` carried 22 `HIGH`/`CRITICAL` advisories
+with fixes — one `CRITICAL` — all in `stdlib` at Go 1.22.12. Every fix is on the
+1.24, 1.25, 1.26 or 1.27 line; none is on the 1.22 line the Dockerfile, `go.mod`
+and CI are pinned to. Those findings are **recorded by the scan and deliberately
+not gated**: no change in this repository fixes them while the toolchain stays
+at 1.22, and a required check that is always red teaches people to ignore it.
+The scan is the record that they exist and are being carried knowingly. Both
+invocations also pass `--ignore-unfixed`, so an advisory with no available patch
+cannot fail a build either.
+
+A finding you believe is a false positive can be accepted deliberately: put its
+identifier in a `.trivyignore` file at the repository root and say in the pull
+request why it does not apply. Accepting a finding is a decision, and a decision
+belongs in a diff rather than in a re-run.
+
+What the scan cannot see is behaviour — it names known-bad versions, not flaws
+in how this code uses them. Those are the findings below.
+
 ## No funds move
 
 Wayfare is non-custodial and read-only: it never issues tokens, never holds
