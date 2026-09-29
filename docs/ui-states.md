@@ -41,7 +41,7 @@ closed:
 |:---|:---|:---|
 | **Rest** | no interaction | `--panel` background, 1px `--border`, ink text |
 | **Hover** | pointer over an enabled control | accent border, `--panel-alt` background. Guarded by `@media (hover: hover)` so touch devices never get a hover that sticks |
-| **Focus** | keyboard focus (`:focus-visible`) | accent border + 3px `--focus-ring` halo; outline suppressed only because the ring replaces it. A mouse click does **not** trigger this |
+| **Focus** | keyboard focus (`:focus-visible`) | 2px `--focus-outline` ring at 2px offset (≥ 3:1 in both schemes), plus accent border and 3px `--focus-ring` halo on controls. A mouse click does **not** trigger this |
 | **Active** | the control is being pressed | `--panel-alt` background + inset `--press-shadow` depression. No translate/offset — moving the element under the finger shifts the press target mid-press |
 | **Disabled** | `disabled` attribute set | opacity .55, `--muted` ink, `cursor: default`, and **no hover or active feedback** — an explicit cancel rule resets border, background and shadow so a pointer resting on a disabled control sees rest styling |
 
@@ -50,6 +50,7 @@ Tokens are defined per colour scheme in the `:root` blocks:
 | Token | Light | Dark |
 |:---|:---|:---|
 | `--focus-ring` | `rgba(15, 118, 110, 0.28)` | `rgba(110, 231, 183, 0.35)` |
+| `--focus-outline` | `#0F766E` (≥ 3:1 on `--panel` and `--bg`) | `#5EEAD4` (≥ 3:1 on `--panel` and `--bg`) |
 | `--press-shadow` | `inset 0 1px 2px rgba(15, 23, 42, 0.18)` | `inset 0 1px 2px rgba(0, 0, 0, 0.5)` |
 
 Both schemes carry the states because the states are one contract rendered
@@ -65,10 +66,41 @@ inversion.
   opens the platform's own picker, whose chrome is the browser's, not this
   stylesheet's.
 - **Links** — the reload link inside an error banner (issue #293 made it
-  keyboard-focusable; this change makes the focus *visible*: 2px accent
-  outline with 2px offset, so it reads on any background). Hover and active
-  are left to the browser default because the link inherits its colour
-  explicitly already.
+  keyboard-focusable; this change makes the focus *visible*: 2px
+  `--focus-outline` ring with 2px offset, so it reads on any background, and
+  underlines it so it is not body text that happens to go somewhere). Hover
+  and active are left to the browser default because the link inherits its
+  colour explicitly already.
+
+## Keyboard navigation and visible focus (issue #303)
+
+The four states above say when a control responds. This section says how a
+keyboard reader gets around the page, and what focus looks like when they do.
+It is the same boundary: the browser decides *when* focus lands (tab order,
+fragment navigation, `:focus-visible`); this file decides *how it looks* and
+where the focus is handed when content is replaced.
+
+| Piece | What it does | Fires because |
+|:---|:---|:---|
+| **Skip link** | The first thing in the tab order: `Skip to the results`, a real link to `#out`. Pushed above the viewport (not `display:none`, which would remove it from the tab order) and slid into view by `:focus`. | Native tab order and `:focus` |
+| **Results region** | `#out` carries `tabindex="-1"` — focusable by the skip link and by script, never a tab stop of its own — and takes the focus outline when the browser deems it visible. | Fragment navigation / script |
+| **One focus indicator** | `button`, `select`, `a` and `#out` all draw `2px solid var(--focus-outline)` with a 2px offset; controls add the accent border and the `--focus-ring` halo on top. One indicator, four targets. | `:focus-visible` |
+| **Focus handoff** | `setOut()` re-renders the results and, only when focus was already inside `#out`, returns it to the region. Replacing focused content otherwise drops focus to `<body>`, which strands a keyboard reader at the top of the page. | Script, once, at the replacement |
+| **Inline links** | A link inside running text is underlined (`a:not(.skip-link)`), so it is not body text that happens to be clickable. | CSS, always |
+
+**Why the outline is a separate token.** `--focus-ring` is a 28% wash — it
+gives the indicator area, but a wash over a white panel cannot reach the 3:1
+that SC 1.4.11 asks of a focus indicator (and 2.4.11 asks for it in every
+colour scheme, not just the flattering one). `--focus-outline` is the solid
+edge: `#0F766E` on light, `#5EEAD4` on dark, each above 3:1 against the
+surface it sits on, and the two flip together with the scheme. The rule that
+uses it never changes.
+
+**What is deliberately untouched.** Tab order is the DOM's, which is the
+reading order: controls, then results, then footer. Nothing is reordered with
+`tabindex` above 0, nothing hijacks a key, and no focus moves on load or on a
+pointer click — the handoff branch runs only when focus was already inside the
+region being replaced, so a mouse reader never sees the page move under them.
 
 ## Motion
 
@@ -118,6 +150,9 @@ embedded file with no build step and no JS test runner in CI):
 
 - all four states exist for the right selectors;
 - hover and focus are scoped to enabled controls;
+- the skip link, its target's `tabindex`, and the focus outline token in both
+  schemes (`server/ui_keyboard_test.go`);
+- no result render bypasses `setOut()`, so focus is never dropped silently;
 - disabled cancels hover feedback, and disabled applies to selects too;
 - no state rule references a verdict/integrity/undetermined colour token;
 - the focus ring and press tokens are defined in **both** schemes;
