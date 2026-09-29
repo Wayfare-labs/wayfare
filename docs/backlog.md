@@ -1025,6 +1025,16 @@ The honest possible answer is no, and establishing that would save the project
 an entire version.
 `V4+` `area:research` `difficulty:hard` `research`
 
+> **Finding written:** [docs/spike-model-vs-deterministic.md](spike-model-vs-deterministic.md)
+> (2026-09-29). Worked all three candidate contributions (failure probability,
+> expected slippage, anomaly flags) against the tree at `c44c55b`. Finding:
+> **negative** — a model adds nothing publishable over the deterministic
+> measurements on the evidence the repository has. Failure has no observational
+> definition and no labelled history; expected slippage is redundant at measured
+> sizes and forbidden (interpolation) at unmeasured ones; and the one genuine
+> gap (an anomaly baseline) is gated on history and a baseline definition the
+> tree does not have. Reported as the held-out negative the entry anticipated.
+
 **#147 — Design: the boundary between measurement and inference in the UI** *(filed: [#208](https://github.com/Wayfare-labs/wayfare/issues/208))*
 If inference is ever published it must be unmistakable at a glance; that visual
 contract can be designed now.
