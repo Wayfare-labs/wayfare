@@ -102,6 +102,11 @@ own reference, and it already exceeds the 20% Unusable threshold on its own.
 **No trade size can be acceptable, because the corridor's zero-size limit is
 already unacceptable.**
 
+This finding is written up as a case study — with the floor reproduced from the
+committed measurement chain and a recorded snapshot, and with the part the tool
+has *not* measured stated explicitly:
+**[docs/ngnc-structural-floor.md](ngnc-structural-floor.md)**.
+
 ### 2. Slippage stacks on top of the floor, and dominates quickly
 
 From 24.65% at dust size, loss climbs monotonically to 97.68% at 5000 USDC.

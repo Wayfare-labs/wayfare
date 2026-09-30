@@ -1772,6 +1772,25 @@ The 25% structural floor at dust size is a genuine, reproducible market finding
 that currently lives in a README section.
 `V1` `area:ecosystem` `difficulty:medium` `ready`
 
+> **Finding written:** [docs/ngnc-structural-floor.md](ngnc-structural-floor.md)
+> (2026-09-30). The floor is now sourced to three dated observations rather than
+> one: the 2026-08-08 live run (24.65%), the committed 2026-08-22 record in
+> `data/USDC-NGNC.ndjson` (27.15%), and an offline replay of the recorded
+> `usdc-ngnc-20260821T223040Z` snapshot (28.18%). The finding strengthens: the
+> 0.1 rung's best path is a different route on each date — direct, then
+> `Cleanshave`/`AQUA`, then `BLND`/`XLM` — so the floor tracks the corridor and
+> not any one pool. The attribution does **not** close, and the document says so:
+> the spread-versus-depth reading is an inference, because no market-quality
+> metric is reachable (`checks.Runner` has no `Metric` field, `AddMetric` has no
+> non-test caller) and `PriceImpactMetric` scores impact from the smallest
+> *probed* size, so it reports zero impact at its own baseline by construction
+> and could not separate a floor from slippage even if wired. Also recorded: the
+> engine's own finding string asserts "structural floor, not a depth effect"
+> unconditionally at `route/ladder.go:528-536`, conditioned on no measurement —
+> flagged, not changed, since that file is maintainer-owned. The issue's
+> "Roadmap impact: I5 — Accessibility and motion" line does not match this
+> entry's `area:ecosystem` or its deliverable, and is treated as a stray.
+
 **#273 — Map the Stellar ecosystem projects Wayfare could inform** *(filed: [#326](https://github.com/Wayfare-labs/wayfare/issues/326))*
 Named wallets, PSPs and anchors, with what each would need from the API — the
 input #157 needs to be worth answering.
@@ -1788,6 +1807,26 @@ input #157 needs to be worth answering.
 **#274 — Seed Discussions with the questions contributors actually ask** *(filed: [#327](https://github.com/Wayfare-labs/wayfare/issues/327))*
 Enabled during this sweep and currently empty.
 `V1` `area:ecosystem` `good first issue` `difficulty:easy` `ready`
+
+> **Finding written:** [docs/discussion-questions.md](discussion-questions.md)
+> (2026-09-30). The seed is derived from the only evidence that exists, not
+> invented: five issues filed by two people outside the maintainer account
+> (#474, #475, #476, #477 by `Hotmopo`; #481 by `goodness-cpu`), all dated
+> 2026-09-23/24. Each answer is quoted out of the tree at `74c1f17` so a reader
+> can check it, and four of the five statuses are *not* "answered": #481 and
+> #477 are unresolved, #475 is partly addressed (the error `code` now reaches
+> the UI at `server/index.html:986` but is read only for `aria-invalid` at
+> :992, so the rendered text is still prose-only), #474 is fixed, and #476 is
+> reported as **not established** — this repository's own artifact
+> `docs/qa/artifacts/270-mobile.md` measured it on 2026-09-23, but re-running
+> `run-mobile.mjs` on the current build timed out on its `.scroll` locator for
+> all four device profiles, so the harness has drifted from the UI and no
+> current figure exists. Also recorded: Discussions is enabled with six
+> categories and zero threads, and the issue comment threads are dominated by
+> Stellar Wave bounty applications rather than questions — which is the actual
+> reason Discussions is empty. Seeding the Discussions themselves needs
+> maintainer rights (`push`/`triage`), so this delivers the seed as a document
+> and a maintainer can post it.
 
 **#275 — Issue and pull-request templates** *(filed: [#328](https://github.com/Wayfare-labs/wayfare/issues/328))*
 `.github/` has workflows and no templates; the issue quality bar in this

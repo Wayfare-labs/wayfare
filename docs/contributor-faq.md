@@ -268,6 +268,11 @@ for questions, [Issues](https://github.com/Wayfare-labs/wayfare/issues) for
 defects and scoped work. A question that gets asked twice belongs in this
 document; a PR that answers one is welcome.
 
+The questions that have been asked here already, with each answer checked
+against the code rather than remembered, are in
+[docs/discussion-questions.md](discussion-questions.md) — worth reading first,
+because several of them are still open.
+
 ### How should I describe a change?
 
 Explain what changed and why. If it touches pricing, say how you verified

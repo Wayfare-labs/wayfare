@@ -104,6 +104,9 @@ Three findings shaped the design:
 and NGNC still loses 25%. That floor is the corridor's spread, not its depth —
 which means no trade size can be acceptable, because the zero-size limit is
 already unacceptable. Slippage then stacks on top, reaching 97.68% at 5000.
+Written up as a case study, with the floor reproduced across three dates and
+three different route shapes — and an explicit account of which part of it the
+tool has measured: **[docs/ngnc-structural-floor.md](docs/ngnc-structural-floor.md)**.
 
 **The three corridors fail in three different ways.** One prices continuously
 and prices badly. One has no independent market and inherits another token's
@@ -698,6 +701,8 @@ constraints, not style preferences. Submissions follow the templates in
 project does and does not do, how to get set up, what is not built yet, and how
 to check a claim against the code. Ask the rest in
 [Discussions → Q&A](https://github.com/Wayfare-labs/wayfare/discussions/categories/q-a).
+What contributors have actually asked here, with each answer checked against the
+code: **[docs/discussion-questions.md](docs/discussion-questions.md)**.
 
 ---
 

@@ -11,8 +11,10 @@ before you write code.
 **Questions first?** The [contributor FAQ](docs/contributor-faq.md) answers the
 ones that come up most, and
 [Discussions → Q&A](https://github.com/Wayfare-labs/wayfare/discussions/categories/q-a)
-is where to ask the rest. If a question keeps recurring, it belongs in the FAQ —
-a PR adding it is welcome.
+is where to ask the rest. What contributors have already asked is collected in
+[docs/discussion-questions.md](docs/discussion-questions.md), with each answer
+checked against the code — several are still open. If a question keeps
+recurring, it belongs in the FAQ — a PR adding it is welcome.
 
 ## Getting set up
 

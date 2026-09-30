@@ -85,6 +85,12 @@ already exceeds the 20% `UNUSABLE` threshold on its own. **No trade size can be
 acceptable, because the corridor's zero-size limit is already unacceptable**
 ([docs/corridor-measurements.md](corridor-measurements.md#1-there-is-a-structural-floor-of-roughly-2465-before-any-slippage)).
 
+The floor is written up in full as a
+[case study](ngnc-structural-floor.md), which reproduces it on three dates
+across three different route shapes and — read that alongside the
+[market-quality-metrics note](#7-what-this-story-does-not-claim) below —
+separates the part that is measured from the attribution that is inferred.
+
 That is the single most important consequence of measuring at several sizes. A
 one-size quote at 5,000 USDC would show 97.68% and look like a depth problem
 that better liquidity could fix. The dust rung is what proves it is not: the
@@ -296,6 +302,9 @@ applies to the argument above as much as to a response body:
 
 - [docs/corridor-measurements.md](corridor-measurements.md) — the raw figures
   behind sections 2 and 5, with timestamps and the endpoint each came from
+- [docs/ngnc-structural-floor.md](ngnc-structural-floor.md) — the structural-floor
+  finding as a case study: three dates, three route shapes, and what the tool
+  cannot yet attribute
 - [docs/glossary.md](glossary.md) — verdicts, integrity states, agreement
   bands, and what *not determined* means
 - [docs/fair-value-ngn.md](fair-value-ngn.md) — what "fair value" means here and
