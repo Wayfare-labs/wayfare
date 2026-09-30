@@ -43,9 +43,9 @@ type PriceImpactPoint struct {
 	// Rate is the effective rate: DestAmount / Size.
 	Rate decimal.Decimal
 
-	// ImpactPct is the degradation relative to the reference rate (the rate
-	// at the smallest size), expressed as a percentage.  Zero at the
-	// reference size itself.
+	// ImpactPct is the signed change relative to the reference rate (the rate
+	// at the smallest size), expressed as a percentage. Zero at the reference
+	// size; a negative value means the effective rate improved at that size.
 	ImpactPct decimal.Decimal
 }
 
@@ -252,10 +252,10 @@ func (m PriceImpactMetric) RunCurve(ctx context.Context, s Subject) (*PriceImpac
 			points[i].ImpactPct = decimal.Zero
 			continue
 		}
+		// Keep improvements negative. A path that gets better at a larger size
+		// is an observed finding, not noise to smooth away, so consumers can
+		// report the measured non-monotonic curve accurately.
 		impact := refRate.Sub(points[i].Rate).Div(refRate).Mul(decimal.NewFromInt(100))
-		if impact.IsNegative() {
-			impact = decimal.Zero
-		}
 		points[i].ImpactPct = impact
 		if impact.GreaterThan(maxImpact) {
 			maxImpact = impact

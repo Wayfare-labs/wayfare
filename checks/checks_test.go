@@ -1801,6 +1801,48 @@ func TestPriceImpactCurveFlatWhenRatesIdentical(t *testing.T) {
 	}
 }
 
+func TestPriceImpactCurveReportsImprovingRates(t *testing.T) {
+	// The second size deliberately has a better rate than the reference. The
+	// metric must preserve that observation as a negative impact rather than
+	// flattening it to zero and making the curve appear monotonic.
+	bodies := map[string]string{
+		"1":   "100",
+		"10":  "1100",
+		"100": "9000",
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		destination, ok := bodies[r.URL.Query().Get("source_amount")]
+		if !ok {
+			http.Error(w, "unrecorded size", http.StatusNotFound)
+			return
+		}
+		fmt.Fprintf(w, `{"_embedded":{"records":[{
+      "source_asset_type":"credit_alphanum4","source_asset_code":"USDC",
+      "source_amount":%q,
+      "destination_asset_type":"credit_alphanum4","destination_asset_code":"NGNC",
+      "destination_amount":%q,"path":[]}]}}`, r.URL.Query().Get("source_amount"), destination)
+	}))
+	defer srv.Close()
+
+	impact := PriceImpactMetric{
+		DEX:   &dex.Client{HorizonURL: srv.URL},
+		Sizes: []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(10), decimal.NewFromInt(100)},
+	}
+	curve, result := impact.RunCurve(ctx(), Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+	if !result.Determined {
+		t.Fatalf("improving curve was undetermined: %s", result.Reason)
+	}
+	if curve == nil {
+		t.Fatal("RunCurve returned no curve for a determined result")
+	}
+	if got, want := curve.Points[1].ImpactPct.StringFixed(2), "-10.00"; got != want {
+		t.Errorf("improving point impact = %s, want %s", got, want)
+	}
+	if !strings.Contains(result.Evidence[0].Observed, "impact=-10.0000%") {
+		t.Errorf("evidence = %q, want the improving point to remain reportable", result.Evidence[0].Observed)
+	}
+}
+
 func TestPriceImpactCurveAllSizesFail(t *testing.T) {
 	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend-empty")
 	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}

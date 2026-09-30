@@ -277,15 +277,17 @@ the order book is empty.
 
 ### price-impact.size — Price impact by trade size
 
-**Definition.** How much the effective rate degrades between a small probe
+**Definition.** The signed change in effective rate between a small probe
 (default 10 send units) and a full-size trade, as a percentage. A metric sweep across multiple trade sizes incurs an upstream request cost classified as `CostOneRequest` when a single size is probed, or `CostExpensive` when multiple sizes sweep against the shared public Horizon.
 
 **Unit.** Percent (decimal).
 
 **Data source.** Horizon pathfinding at two sizes: probe and full.
 
-**What it cannot determine.** The full curve shape — this reports the single
-degradation figure between probe and full size, not the intermediate points.
+**What it cannot determine.** The full curve shape — the two-point form reports
+only the change between probe and full size, while a multi-size sweep reports
+each measured point. The percentage is signed: a negative value is an observed
+improvement at that size, not a value clamped or sorted into a monotonic curve.
 
 **Undetermined.** When the corridor has NO-MARKET integrity, or pathfinding
 fails at either size.
