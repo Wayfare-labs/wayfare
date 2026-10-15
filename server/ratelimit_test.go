@@ -235,13 +235,47 @@ func TestClientKeyFromDirectPublicPeer(t *testing.T) {
 }
 
 // TestClientKeyBehindLoopbackProxy is the Render shape: TLS terminates on the
-// same host, the app sees 127.0.0.1 and the header carries the real client.
+// same host, the app sees 127.0.0.1 and the proxy appends the real client.
 func TestClientKeyBehindLoopbackProxy(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/api/corridor", nil)
 	r.RemoteAddr = "127.0.0.1:55555"
-	r.Header.Set("X-Forwarded-For", "198.51.100.23, 10.0.0.1")
+	r.Header.Set("X-Forwarded-For", "203.0.113.7, 198.51.100.23")
 	if got := clientKey(r); got != "198.51.100.23" {
-		t.Errorf("clientKey = %q, want the leftmost forwarded client %q", got, "198.51.100.23")
+		t.Errorf("clientKey = %q, want the rightmost forwarded client %q", got, "198.51.100.23")
+	}
+}
+
+func TestRateLimiterCannotBeBypassedWithSpoofedForwardedAddress(t *testing.T) {
+	rl := NewRateLimiter(1, 1)
+	now := time.Unix(0, 0)
+	rl.now = func() time.Time { return now }
+
+	var nextCalls int
+	handler := rl.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nextCalls++
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for i, forwardedFor := range []string{
+		"203.0.113.7, 198.51.100.23",
+		"203.0.113.8, 198.51.100.23",
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/api/corridor?live=1", nil)
+		r.RemoteAddr = "127.0.0.1:55555"
+		r.Header.Set("X-Forwarded-For", forwardedFor)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+
+		want := http.StatusOK
+		if i == 1 {
+			want = http.StatusTooManyRequests
+		}
+		if w.Code != want {
+			t.Errorf("request %d with X-Forwarded-For %q returned %d, want %d", i+1, forwardedFor, w.Code, want)
+		}
+	}
+	if nextCalls != 1 {
+		t.Errorf("next handler called %d times, want once after the bucket is exhausted", nextCalls)
 	}
 }
 

@@ -455,6 +455,9 @@ calls, CPU), and that cost is real on every path.
   `X-Forwarded-For` when the request arrives from loopback or a private-range
   address (the reverse-proxy shape of the hosted deployment). A directly
   connected public peer cannot choose its own bucket by setting that header.
+  On Render, the proxy appends the address it observed to the right of the
+  header; the limiter uses that rightmost address and ignores client-supplied
+  entries to its left.
 - **Off switch:** `-rate-limit=0` disables limiting entirely — for an
   operator who already has a limiter in front.
 

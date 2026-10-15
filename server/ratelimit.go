@@ -199,10 +199,10 @@ func clientKey(r *http.Request) string {
 	}
 	if isProxyPeer(peer) {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// The leftmost entry is the originating client; intermediaries
-			// append. The rest of the chain is untrusted either way.
-			if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
-				return first
+			// The trusted proxy appends the address it observed; earlier
+			// entries may have been supplied by the client.
+			if last := strings.TrimSpace(xff[strings.LastIndex(xff, ",")+1:]); last != "" {
+				return last
 			}
 		}
 	}
