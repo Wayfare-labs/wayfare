@@ -41,7 +41,7 @@ func uiPage(t *testing.T) string {
 func lossCurveSource(t *testing.T, page string) string {
 	t.Helper()
 	from := strings.Index(page, "function curve(rungs) {")
-	to := strings.Index(page, "function table(rungs, scored)")
+	to := strings.Index(page, "function table(rungs, scored, depends)")
 	if from < 0 || to < 0 || to <= from {
 		t.Fatal("the loss curve's code is no longer between curve() and table()")
 	}

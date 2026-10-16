@@ -71,7 +71,7 @@ func TestUISkipLinkIsFirstAndReachable(t *testing.T) {
 
 	// Its target must take focus from the fragment navigation, and only from
 	// it: tabindex="-1" makes #out focusable without adding a tab stop.
-	if !strings.Contains(page, `<div id="out" tabindex="-1">`) {
+	if !strings.Contains(page, `<main id="out" tabindex="-1">`) {
 		t.Error(`#out is missing tabindex="-1"; following the skip link would not move focus into the results`)
 	}
 

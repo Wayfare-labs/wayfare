@@ -192,7 +192,7 @@
     background: var(--panel); color: var(--ink); font: 600 var(--text-md)/1 inherit;
     padding: var(--space-3) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm);
   }
-  .skip-link:focus { left: var(--space-2); }
+  .skip-link:focus { left: var(--space-2); transform: none; }
   body {
     margin: 0;
     background: var(--bg);
@@ -242,15 +242,17 @@
      UNDETERMINED metric state keep their own palette and are never
      referenced from these rules. */
   @media (hover: hover) {
-    button:hover:not(:disabled), select:hover:not(:disabled), input:hover:not(:disabled) {
+    button:hover:not(:disabled), select:hover:not(:disabled), input:hover:not(:disabled),
+    .sizes-input:hover:not(:disabled) {
       border-color: var(--accent); background: var(--panel-alt);
     }
   }
   button:active:not(:disabled) {
     background: var(--panel-alt); box-shadow: var(--press-shadow);
   }
-  button:focus-visible, select:focus-visible, input:focus-visible {
-    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring);
+  button:focus-visible, select:focus-visible, input:focus-visible, .sizes-input:focus-visible {
+    outline: 2px solid var(--focus-outline); outline-offset: 2px;
+    border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring);
   }
   /* Every focusable thing in the page carries the same indicator (issue
      #303): the solid outline in the scheme's own token, so a control, a link
@@ -261,6 +263,7 @@
     outline: 2px solid var(--focus-outline); outline-offset: 2px;
     border-radius: var(--radius-xs);
   }
+  a:not(.skip-link) { text-decoration: underline; }
   button:disabled, select:disabled, input:disabled {
     opacity: .55; cursor: default; color: var(--muted);
   }
@@ -376,10 +379,10 @@
      it is always set beside the word: the mark never carries a verdict on
      its own. */
   .v-mark {
-    display: inline-flex; align-items: center; gap: .28rem;
-    width: 1.1rem; height: 1.1rem; margin-right: .4rem;
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    width: 1.1rem; height: 1.1rem; margin-right: var(--space-1);
     font: 700 .74rem/1 var(--mono);
-    border: 1px solid currentColor; border-radius: 3px;
+    border: 1px solid currentColor; border-radius: var(--radius-xs);
   }
   /* The mark and the grade it names stay on one line. At 320px the verdict
      column is 86px wide and a mark plus a grade does not fit across it:
@@ -462,27 +465,26 @@
      sideways with the chart would hide the very text that replaces it. */
   figure.chart { margin: 0; }
   figcaption {
-    margin-top: .75rem; padding-left: .7rem;
+    margin-top: var(--space-3); padding-left: var(--space-3);
     border-left: 3px solid var(--border);
     font-size: .87rem; color: var(--ink);
   }
   a.to-table {
-    display: inline-block; margin-top: .6rem;
+    display: inline-block; margin-top: var(--space-2);
     font-size: .86rem; color: var(--accent); text-decoration: underline;
     text-underline-offset: .15em;
   }
   /* The table names itself. A screen reader reaching it unprompted gets the
      same sentence a sighted reader gets from the column headings. */
   caption {
-    caption-side: top; text-align: left; padding-bottom: .45rem;
+    caption-side: top; text-align: left; padding-bottom: var(--space-2);
     color: var(--muted); font-size: .78rem; font-weight: 550;
     text-transform: uppercase; letter-spacing: .04em;
   }
   /* Without a visible focus ring the link below the chart is reachable but
      cannot be seen, which makes the association depend on the keyboard user
      already knowing it is there. */
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .trend-legend { display: flex; gap: 1.1rem; margin-top: .4rem;
+  :focus-visible { outline: 2px solid var(--focus-outline); outline-offset: 2px; }
   .trend-legend { display: flex; gap: var(--space-4); margin-top: var(--space-2);
                   font: 550 .72rem/1 var(--mono); letter-spacing: .05em; color: var(--muted); }
   .trend-legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: var(--radius-xs);
@@ -492,7 +494,7 @@
 
   /* Results focus target ------------------------------------------------- */
   #out:focus { outline: none; }
-  #out:focus-visible { outline: none; }
+  #out:focus-visible { outline: 2px solid var(--focus-outline); outline-offset: 2px; }
 
   /* Loading / cold-start state ------------------------------------------- */
   .loading-panel {
@@ -563,7 +565,7 @@
 </script>
 </head>
 <body>
-<a class="skip-link" href="#out">Skip to the results</a>
+<a class="skip-link" href="#out">Skip to results</a>
 <div class="wrap">
   <header>
     <h1>Wayfare</h1>
@@ -572,7 +574,6 @@
     rate, and states plainly when none are worth taking.</p>
   </header>
 
-  <a class="skip-link" href="#out">Skip to results</a>
   <div class="controls">
     <label for="to">Corridor</label>
     <select id="to" aria-label="Select a corridor to measure">
@@ -582,17 +583,18 @@
     <input id="sizes" name="sizes" type="text" inputmode="decimal"
       autocomplete="off" spellcheck="false" class="sizes-input"
       value="0.1,1,5,10,25,50,100,250,500,1000,2500,5000"
+      placeholder="Default: 0.1 to 5000"
       aria-label="Comma-separated send sizes in USDC; leave unchanged for the default ladder"
       aria-describedby="sizes-help">
     <span id="sizes-help" class="case">USDC, comma-separated</span>
     <span id="cs-detail" class="cs-info"></span>
-    <label for="sizes">Send sizes (USDC, comma-separated)</label>
-    <input id="sizes" name="sizes" inputmode="decimal" autocomplete="off"
-      placeholder="Default: 0.1 to 5000"
-      aria-describedby="sizes-help" spellcheck="false">
-    <span id="sizes-help" class="cs-info" title="The engine sorts the chosen sizes ascending before pricing, and an unpriced size is reported as such — never as a zero.">Leave empty for the default ladder:
-    0.1, 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500 and 5000. Why these sizes:
-    the bottom rung isolates the corridor's spread, the top rung exposes exhaustion.</span>
+    <label for="theme">Theme</label>
+    <select id="theme" aria-label="Choose a colour scheme">
+      <option value="system">System</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
+    <span id="sizes-error" class="err" role="status"></span>
     <button id="run">Measure live</button>
     <button id="trend">Show trend</button>
     <span id="status" class="sub" role="status"></span>
@@ -611,7 +613,7 @@
   </details>
   <div id="compare-out" aria-live="polite"></div>
 
-  <div id="out">
+  <main id="out" tabindex="-1">
     <div class="loading-panel" id="loading">
       <div class="loading-dots">
         <span></span><span></span><span></span>
@@ -955,34 +957,68 @@ function showErrorBanner(message) {
 // and nothing here fabricates or reorders a figure (docs/ladder-sizes.md
 // documents the default set).
 const MAX_SIZES = 24;
+const DEFAULT_SIZES_STR = '0.1,1,5,10,25,50,100,250,500,1000,2500,5000';
 
-// readSizes returns the trimmed input, or '' when it is empty. Validation is
-// deliberately server-side only: parseSizes is the contract, and the UI
-// showing the API's own error beats a second validator drifting from it.
+// readSizes returns the trimmed input, or '' when it is empty. The client
+// mirrors parseSizes for quick feedback; the API remains the validation
+// boundary and still rejects any request the UI does not.
 function readSizes() {
   return $('sizes').value.trim();
 }
 
-// sizesValidation reports why the current input cannot be sent, or '' when it
-// can. Colour alone never carries this (the message text is the signal); the
-// invalid state is also mirrored onto the input via aria-invalid so screen
-// readers get it without a repaint.
-function sizesValidation(raw) {
-  if (raw === '') return '';
-  const parts = raw.split(',');
-  if (parts.length > MAX_SIZES)
-    return `At most ${MAX_SIZES} sizes can be measured in one request.`;
-  for (const p of parts) {
-    const t = p.trim();
-    if (t === '') continue;
-    if (!/^[+]?\d*\.?\d+([eE][+-]?\d+)?$/.test(t))
-      return `“${t}” is not a number the engine can measure.`;
-    const n = parseFloat(t);
-    if (!isFinite(n) || n <= 0)
-      return 'Every size must be a positive amount.';
+function parseSizesInput(raw) {
+  const value = String(raw || '').trim();
+  if (value === '') return { ok: true, norm: '' };
+  const parts = value.split(',');
+  if (parts.length > 24)
+    return { ok: false, norm: '', error: `At most ${MAX_SIZES} sizes can be measured in one request.` };
+  const normalized = [];
+  for (const part of parts) {
+    const size = part.trim();
+    if (size === '') continue;
+    const match = /^\+?(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE][+-]?\d+)?$/.exec(size);
+    if (!match)
+      return { ok: false, norm: '', error: `“${size}” is not a decimal number, so it is not a number the API accepts.` };
+    const digits = (match[1] || '') + (match[2] || match[3] || '');
+    if (!/[1-9]/.test(digits))
+      return { ok: false, norm: '', error: 'Every size must be a positive amount.' };
+    normalized.push(size);
   }
-  return '';
+  return { ok: true, norm: normalized.join(',') };
 }
+
+function sizesValidation(raw) {
+  return parseSizesInput(raw);
+}
+
+function addNonDefaultSizes(q, sizes) {
+  if (sizes && sizes !== DEFAULT_SIZES_STR) q.set('sizes', sizes);
+}
+
+function corridorQuery({ to, sizes, live }) {
+  const q = new URLSearchParams({ to });
+  if (sizes && sizes.ok && sizes.norm !== DEFAULT_SIZES_STR)
+    addNonDefaultSizes(q, sizes.norm);
+  if (live) q.set('live', '1');
+  return q.toString();
+}
+
+function readURLState() {
+  const params = new URLSearchParams(window.location.search);
+  const to = params.get('to');
+  if (!to) return null;
+  const sizes = parseSizesInput(params.get('sizes') || '');
+  if (!sizes.ok) return null;
+  return { to, sizes: sizes.norm, live: params.get('live') === '1' };
+}
+
+function writeURLState({ to, sizes, live }) {
+  const parsedSizes = parseSizesInput(sizes || '');
+  const query = corridorQuery({ to, sizes: parsedSizes, live });
+  history.replaceState(null, '', `${location.pathname}?${query}${location.hash}`);
+}
+
+window.addEventListener('popstate', () => { navigateTo(); });
 
 // --- Measurement -------------------------------------------------------------
 
@@ -998,15 +1034,17 @@ async function measure() {
     return;
   }
   const sizesRaw = readSizes();
-  const problem = sizesValidation(sizesRaw);
+  const sizes = sizesValidation(sizesRaw);
   const sizesInput = $('sizes');
-  if (problem) {
+  if (!sizes.ok) {
     sizesInput.setAttribute('aria-invalid', 'true');
-    $('status').textContent = problem;
+    $('sizes-error').textContent = sizes.error;
+    $('status').textContent = sizes.error;
     return;
   }
   sizesInput.removeAttribute('aria-invalid');
-  lastRequestedSizes = sizesRaw;
+  $('sizes-error').textContent = '';
+  lastRequestedSizes = sizes.norm === DEFAULT_SIZES_STR ? '' : sizes.norm;
   $('run').disabled = true;
   $('status').textContent = 'measuring live — each size is its own round trip to Horizon, so more sizes take longer…';
   try {
@@ -1093,7 +1131,7 @@ function render(d) {
   if (d.findings) parts.push(findings(d.findings));
 
   parts.push(caseStudy(d));
-  $('out').innerHTML = parts.join('');
+  setOut(parts.join(''));
   $('out').focus({ preventScroll: true });
 }
 
@@ -1271,7 +1309,7 @@ function curve(rungs) {
   return `<figure class="chart">
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-labelledby="loss-curve-alt">
       ${grid}${thresh}
-      <polyline points="${pts.join(' ')}" fill="none" stroke="var(--bad)" stroke-width="2"/>
+      <polyline points="${pts.join(' ')}" fill="none" stroke="var(--chart-line)" stroke-width="2"/>
       ${dots}${labels}
       <text class="axis" x="${W / 2}" y="${H - 4}" text-anchor="middle">send amount (log scale)</text>
     </svg>
@@ -1366,13 +1404,6 @@ function curveStructure(rungs) {
   const known = STRUCTURE_OF_ROUTE[states[0]];
   return typeof known === 'string' ? known
     : 'The structural state of the plotted route was not established.';
-  return `<svg viewBox="0 0 ${W} ${H}" role="img"
-    aria-label="Loss against mid rising with trade size">
-    ${grid}${thresh}
-    <polyline points="${pts.join(' ')}" fill="none" stroke="var(--chart-line)" stroke-width="2"/>
-    ${dots}${labels}
-    <text class="axis" x="${W / 2}" y="${H - 4}" text-anchor="middle">send amount (log scale)</text>
-  </svg>`;
 }
 
 function table(rungs, scored, depends) {
@@ -1454,7 +1485,8 @@ function findings(f) {
     const text = c.determined ? c.summary : (c.reason || c.summary);
 
     const evidence = (c.evidence || []).map(e =>
-      `<li class="f-evidence">${esc(e.source)} → ${esc(e.observed)}</li>`).join('');
+      `<li class="f-evidence"><details class="f-ev"><summary>${esc(e.source)}</summary>` +
+      `<span>${esc(e.source)} → ${esc(e.observed)} · ${esc(e.observed_at)}</span></details></li>`).join('');
 
     return `<li class="finding-row">
       <span class="f-state ${state[1]}">${state[0]}</span>
@@ -1647,7 +1679,7 @@ function renderTrend() {
           'as history exists. Nothing is interpolated, estimated, or borrowed ' +
           'from another corridor in the meantime.',
       })}</section>`);
-    $('out').innerHTML = parts.join('');
+    setOut(parts.join(''));
     $('out').focus({ preventScroll: true });
     return;
   }
@@ -1687,14 +1719,14 @@ function renderTrend() {
     involving UNKNOWN are omitted because they do not establish a structural
     change.</p></div>`);
 
-  parts.push(`<div class="panel">
+  parts.push(`<section class="panel" aria-label="Stored runs">
     <h2>Stored runs</h2>
     <div class="scroll" tabindex="0" role="region" aria-label="Stored runs, newest first">${runsTable(runs)}</div>
     <p class="meta">Newest first. The reference column names the provider each
     run was scored against, so a benchmark change sits next to the numbers it
     affects.</p></section>`);
 
-  $('out').innerHTML = parts.join('');
+  setOut(parts.join(''));
   $('out').focus({ preventScroll: true });
   $('trend-size').addEventListener('change', (e) => {
     trendState.size = e.target.value;
@@ -2000,6 +2032,18 @@ async function loadCorridor(to) {
   }
 }
 
+async function navigateTo() {
+  const url = readURLState();
+  if (url && Array.from($('to').options).some(option => option.value === url.to)) {
+    $('to').value = url.to;
+    $('sizes').value = url.sizes || DEFAULT_SIZES_STR;
+    updateCorridorDetail(url.to);
+    if (url.live) return measure();
+    return loadCorridor(url.to);
+  }
+  return loadCorridor($('to').value);
+}
+
 // On page load, populate the corridor selector from /api/assets first, then
 // fetch the corridor it selected from recorded history (no &live=1) so the
 // loading state disappears as soon as the server responds, whether this is a
@@ -2012,8 +2056,13 @@ async function loadCorridor(to) {
 // screen instead of silently measuring a corridor the reader was never given
 // (issue #290).
 (async function boot() {
+  const url = readURLState();
   const ready = await loadAssets();
   if (!ready) return;
+  if (url) {
+    await navigateTo();
+    return;
+  }
   await loadCorridor($('to').value);
 })();
 </script>
