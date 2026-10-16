@@ -235,13 +235,153 @@ func TestClientKeyFromDirectPublicPeer(t *testing.T) {
 }
 
 // TestClientKeyBehindLoopbackProxy is the Render shape: TLS terminates on the
-// same host, the app sees 127.0.0.1 and the header carries the real client.
+// same host, the app sees 127.0.0.1 and the proxy appends the real client to the right.
 func TestClientKeyBehindLoopbackProxy(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/api/corridor", nil)
 	r.RemoteAddr = "127.0.0.1:55555"
-	r.Header.Set("X-Forwarded-For", "198.51.100.23, 10.0.0.1")
+	r.Header.Set("X-Forwarded-For", "10.0.0.1, 198.51.100.23")
 	if got := clientKey(r); got != "198.51.100.23" {
-		t.Errorf("clientKey = %q, want the leftmost forwarded client %q", got, "198.51.100.23")
+		t.Errorf("clientKey = %q, want the rightmost forwarded client %q", got, "198.51.100.23")
+	}
+}
+
+// TestClientKey covers the clientKey extraction across proxy and direct shapes,
+// including spoofed X-Forwarded-For prefixes, whitespace, invalid entries, and
+// multiple header lines.
+func TestClientKey(t *testing.T) {
+	tests := []struct {
+		name       string
+		remoteAddr string
+		headers    []string
+		want       string
+	}{
+		{
+			name:       "untrusted direct public peer ignores XFF",
+			remoteAddr: "203.0.113.7:4432",
+			headers:    []string{"1.2.3.4, 198.51.100.23"},
+			want:       "203.0.113.7",
+		},
+		{
+			name:       "trusted loopback proxy with single entry",
+			remoteAddr: "127.0.0.1:55555",
+			headers:    []string{"198.51.100.23"},
+			want:       "198.51.100.23",
+		},
+		{
+			name:       "trusted private proxy with single entry",
+			remoteAddr: "10.0.0.5:4432",
+			headers:    []string{"198.51.100.99"},
+			want:       "198.51.100.99",
+		},
+		{
+			name:       "trusted proxy without header falls back to peer",
+			remoteAddr: "127.0.0.1:55555",
+			headers:    nil,
+			want:       "127.0.0.1",
+		},
+		{
+			name:       "trusted proxy with empty header falls back to peer",
+			remoteAddr: "127.0.0.1:55555",
+			headers:    []string{""},
+			want:       "127.0.0.1",
+		},
+		{
+			name:       "spoofed leftmost entry prepended to proxy entry matches real client alone",
+			remoteAddr: "127.0.0.1:55555",
+			headers:    []string{"1.2.3.4, 198.51.100.23"},
+			want:       "198.51.100.23",
+		},
+		{
+			name:       "different spoofed leftmost entry yields same key",
+			remoteAddr: "127.0.0.1:55555",
+			headers:    []string{"203.0.113.99, 198.51.100.23"},
+			want:       "198.51.100.23",
+		},
+		{
+			name:       "multiple spoofed entries yield same key",
+			remoteAddr: "127.0.0.1:55555",
+			headers:    []string{"spoof1, spoof2, 198.51.100.23"},
+			want:       "198.51.100.23",
+		},
+		{
+			name:       "whitespace around entries is trimmed",
+			remoteAddr: "127.0.0.1:55555",
+			headers:    []string{"  1.2.3.4  ,   198.51.100.23   "},
+			want:       "198.51.100.23",
+		},
+		{
+			name:       "trailing commas and empty entries are skipped",
+			remoteAddr: "127.0.0.1:55555",
+			headers:    []string{"1.2.3.4, 198.51.100.23, , "},
+			want:       "198.51.100.23",
+		},
+		{
+			name:       "multiple X-Forwarded-For header lines use the rightmost entry",
+			remoteAddr: "127.0.0.1:55555",
+			headers:    []string{"1.2.3.4", "198.51.100.23"},
+			want:       "198.51.100.23",
+		},
+		{
+			name:       "invalid IP entry falls back to peer",
+			remoteAddr: "127.0.0.1:55555",
+			headers:    []string{"not-an-ip"},
+			want:       "127.0.0.1",
+		},
+		{
+			name:       "invalid rightmost IP entry falls back to peer",
+			remoteAddr: "127.0.0.1:55555",
+			headers:    []string{"198.51.100.23, not-an-ip"},
+			want:       "127.0.0.1",
+		},
+		{
+			name:       "unparseable RemoteAddr without port",
+			remoteAddr: "203.0.113.9",
+			headers:    nil,
+			want:       "203.0.113.9",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/api/corridor", nil)
+			r.RemoteAddr = tc.remoteAddr
+			for _, h := range tc.headers {
+				r.Header.Add("X-Forwarded-For", h)
+			}
+			if got := clientKey(r); got != tc.want {
+				t.Errorf("clientKey = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHandlerRateLimitsSpoofedXForwardedFor proves that requests with rotating,
+// spoofed leftmost X-Forwarded-For entries share a single rate-limit bucket for
+// the real client IP appended by the proxy, preventing bucket rotation bypasses.
+func TestHandlerRateLimitsSpoofedXForwardedFor(t *testing.T) {
+	// 1 req/s refill with a burst depth of 2.
+	api := newLimiterTestServer(t, 1, 2)
+
+	client := &http.Client{}
+	var lastStatus int
+
+	for i := 0; i < 4; i++ {
+		req, err := http.NewRequest(http.MethodGet, api.URL+"/api/corridor?sizes=1", nil)
+		if err != nil {
+			t.Fatalf("request %d: %v", i+1, err)
+		}
+		// Each request sends a different spoofed leftmost IP, but the same real client.
+		req.Header.Set("X-Forwarded-For", "192.0.2."+itoa(i+1)+", 198.51.100.77")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("request %d: %v", i+1, err)
+		}
+		lastStatus = resp.StatusCode
+		resp.Body.Close()
+	}
+
+	if lastStatus != http.StatusTooManyRequests {
+		t.Fatalf("status = %d after exhausting burst with spoofed XFF; want 429", lastStatus)
 	}
 }
 
