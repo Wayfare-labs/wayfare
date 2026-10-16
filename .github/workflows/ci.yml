@@ -36,6 +36,11 @@ jobs:
     name: build and test
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      matrix:
+        timezone: [Pacific/Kiritimati, America/Adak]
+    env:
+      TZ: ${{ matrix.timezone }}
     steps:
       - uses: actions/checkout@v5
 
