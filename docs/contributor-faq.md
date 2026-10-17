@@ -4,17 +4,26 @@ Questions a new contributor actually asks, answered against the code as it is in
 this repository. Every claim below names the file it came from so it can be
 checked rather than trusted. Where the answer is "no" or "not yet", it says so.
 
+**Last re-verified 2026-10-17 against `main` at commit `1bc5593`
+(`1bc5593a65bfd9cb355b98eeafe0c206c3fd532c`).** Every answer below was re-checked
+against that tree. Citations name files and symbols rather than line numbers, so
+they do not rot between commits; where an answer rests on a dated observation or
+on an issue's state, the date and the commit are repeated at that answer.
+
 This is the written form of the seeded Q&A discussion. If your question is not
 here, ask in
 [Discussions → Q&A](https://github.com/Wayfare-labs/wayfare/discussions/categories/q-a)
 — that is the fastest route to an answer, and a question that keeps coming up
 should be folded back into this document.
 
-> **Where things stand, as of 2026-09-23.** The V1 quote engine is implemented
-> and tested. The V2 execution-economics layer is **partly merged but not
-> reachable** (see "What is not built yet"). Nothing in V3–V6 is implemented. The
-> repository's own [docs/backlog.md](backlog.md) is the map; it is larger and more
-> current than this FAQ.
+> **Where things stand, as of 2026-10-17 (re-verified at commit `1bc5593`).**
+> The V1 quote engine is implemented and tested. In V2 the counterparty checks
+> are done and reach every response; the market-quality metrics are **merged but
+> not reachable** (see "What is not built yet"). Of V3, the effective-transfer-
+> cost decomposition is built and on the wire — `route.Decompose` runs per priced
+> rung and `route/wire.go` publishes each rung's `cost` block. Nothing in V4–V6
+> is implemented. The repository's own [docs/backlog.md](backlog.md) is the map;
+> it is larger and more current than this FAQ.
 
 ---
 
@@ -115,9 +124,10 @@ does not publish `ANCHOR_QUOTE_SERVER`.
 [docs/adding-a-corridor.md](adding-a-corridor.md). The rule throughout is **one
 corridor at a time, and a negative finding is a result** — "this corridor cannot
 be measured, and here is why" is an acceptable outcome. Five corridor research
-issues exist as worked examples (#58 ZAR, #59 BRL, #60 PHP, #61 MXN, #62 INR),
-and [docs/corridor-research-template.md](corridor-research-template.md) is the
-form to fill in.
+issues exist as worked examples (#58 ZAR, #59 BRL, #60 PHP, #61 MXN, #62 INR —
+all five still present, and closed, at `1bc5593`), and
+[docs/corridor-research-template.md](corridor-research-template.md) is the form
+to fill in.
 
 ### How do I add a check?
 
@@ -135,10 +145,16 @@ point and branches on nothing.
 [docs/metrics.md](metrics.md) for the methodology. Be aware: as of this writing
 **no metric runs in production**. `checks.Runner` has no `Metrics` field and
 `RunMetric` has no non-test caller, so the five merged metric types are
-unreachable. Wiring them is
-[#91](https://github.com/Wayfare-labs/wayfare/issues/91) and it is the critical
-path for the whole V2 milestone — a metric you add is validated and testable
-now, and does not reach a response until that lands.
+unreachable. Wiring them was
+[#91](https://github.com/Wayfare-labs/wayfare/issues/91), the critical path for
+the whole V2 milestone — but #91 was closed on 2026-09-02 by
+[PR #449](https://github.com/Wayfare-labs/wayfare/pull/449), a strict-send
+payload fix that did not add the metric path. Re-verified at commit `1bc5593`:
+`checks.Runner` still has no `Metrics` field and `RunMetric` still has no
+non-test caller, so the wiring has not landed. The unwired work remains listed
+as backlog entry **#49** in [docs/backlog.md](backlog.md) — a metric you add is
+validated and testable now, and does not reach a response until that wiring
+actually exists.
 
 ### Do I need to change the wire format to add things?
 
@@ -162,14 +178,20 @@ any chain over the window ceiling, verifies the window, and opens a pull
 request. The committed store is bounded — each corridor keeps its newest 366
 records — by design (ADR 007).
 
-**Observed 2026-09-23T17:25:28Z:** `GET /healthz` on
-`https://wayfare-cdb9.onrender.com` reported every corridor's newest record as
-`recorded_at: 2026-08-22T12:09:59Z`, `age_human: "32d ago"`. A six-hourly
-workflow and a 32-day-old reading do not agree, so the chain has not been
-extending. `README.md` flags this in its verification table ("Continuous
-measurement — **Not currently running**", [#63](https://github.com/Wayfare-labs/wayfare/issues/63))
-and it is visible at runtime as `stale.age_human`. Read that rather than
-assuming a cadence.
+**Observed 2026-10-17 (re-verified at commit `1bc5593`):** `GET /healthz` on
+`https://wayfare-cdb9.onrender.com` still reports every corridor's newest record
+from 2026-08-22 — `recorded_at: 2026-08-22T12:09:59Z` for NGNC,
+`age_human: "56d ago"`, `record_count: 3`, `chain_head: null` — the same records
+the 2026-09-23 check saw at `32d ago`, so the chain has not extended in the
+intervening weeks. The `measure` schedule still fires every six hours, but
+recent runs fail at the **Open measurement pull request** step (run
+[`39022615460`](https://github.com/Wayfare-labs/wayfare/actions/runs/39022615460),
+2026-10-17), so no PR opens and `data/`'s newest commit remains 2026-08-22.
+[#63](https://github.com/Wayfare-labs/wayfare/issues/63), the original push
+failure, was closed on 2026-08-29; this is a later failure. `README.md` flags
+the effect in its verification table ("Continuous measurement — **Not currently
+running**") and it is visible at runtime as `stale.age_human`. Read that rather
+than assuming a cadence.
 
 ### Why does the API say `live: false`?
 
@@ -213,13 +235,21 @@ names no provider (ADR [001](adr/001-why-reference-mids-are-never-averaged.md),
 ## What is not built yet
 
 Answering these as "future" is deliberate: do not describe any of them as
-available.
+available beyond what this list says — and where something has since become
+partly reachable, say exactly how much of it has.
 
 - **Execution metrics (spread, depth, price impact, concentration).** Code
   merged, **unreachable**. See "How do I add a metric?" above.
-- **Historical analysis over the store** (means, trends, regimes). Not
-  implemented. `runstore` holds records, but no analysis layer reads them and
-  the records carry headline figures only.
+- **Historical analysis over the store** (means, trends, regimes). **Partly
+  built.** The `analysis` package (`analysis/analysis.go`) computes observation
+  count, mean, standard deviation, trend direction and regime classification
+  over runstore records with documented minimum sample sizes (n ≥ 30 for
+  mean/stddev, n ≥ 60 for trend), and `server/trend.go` publishes
+  `divergence_stats` from it on `/api/corridor/trend` — benchmark divergence
+  only. Regime labels are computed but deliberately not rendered
+  (`server/trend.go`). The records themselves still carry headline figures and
+  no metrics, so statistics over corridor quality remain unimplemented.
+  (Re-verified at commit `1bc5593`.)
 - **Predictive intelligence** (failure probability, expected slippage).
   Not implemented, and deliberately so: it is blocked on history that does not
   yet exist.
@@ -229,8 +259,9 @@ available.
   anchor that publishes `ANCHOR_QUOTE_SERVER`, so no corridor's own rails can be
   priced. (A live SEP-38 round-trip *has* been performed against the
   `testanchor.stellar.org` sandbox: the response is recorded verbatim in
-  `sep38/testdata/live/price-usd-srt.json`, 2026-08-28, and replayed by
-  `sep38/live_roundtrip_test.go`. That is a sandbox anchor, not a corridor.)
+  `sep38/testdata/live/price-usd-srt.json`, recorded 2026-08-28 and committed in
+  `1a0cc70`, and replayed by `sep38/live_roundtrip_test.go`. That is a sandbox
+  anchor, not a corridor.)
 
 `README.md` states the governing rule for all of this: a layer can never be
 more certain than the layer beneath it, and an unavailable layer-1 fact is
@@ -238,8 +269,8 @@ more certain than the layer beneath it, and an unavailable layer-1 fact is
 
 ### The backlog says something that contradicts the code. What do I do?
 
-Report it — the contradiction is the finding. Two known examples, both verified
-against this tree on 2026-09-23:
+Report it — the contradiction is the finding. Three known examples, all
+re-verified against this tree at commit `1bc5593` on 2026-10-17:
 
 - Section A of [docs/backlog.md](backlog.md) says `checks.Runner.ForAsset()` runs
   **three** checks. `checks/runner.go` `Default()` returns **seven**
@@ -248,11 +279,15 @@ against this tree on 2026-09-23:
   `HomeDomainRoundTrip`).
 - The same section says `route.Decompose` is unreachable dead code with no
   non-test caller. `route/ladder.go` calls it per priced rung and
-  `route/wire.go` publishes the result as a `cost` block.
-- Issue [#180](https://github.com/Wayfare-labs/wayfare/issues/180) says a live
-  SEP-38 round-trip "has never been performed". One was performed against
-  `testanchor.stellar.org` on 2026-08-28 and is committed as
-  `sep38/testdata/live/price-usd-srt.json`.
+  `route/wire.go` publishes the result as a `cost` block — wired in `d762693`
+  (2026-08-25, closing [#95](https://github.com/Wayfare-labs/wayfare/issues/95))
+  and still unretracted in section A at `1bc5593`.
+- Issue [#180](https://github.com/Wayfare-labs/wayfare/issues/180) was titled
+  "A live SEP-38 round-trip has never been performed". One was performed against
+  `testanchor.stellar.org` on 2026-08-28, committed as
+  `sep38/testdata/live/price-usd-srt.json` (`1a0cc70`, 2026-08-31), and #180 was
+  closed the same day. The pre-closure sentence still appears in `README.md`'s
+  API section — treat it as stale, not as evidence.
 
 The comment above `Runner.Default()` — "deliberately small … these three are the
 worked examples" — is stale for the same reason.
@@ -271,7 +306,7 @@ document; a PR that answers one is welcome.
 The questions that have been asked here already, with each answer checked
 against the code rather than remembered, are in
 [docs/discussion-questions.md](discussion-questions.md) — worth reading first,
-because several of them are still open.
+because some of them are still open.
 
 ### How should I describe a change?
 
