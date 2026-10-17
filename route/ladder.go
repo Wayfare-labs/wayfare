@@ -257,6 +257,17 @@ func (l *LadderResult) PartiallyFailed() bool {
 	return unmeasured > 0 && unmeasured < len(l.Rungs)
 }
 
+// CompletedSizes names the send amounts that were priced, in ascending order.
+func (l *LadderResult) CompletedSizes() []decimal.Decimal {
+	var out []decimal.Decimal
+	for _, r := range l.Rungs {
+		if r.Priced() {
+			out = append(out, r.SendAmount)
+		}
+	}
+	return out
+}
+
 // UnmeasuredSizes names the send amounts at which nothing was learned, in
 // ascending order. Empty means every size produced information about the
 // corridor.
@@ -316,7 +327,10 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 	wg.Wait()
 
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		// The partial result is returned alongside the error so a caller can
+		// report which rungs finished (CompletedSizes). It is not summarised
+		// and must not be presented as a measurement.
+		return out, err
 	}
 	out.summarise()
 	return out, nil

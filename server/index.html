@@ -959,9 +959,79 @@ function showErrorBanner(message) {
 const MAX_SIZES = 24;
 const DEFAULT_SIZES_STR = '0.1,1,5,10,25,50,100,250,500,1000,2500,5000';
 
-// readSizes returns the trimmed input, or '' when it is empty. The client
-// mirrors parseSizes for quick feedback; the API remains the validation
-// boundary and still rejects any request the UI does not.
+const CORRIDOR_CACHE_PREFIX = 'wayfare:corridor-reading:v1:';
+
+function corridorCacheKey(code) {
+  return `${CORRIDOR_CACHE_PREFIX}${encodeURIComponent(code)}`;
+}
+
+function readingRecordedAt(data) {
+  return data.live === false ? data.stale?.recorded_at : data.measured_at;
+}
+
+function validTimestamp(value) {
+  return typeof value === 'string' && /(?:Z|[+-]\d\d:\d\d)$/i.test(value) &&
+    Number.isFinite(Date.parse(value));
+}
+
+function validCorridorReading(data, code) {
+  if (!data || typeof data !== 'object' || Array.isArray(data) ||
+      data.receive_asset?.code !== code || typeof data.send_asset?.code !== 'string' ||
+      !data.send_asset.code || typeof data.integrity !== 'string' ||
+      typeof data.finding !== 'string' || typeof data.live !== 'boolean' ||
+      !Array.isArray(data.rungs) || data.rungs.length === 0 ||
+      !validTimestamp(data.measured_at)) {
+    return false;
+  }
+  if (!data.live && (!data.stale || !validTimestamp(data.stale.recorded_at))) return false;
+  return true;
+}
+
+function saveCorridorReading(code, data) {
+  const recordedAt = readingRecordedAt(data);
+  if (!validCorridorReading(data, code) || !validTimestamp(recordedAt)) return;
+  try {
+    localStorage.setItem(corridorCacheKey(code), JSON.stringify({
+      version: 1,
+      corridor: code,
+      fetched_at: new Date().toISOString(),
+      recorded_at: recordedAt,
+      reading: data,
+    }));
+  } catch (e) {
+    // A full or unavailable store must not prevent the reading from rendering.
+  }
+}
+
+function readCorridorReading(code) {
+  try {
+    const raw = localStorage.getItem(corridorCacheKey(code));
+    if (!raw) return null;
+    const cached = JSON.parse(raw);
+    if (cached?.version !== 1 || cached.corridor !== code ||
+      !validTimestamp(cached.fetched_at) || !validTimestamp(cached.recorded_at) ||
+        !validCorridorReading(cached.reading, code) ||
+        readingRecordedAt(cached.reading) !== cached.recorded_at) return null;
+    return cached;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Keep the server's humanAge buckets and labels for browser-cached readings.
+function formatReadingAge(recordedAt) {
+  const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(recordedAt)) / 1000));
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 48 * 3600) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+let corridorRequest = 0;
+
+// readSizes returns the trimmed input, or '' when it is empty. Validation is
+// deliberately server-side only: parseSizes is the contract, and the UI
+// showing the API's own error beats a second validator drifting from it.
 function readSizes() {
   return $('sizes').value.trim();
 }
@@ -1043,8 +1113,8 @@ async function measure() {
     return;
   }
   sizesInput.removeAttribute('aria-invalid');
-  $('sizes-error').textContent = '';
-  lastRequestedSizes = sizes.norm === DEFAULT_SIZES_STR ? '' : sizes.norm;
+  lastRequestedSizes = sizesRaw;
+  const requestId = ++corridorRequest;
   $('run').disabled = true;
   $('status').textContent = 'measuring live — each size is its own round trip to Horizon, so more sizes take longer…';
   try {
@@ -1053,16 +1123,32 @@ async function measure() {
     const r = await fetch(`/api/corridor?${q}&live=1`);
     const data = await r.json();
     if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code });
+    if (!validCorridorReading(data, to)) throw new Error('The corridor response was incomplete or invalid.');
+    saveCorridorReading(to, data);
+    if (requestId !== corridorRequest || $('to').value !== to) return;
     render(data);
     // Reflect the exact request that produced this reading.
     writeURLState({ to, sizes: sizes.norm, live: true });
     $('status').textContent = '';
   } catch (e) {
+    if (requestId !== corridorRequest || $('to').value !== to) return;
     if (e.code === 'invalid_sizes') $('sizes').setAttribute('aria-invalid', 'true');
-    showErrorBanner(`Could not measure: ${esc(e.message)}`);
-    announce(`Could not measure: ${e.message}`);
+    const cached = readCorridorReading(to);
+    if (cached) {
+      render(cached.reading, {
+        cached: true,
+        recordedAt: cached.recorded_at,
+        fetchedAt: cached.fetched_at,
+      });
+      showErrorBanner(`Could not measure: ${esc(e.message)}. Showing cached corridor data (${formatReadingAge(cached.recorded_at)}).`);
+      announce(`Could not measure: ${e.message}. Showing cached reading from ${formatReadingAge(cached.recorded_at)}.`);
+    } else {
+      showErrorBanner(`Could not measure: ${esc(e.message)}`);
+      announce(`Could not measure: ${e.message}`);
+    }
     $('status').textContent = '';
   } finally {
+    $('status').textContent = '';
     $('run').disabled = false;
   }
 }
@@ -1092,12 +1178,20 @@ function errorPanel(prefix, e) {
 // the API actually returned, whatever was requested.
 let lastRequestedSizes = '';
 
-function render(d) {
+function render(d, options = {}) {
   const parts = [];
-  const provenance = d.live
+  const cached = options.cached === true;
+  const recordedAt = cached ? options.recordedAt : (d.stale?.recorded_at || d.measured_at);
+  const fetchedAt = cached ? options.fetchedAt : '';
+  const ageHuman = cached ? formatReadingAge(recordedAt) : (d.stale?.age_human || 'historical reading');
+  const provenance = cached
+    ? `<p class="provenance"><strong>CACHED READING — NOT CURRENT MARKET DATA</strong> · ${esc(ageHuman)} · recorded ${esc(recordedAt)} · browser cached ${esc(fetchedAt)}</p>`
+    : d.live
     ? `<p class="provenance provenance-live"><strong>LIVE MEASUREMENT</strong> · measured ${esc(d.measured_at)}</p>`
     : `<p class="provenance"><strong>RECORDED — NOT CURRENT MARKET DATA</strong> · ${esc(d.stale?.age_human || 'historical reading')} · recorded ${esc(d.stale?.recorded_at || d.measured_at)}</p>`;
-  $('footer-provenance').textContent = d.live
+  $('footer-provenance').textContent = cached
+    ? `The reading below was originally recorded ${ageHuman} (${recordedAt}) and this browser cached it at ${fetchedAt}; it is not a live market measurement. Wayfare is non-custodial and read-only: it never holds funds, issues tokens, or moves money.`
+    : d.live
     ? `Every figure below was fetched live from Horizon pathfinding and an independent rate provider at ${d.measured_at}. Nothing is cached, estimated, or interpolated. Wayfare is non-custodial and read-only: it never holds funds, issues tokens, or moves money.`
     : `The reading below was recorded ${d.stale?.age_human || 'in the past'} at ${d.stale?.recorded_at || d.measured_at}; it is not a live market measurement. Wayfare is non-custodial and read-only: it never holds funds, issues tokens, or moves money.`;
 
@@ -2009,6 +2103,7 @@ $('theme').addEventListener('change', (e) => applyTheme(e.target.value));
 $('compare').addEventListener('click', compareCorridors);
 
 async function loadCorridor(to) {
+  const requestId = ++corridorRequest;
   if (!to) {
     setOut(`<div class="panel">${emptyState({
       title: 'No corridor selected',
@@ -2017,18 +2112,30 @@ async function loadCorridor(to) {
     return;
   }
   try {
-    await loadAssets();
-    const to = $('to').value;
-    if (!to) throw new Error('No corridor is available to load.');
     const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}`);
     const data = await r.json();
     if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code });
+    if (!validCorridorReading(data, to)) throw new Error('The corridor response was incomplete or invalid.');
+    saveCorridorReading(to, data);
+    if (requestId !== corridorRequest || $('to').value !== to) return;
     render(data);
     announceResult(data);
   } catch (e) {
-    showErrorBanner(
-      `Could not load corridor data: ${esc(e.message)}. If the instance is still waking up, wait a moment and <a href="" style="color:inherit">reload</a>.`);
-    announce(`Could not load corridor data: ${e.message}. If the instance is still waking up, wait a moment and reload.`);
+    if (requestId !== corridorRequest || $('to').value !== to) return;
+    const cached = readCorridorReading(to);
+    if (cached) {
+      render(cached.reading, {
+        cached: true,
+        recordedAt: cached.recorded_at,
+        fetchedAt: cached.fetched_at,
+      });
+      showErrorBanner(`Could not load corridor data: ${esc(e.message)}. Showing cached data (${formatReadingAge(cached.recorded_at)}).`);
+      announce(`Could not load corridor data: ${e.message}. Showing cached reading from ${formatReadingAge(cached.recorded_at)}.`);
+    } else {
+      showErrorBanner(
+        `Could not load corridor data: ${esc(e.message)}. If the instance is still waking up, wait a moment and <a href="" style="color:inherit">reload</a>.`);
+      announce(`Could not load corridor data: ${e.message}. If the instance is still waking up, wait a moment and reload.`);
+    }
   }
 }
 

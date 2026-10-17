@@ -217,11 +217,12 @@ put a secret into the deployment, and this service holds none.
 
 | Flag | Env | Default | Meaning |
 |:---|:---|:---|:---|
-| `-addr` | | `:8080` | Listen address |
+| `-addr` | `PORT` | `:8080` | Listen address; defaults to `0.0.0.0:$PORT` when `PORT` is set, and the flag overrides it |
 | `-data` | `WAYFARE_DATA_DIR` | none | Run store directory; empty disables history |
 | `-schedule` | | `6h` | Measurement interval; `0` disables the scheduler |
 | `-serve` | | `true` | Serve HTTP; `false` runs the scheduler alone |
-| `-timeout` | | `90s` | Per-corridor measurement timeout |
+| `-timeout` | | `90s` | Ceiling on a live measurement. Each request's budget is 10s plus 6s per rung, capped at this value, and is returned in the `X-Measurement-Budget` header. A timeout returns `504` with code `upstream_timeout`, the `budget`, and `rungs_completed`. |
+| `-shutdown-grace` | | `30s` | On SIGTERM, how long in-flight requests (a live ladder) get to finish before the server closes |
 | `-verify-store` | | | Walk every chain and exit |
 | `-rotate-store` | | | Trim every chain over the window ceiling and exit |
 | `-rotate-records` | | `366` | Per-corridor record ceiling for `-rotate-store` |
