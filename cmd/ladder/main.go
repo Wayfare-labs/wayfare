@@ -63,8 +63,7 @@ func main() {
 		jsonOut = flag.Bool("json", false, "emit JSON on stdout instead of the text table")
 		record  = flag.String("record", "",
 			"record upstream responses as a snapshot in a new directory under this parent")
-		refName = flag.String("ref", "exchangerate-api",
-			"reference rate provider: exchangerate-api or currency-api")
+		refName    = flag.String("ref", defaultRefProvider, refHelp())
 		allowDirty = flag.Bool("allow-dirty", false,
 			"record even though the working tree is modified, marking the manifest dirty")
 		checksFlag = flag.Bool("checks", true,
@@ -251,6 +250,8 @@ func erroredRungs(l *route.LadderResult) []string {
 	return out
 }
 
+const defaultRefProvider = "exchangerate-api"
+
 // refSource bundles a reference provider with the two things a caller needs
 // that the Provider interface deliberately does not expose: where it fetches
 // from, for a snapshot manifest, and how to give it a recording HTTP client.
@@ -260,22 +261,64 @@ type refSource struct {
 	setClient func(*http.Client)
 }
 
+func newExchangeRateAPI() refSource {
+	p := &refrate.ExchangeRateAPI{}
+	return refSource{
+		provider:  p,
+		baseURL:   refrate.DefaultExchangeRateAPI,
+		setClient: func(c *http.Client) { p.Client = c },
+	}
+}
+
+func newCurrencyAPI() refSource {
+	p := &refrate.CurrencyAPI{}
+	return refSource{
+		provider:  p,
+		baseURL:   refrate.DefaultCurrencyAPI,
+		setClient: func(c *http.Client) { p.Client = c },
+	}
+}
+
+// refConstructors registers the constructor for each supported reference provider.
+// Valid provider names in the flag help and unknown-provider errors are generated
+// directly from this list via Provider.Name().
+var refConstructors = []func() refSource{
+	newExchangeRateAPI,
+	newCurrencyAPI,
+}
+
+// refProviderNames returns the valid provider names derived from the provider constructors.
+func refProviderNames() []string {
+	names := make([]string, 0, len(refConstructors))
+	for _, c := range refConstructors {
+		names = append(names, c().provider.Name())
+	}
+	return names
+}
+
+// refHelp returns the help text for the -ref flag, listing all available providers.
+func refHelp() string {
+	return fmt.Sprintf("reference rate provider: %s", strings.Join(refProviderNames(), ", "))
+}
+
 // referenceProvider resolves the -ref flag.
 //
 // An unknown name is an error rather than a fallback to the default. Silently
 // substituting a different benchmark than the one asked for would mislabel
 // every figure the run produces.
 func referenceProvider(name string) (refSource, error) {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "exchangerate-api", "":
-		p := &refrate.ExchangeRateAPI{}
-		return refSource{p, refrate.DefaultExchangeRateAPI, func(c *http.Client) { p.Client = c }}, nil
-	case "currency-api":
-		p := &refrate.CurrencyAPI{}
-		return refSource{p, refrate.DefaultCurrencyAPI, func(c *http.Client) { p.Client = c }}, nil
+	clean := strings.ToLower(strings.TrimSpace(name))
+	if clean == "" {
+		clean = defaultRefProvider
+	}
+	for _, constructor := range refConstructors {
+		src := constructor()
+		if strings.EqualFold(src.provider.Name(), clean) {
+			return src, nil
+		}
 	}
 	return refSource{}, fmt.Errorf(
-		"unknown reference provider %q; known: exchangerate-api, currency-api", name)
+		"unknown reference provider %q; known: %s", name, strings.Join(refProviderNames(), ", "))
 }
 
 // sizeStrings renders ladder sizes for a snapshot manifest. They are decimal
