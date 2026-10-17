@@ -69,6 +69,15 @@ jobs:
       - name: go build
         run: go build ./...
 
+  build-and-test:
+    name: build and test
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: require all timezone runs to pass
+        run: test "${{ needs.build.result }}" = success
+
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest
