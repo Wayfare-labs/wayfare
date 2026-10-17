@@ -103,7 +103,10 @@ The following are deliberately not described as implemented:
 - fragmentation across venues, accounts, paths, or time;
 - a depth-distribution curve or amount-weighted concentration;
 - venue attribution, venue comparison, or liquidity-share accounting;
-- historical market-structure change and regime labels.
+- **published** historical market-structure change or regime labels. The
+  `analysis` package computes a regime from documented thresholds, but it is
+  not served on any endpoint and no integrity state depends on it; see
+  [regime-classification.md](regime-classification.md).
 
 Adding any of these requires defining its observation source, timestamp,
 identity rules, and missing-data behavior before it can support a verdict.

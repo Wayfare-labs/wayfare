@@ -99,7 +99,9 @@ type RegimeThresholds struct {
 }
 
 // DefaultRegimeThresholds returns the standard thresholds for regime
-// classification. These are documented in the analysis package README.
+// classification. They are written down and justified in
+// docs/regime-classification.md; changing them is a maintainer decision on
+// the analysis layer and cannot change any published verdict.
 func DefaultRegimeThresholds() RegimeThresholds {
 	return RegimeThresholds{
 		ElevatedBelow: decimal.NewFromInt(30),

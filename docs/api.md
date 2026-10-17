@@ -17,7 +17,7 @@ All endpoints are read-only. The service does not hold funds, issue tokens, sign
 | `GET` | `/healthz` | Return service health |
 | `GET` | `/` | Serve the embedded single-file UI |
 
-Unsupported methods return `405`. Requests beyond the per-client rate limit return `429` with a `Retry-After` header (seconds) and the error code `rate_limited` (see [Rate limiting](#rate-limiting)). JSON errors have the shape `{ "error": "...", "code": "..." }`.
+Unsupported methods return `405`. Requests beyond the per-client rate limit return `429` with a `Retry-After` header (seconds) and the error code `rate_limited` (see [Rate limiting](#rate-limiting)). JSON errors have the shape `{ "error": "...", "code": "..." }`; the machine-readable codes are the contract and are enumerated in [errors.md](errors.md).
 
 ## `GET /api/corridor`
 
@@ -52,7 +52,7 @@ Each rung includes `send_amount`, `priced`, `integrity`, optional `quote`, notes
 
 - `marginal_cost` — the change in effective receive-asset cost from the previous valid priced rung.
 - `marginal_from` and `marginal_to` — the valid ladder sizes defining that marginal measurement.
-- `cost` — the available cost decomposition.
+- `cost` — the available cost decomposition (see [cost-decomposition.md](cost-decomposition.md)).
 
 The first valid priced rung has no marginal cost. Missing rungs are skipped, never treated as zero. The current marginal classification is available on the internal ladder result as `improving`, `flat`, `worsening`, or `undetermined`; fewer than two valid priced points are undetermined.
 
@@ -480,6 +480,10 @@ Reference rates are never averaged. The response identifies the provider and, wh
 
 ## Related contracts
 
+- [Error responses](errors.md) — the machine-readable `code` on every failure
+  path, and the shape a client can rely on
+- [Cost decomposition](cost-decomposition.md) — the rung `cost` block's
+  components, and which are undetermined
 - [Reading the API correctly](api-consumer.md) — a worked consumer that
   respects `live`, `scored` and a null `recommended`, with its offline tests
 - [Run store](run-store.md) — stored record and hash-chain format

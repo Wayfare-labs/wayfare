@@ -151,11 +151,16 @@ LAYER 2 — DETERMINISTIC CALCULATION                               [live]
   divergence between reference providers
   packages: route, refrate, checks
 
-  spread, depth, price impact, concentration, cost decomposition
+  spread, depth, price impact, concentration
                                              [implemented, not yet reachable]
+  cost decomposition                         [implemented, on the wire]
 
   Market-structure vocabulary and current limits:
   [docs/market-structure.md](docs/market-structure.md)
+  Cost decomposition, component by component:
+  [docs/cost-decomposition.md](docs/cost-decomposition.md)
+  Regime classification and its documented thresholds:
+  [docs/regime-classification.md](docs/regime-classification.md)
 
         │
         ▼
@@ -485,6 +490,7 @@ Deployment, cost and backup: **[docs/deployment.md](docs/deployment.md)**
 - [GET /api/corridor](docs/api.md#get-apicorridor)
 - [GET /api/corridor/trend](docs/api.md#get-apicorridortrend)
 - [GET /api/chain-heads](docs/api.md#get-apichain-heads) — pin the current stored chain tips
+- Error responses and their machine-readable codes: [docs/errors.md](docs/errors.md)
 - `GET /` single-file UI, no build step
 
 Beyond the contracts above, two fields to know. **`live`** is on every

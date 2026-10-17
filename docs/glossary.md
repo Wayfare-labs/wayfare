@@ -338,7 +338,8 @@ smaller than the number of runs in the response.
 **Regime is not reported here.** `analysis.DefaultRegimeThresholds` is
 calibrated to loss percentages, an unrelated scale — applying it to a
 divergence series would publish a classification against thresholds nobody
-chose for that purpose.
+chose for that purpose. The thresholds themselves, and the justification for
+them, are in [regime-classification.md](regime-classification.md).
 
 **Never moves a verdict or an integrity state.** Like every check and metric
 in this project, this is a measurement of the benchmark's own behaviour,
