@@ -220,6 +220,108 @@ func TestRotateThenAppendContinuesTheWindow(t *testing.T) {
 	}
 }
 
+// TestRotateRefusesABrokenChain is the property compaction must preserve: a
+// scheme that drops records must not launder a chain that is already broken.
+//
+// Re-sealing recomputes every surviving hash from measured contents, so
+// rotating a chain with a tampered record would make the tampering verify —
+// the evidence that it ever happened would be gone, and the property the
+// package exists for would be lost at exactly the moment it mattered most.
+// Rotate must therefore verify the chain it is about to stand on and refuse,
+// leaving the file byte-for-byte as it found it.
+func TestRotateRefusesABrokenChain(t *testing.T) {
+	t.Run("a record modified after it was written", func(t *testing.T) {
+		dir := t.TempDir()
+		s := seedChain(t, dir, 6)
+		path := filepath.Join(dir, "USDC-NGNC"+FileExt)
+
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+		if len(lines) != 6 {
+			t.Fatalf("seeded %d lines, want 6", len(lines))
+		}
+
+		// Edit seq 2 in place without re-sealing it, which is the realistic
+		// "a number quietly improved long after it was published" failure
+		// the chain exists to catch.
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(lines[1]), &rec); err != nil {
+			t.Fatal(err)
+		}
+		rec["floor_loss_pct"] = "0.01"
+		edited, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines[1] = string(edited)
+		tampered := []byte(strings.Join(lines, "\n") + "\n")
+		if err := os.WriteFile(path, tampered, 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := s.Rotate(ctx(), 3); err == nil {
+			t.Fatal("Rotate succeeded on a chain with a modified record; compaction laundered the tampering")
+		}
+		assertFileUnchanged(t, path, tampered)
+	})
+
+	t.Run("a broken link between records", func(t *testing.T) {
+		dir := t.TempDir()
+		s := seedChain(t, dir, 6)
+		path := filepath.Join(dir, "USDC-NGNC"+FileExt)
+
+		all, err := s.All(ctx(), "USDC-NGNC")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Re-seal seq 2 after an edit, leaving seq 3's prev_hash pointing at
+		// the old hash. Every record self-verifies, but the chain does not
+		// link — the harder failure to catch, and the one a naive rotation
+		// would silently repair.
+		all[1].FloorLossPct = "0.01"
+		if err := all[1].Seal(); err != nil {
+			t.Fatal(err)
+		}
+		var b strings.Builder
+		for _, r := range all {
+			line, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b.Write(line)
+			b.WriteByte('\n')
+		}
+		broken := []byte(b.String())
+		if err := os.WriteFile(path, broken, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyChain("USDC-NGNC", all); err == nil {
+			t.Fatal("test fixture did not actually break the chain")
+		}
+
+		if _, err := s.Rotate(ctx(), 3); err == nil {
+			t.Fatal("Rotate succeeded on a chain with a broken link; compaction repaired a break nobody fixed")
+		}
+		assertFileUnchanged(t, path, broken)
+	})
+}
+
+// assertFileUnchanged fails if a refused rotation left the chain file
+// different from the bytes it refused to rotate.
+func assertFileUnchanged(t *testing.T, path string, want []byte) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Error("Rotate modified a chain it refused to rotate")
+	}
+}
+
 // TestRotateRefusesNonPositiveCeiling: a ceiling of zero or less is not "keep
 // nothing" and not "no rotation" — it is a caller error, the same "unknown is
 // never a default" discipline the rest of the package applies.

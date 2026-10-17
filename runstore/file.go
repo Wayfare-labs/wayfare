@@ -419,6 +419,22 @@ func (s *FileStore) Rotate(ctx context.Context, n int) ([]Rotation, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		// Verify the chain we are about to stand on BEFORE dropping anything.
+		//
+		// This is the part that keeps compaction from destroying the
+		// property the package exists for. Re-sealing recomputes every hash
+		// from the surviving records' contents, so rotating a chain that is
+		// already broken would launder the tampering: the re-sealed window
+		// would verify even though a record was altered, and the evidence
+		// that it ever was would be gone. A store that refuses to rotate a
+		// broken chain is strictly better than one that silently blesses it
+		// — the whole point of compaction is to preserve verifiability, not
+		// to trade it for a smaller file.
+		if err := verifyChain(c, records); err != nil {
+			return nil, fmt.Errorf(
+				"runstore: %s: refusing to rotate a chain that does not verify: %w", c, err)
+		}
 		if len(records) <= n {
 			continue
 		}
