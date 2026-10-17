@@ -453,8 +453,11 @@ calls, CPU), and that cost is real on every path.
 - **Burst:** 10 requests (`-rate-burst`)
 - **Client identity:** the connecting peer's host, or the client named in
   `X-Forwarded-For` when the request arrives from loopback or a private-range
-  address (the reverse-proxy shape of the hosted deployment). A directly
-  connected public peer cannot choose its own bucket by setting that header.
+  address (the reverse-proxy shape of the hosted deployment). On Render, every
+  request arrives from a private-range proxy peer; the key is the address the
+  proxy appended to the right. Leftmost entries are client-controlled and
+  ignored so spoofed headers cannot bypass the limiter. A directly connected
+  public peer cannot choose its own bucket by setting that header.
 - **Off switch:** `-rate-limit=0` disables limiting entirely — for an
   operator who already has a limiter in front.
 

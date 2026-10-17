@@ -185,24 +185,39 @@ func formatRetryAfter(d time.Duration) string {
 // X-Forwarded-For is trusted only when the immediate peer is loopback or a
 // private-range address, because that is the shape of "we are behind a proxy"
 // on the deployments this project runs (Render terminates TLS and forwards
-// from its own network). Trusting the header from a directly-connected public
-// peer would let the client choose its bucket at will, which is not a
-// boundary worth having. When the header is not trusted the peer host is
-// used, which on such a deployment means one shared bucket: still bounded
-// total cost — the point of the limiter — at the price of per-client
-// fairness, and an honest failure mode to document rather than a spoofable
-// key.
+// from its own network). On Render, every request arrives from a private-range
+// proxy peer, which appends the client address it saw to the right. Leftmost
+// entries are client-controlled and ignored to prevent spoofing a fresh bucket.
+// Trusting the header from a directly-connected public peer would let the client
+// choose its bucket at will, which is not a boundary worth having. When the
+// header is not trusted or contains no valid IP, the peer host is used, which on
+// such a deployment means one shared bucket: still bounded total cost — the
+// point of the limiter — at the price of per-client fairness, and an honest
+// failure mode to document rather than a spoofable key.
 func clientKey(r *http.Request) string {
 	peer, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		peer = strings.TrimSpace(r.RemoteAddr)
 	}
-	if isProxyPeer(peer) {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// The leftmost entry is the originating client; intermediaries
-			// append. The rest of the chain is untrusted either way.
-			if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
-				return first
+	if isProxyPeer(peer) && r.Header != nil {
+		xffs := r.Header.Values("X-Forwarded-For")
+		for i := len(xffs) - 1; i >= 0; i-- {
+			parts := strings.Split(xffs[i], ",")
+			for j := len(parts) - 1; j >= 0; j-- {
+				entry := strings.TrimSpace(parts[j])
+				if entry == "" {
+					continue
+				}
+				// The rightmost entry is appended by the immediate trusted proxy
+				// (e.g. Render); leftmost entries are client-controlled and ignored.
+				host := entry
+				if h, _, err := net.SplitHostPort(entry); err == nil {
+					host = h
+				}
+				if net.ParseIP(host) != nil {
+					return host
+				}
+				return peer
 			}
 		}
 	}
