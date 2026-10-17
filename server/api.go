@@ -972,11 +972,11 @@ type MarketStructureJSON struct {
 // verified asset registry. No store or live measurement is required.
 func (s *Server) handleMarketStructure(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, r, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is supported")
+		writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET is supported")
 		return
 	}
 	if err := checkParams(r, "pretty"); err != nil {
-		writeError(w, r, http.StatusBadRequest, "INVALID_QUERY_PARAM", err.Error())
+		writeError(w, r, http.StatusBadRequest, codeInvalidQuery, err.Error())
 		return
 	}
 

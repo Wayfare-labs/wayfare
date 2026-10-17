@@ -259,11 +259,11 @@ func toTrendRunJSON(rec *runstore.Record) TrendRunJSON {
 // deployment.
 func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, r, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is supported")
+		writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET is supported")
 		return
 	}
 	if err := checkParams(r, "from", "to", "limit", "pretty"); err != nil {
-		writeError(w, r, http.StatusBadRequest, "INVALID_QUERY_PARAM", err.Error())
+		writeError(w, r, http.StatusBadRequest, codeInvalidQuery, err.Error())
 		return
 	}
 
@@ -272,20 +272,20 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 
 	sendAsset, ok := asset.Lookup(from)
 	if !ok {
-		writeError(w, r, http.StatusBadRequest, "UNKNOWN_ASSET", fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, codeUnknownSendAsset, fmt.Sprintf(
 			"unknown send asset %q; verified assets are %s",
 			from, strings.Join(asset.KnownCodes(), ", ")))
 		return
 	}
 	recvAsset, ok := asset.Lookup(to)
 	if !ok {
-		writeError(w, r, http.StatusBadRequest, "UNKNOWN_ASSET", fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, codeUnknownReceiveAsset, fmt.Sprintf(
 			"unknown receive asset %q; verified assets are %s",
 			to, strings.Join(asset.KnownCodes(), ", ")))
 		return
 	}
 	if _, ok := asset.FiatPeg(recvAsset); !ok {
-		writeError(w, r, http.StatusBadRequest, "NO_FIAT_PEG", fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, codeNoFiatPeg, fmt.Sprintf(
 			"no verified fiat peg for %s, so there is no independent rate to score it against",
 			recvAsset.Code))
 		return
@@ -293,7 +293,7 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 
 	limit, err := parseTrendLimit(r.URL.Query().Get("limit"))
 	if err != nil {
-		writeError(w, r, http.StatusBadRequest, "BAD_LIMIT", err.Error())
+		writeError(w, r, http.StatusBadRequest, codeInvalidLimit, err.Error())
 		return
 	}
 
@@ -311,7 +311,7 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 	if s.Store != nil {
 		recent, err := s.Store.Recent(r.Context(), key, limit)
 		if err != nil {
-			writeError(w, r, http.StatusInternalServerError, "STORE_READ_ERROR", "reading stored history: "+err.Error())
+			writeError(w, r, http.StatusInternalServerError, codeStoreRead, "reading stored history: "+err.Error())
 			return
 		}
 		// Recent is newest first because its callers want the latest
@@ -329,7 +329,7 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 		// A stored divergence_pct that fails to parse is a corrupt record,
 		// not an absent observation — the correct output is an error, not a
 		// history that silently omits the bad run.
-		writeError(w, r, http.StatusInternalServerError, "DIVERGENCE_HISTORY_ERROR",
+		writeError(w, r, http.StatusInternalServerError, codeDivergenceHistory,
 			"computing reference-divergence history: "+err.Error())
 		return
 	}

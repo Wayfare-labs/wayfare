@@ -35,17 +35,17 @@ func (s *Server) handleChainHeads(w http.ResponseWriter, r *http.Request) {
 	if s.Store != nil {
 		corridors, err := s.Store.Corridors(r.Context())
 		if err != nil {
-			writeError(w, r, http.StatusInternalServerError, "STORE_READ_ERROR", "listing stored corridors: "+err.Error())
+			writeError(w, r, http.StatusInternalServerError, codeStoreRead, "listing stored corridors: "+err.Error())
 			return
 		}
 		for _, corridor := range corridors {
 			rec, err := s.Store.Latest(r.Context(), corridor)
 			if err != nil {
-				writeError(w, r, http.StatusInternalServerError, "STORE_READ_ERROR", "reading chain head for "+corridor+": "+err.Error())
+				writeError(w, r, http.StatusInternalServerError, codeStoreRead, "reading chain head for "+corridor+": "+err.Error())
 				return
 			}
 			if rec == nil {
-				writeError(w, r, http.StatusInternalServerError, "STORE_READ_ERROR", "store listed corridor "+corridor+" without a latest record")
+				writeError(w, r, http.StatusInternalServerError, codeStoreRead, "store listed corridor "+corridor+" without a latest record")
 				return
 			}
 			heads.Heads = append(heads.Heads, chainHeadJSON{
