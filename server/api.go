@@ -52,6 +52,8 @@ type Server struct {
 
 	// Timeout bounds a single corridor measurement. A full ladder is a
 	// dozen round trips to Horizon, so this is generous by HTTP standards.
+	// It is the ceiling: the budget a request actually gets is derived from
+	// its rung count (see budgetFor) and never exceeds this.
 	Timeout time.Duration
 
 	// Limiter bounds what each client can cost the service (issue #320). A
@@ -83,6 +85,28 @@ func (s *Server) timeout() time.Duration {
 		return s.Timeout
 	}
 	return 90 * time.Second
+}
+
+// Live-measurement budget: a fixed allowance for the reference rate and
+// checks, plus a per-rung allowance for the Horizon round trips. The twelve
+// default rungs come to 82s, inside the 90s default ceiling.
+const (
+	budgetBase    = 10 * time.Second
+	budgetPerRung = 6 * time.Second
+)
+
+// budgetFor derives the time a live measurement of n rungs may take, capped
+// at the server's Timeout, so adding rungs adds time instead of timing out a
+// valid request by construction.
+func (s *Server) budgetFor(n int) time.Duration {
+	if n <= 0 {
+		n = len(route.DefaultSizes)
+	}
+	b := budgetBase + time.Duration(n)*budgetPerRung
+	if ceiling := s.timeout(); b > ceiling {
+		return ceiling
+	}
+	return b
 }
 
 // Handler returns the routed handler for the whole service.
@@ -218,7 +242,13 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		// a first deploy with an empty chain should still answer.
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.timeout())
+	rungs := len(sizes)
+	if rungs == 0 {
+		rungs = len(route.DefaultSizes)
+	}
+	budget := s.budgetFor(rungs)
+	w.Header().Set("X-Measurement-Budget", budget.String())
+	ctx, cancel := context.WithTimeout(r.Context(), budget)
 	defer cancel()
 
 	res, err := s.Engine.Ladder(ctx, route.LadderRequest{
@@ -258,8 +288,21 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusBadGateway
 		code := codeMeasurementFailed
 		if errors.Is(err, context.DeadlineExceeded) {
-			status = http.StatusGatewayTimeout
-			code = codeUpstreamTimeout
+			completed := []string{}
+			if res != nil {
+				for _, d := range res.CompletedSizes() {
+					completed = append(completed, d.String())
+				}
+			}
+			writeJSON(w, r, http.StatusGatewayTimeout, map[string]any{
+				"error": fmt.Sprintf("measuring corridor: timed out after %s with %d of %d rungs completed",
+					budget, len(completed), rungs),
+				"code":            codeUpstreamTimeout,
+				"budget":          budget.String(),
+				"rungs_requested": rungs,
+				"rungs_completed": completed,
+			})
+			return
 		}
 		writeError(w, r, status, code, "measuring corridor: "+err.Error())
 		return

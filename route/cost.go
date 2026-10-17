@@ -114,10 +114,10 @@ func Decompose(q Quote, mid decimal.Decimal) CostDecomposition {
 	// normalised for denomination by sep38.Quote) can be wired here.
 	anchorFeeReason := "anchor fee not available; the anchor does not publish an ANCHOR_QUOTE_SERVER, so its fee cannot be obtained programmatically"
 	if q.Kind == KindAnchorSEP38 {
-		// TODO: extract anchor fee from a sep38.Quote when a corridor with
+		// anchor fee available via SEP-38 but corridor not yet wired in
 		// SEP-38 support is wired in. The sep38.Quote.FeeInBuyAsset field
 		// already carries the converted fee.
-		anchorFeeReason = "anchor fee available via SEP-38 but no corridor with a published quote server has been priced yet"
+		anchorFeeReason = "anchor fee available via SEP-38 but corridor not yet wired in"
 	}
 	parts = append(parts, CostPart{
 		Component:  CostAnchorFee,

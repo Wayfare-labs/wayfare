@@ -42,9 +42,12 @@ import (
 
 func main() {
 	var (
-		addr      = flag.String("addr", ":8080", "listen address")
-		horizon   = flag.String("horizon", "", "Horizon base URL (default: mainnet)")
-		timeout   = flag.Duration("timeout", 90*time.Second, "per-corridor measurement timeout")
+		addr    = flag.String("addr", defaultAddr(), "listen address (default follows $PORT when set)")
+		horizon = flag.String("horizon", "", "Horizon base URL (default: mainnet)")
+		timeout = flag.Duration("timeout", 90*time.Second,
+			"ceiling on a live measurement; the budget per request scales with rung count up to this")
+		shutdownGrace = flag.Duration("shutdown-grace", 30*time.Second,
+			"how long SIGTERM waits for in-flight requests before closing")
 		dataDir   = flag.String("data", envOr("WAYFARE_DATA_DIR", ""), "directory for the run store; empty disables history")
 		schedule  = flag.Duration("schedule", monitor.DefaultInterval, "measurement interval; 0 disables the scheduler")
 		serve     = flag.Bool("serve", true, "serve HTTP")
@@ -73,16 +76,6 @@ func main() {
 
 	logger := newLogger(*logLevel)
 	slog.SetDefault(logger)
-
-	// Most managed hosts assign a port at runtime and expect the process to
-	// bind whatever they put in $PORT. Honouring it only when -addr was left
-	// at its default keeps an explicit flag authoritative, which matters
-	// because a platform that quietly overrode an operator's choice would be
-	// the harder failure to diagnose.
-	if p := os.Getenv("PORT"); p != "" && *addr == ":8080" {
-		*addr = "0.0.0.0:" + p
-		logger.Info("binding the port assigned by the platform", "port", p)
-	}
 
 	store, err := openStore(*dataDir, logger)
 	if err != nil {
@@ -215,11 +208,7 @@ func main() {
 		go func() {
 			defer wg.Done()
 			<-ctx.Done()
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-				logger.Error("shutdown", "error", err)
-			}
+			shutdownServer(httpSrv, *shutdownGrace, logger)
 		}()
 
 		logger.Info("listening", "addr", *addr, "schedule", schedule.String(),
@@ -233,6 +222,27 @@ func main() {
 	}
 
 	wg.Wait()
+}
+
+// defaultAddr is the listen address when -addr is not given: the platform's
+// $PORT if set (Render, Fly and Heroku all assign one), else :8080. Being the
+// flag default rather than a post-parse override means an explicit -addr,
+// even -addr=:8080, always wins.
+func defaultAddr() string {
+	if p := os.Getenv("PORT"); p != "" {
+		return "0.0.0.0:" + p
+	}
+	return ":8080"
+}
+
+// shutdownServer stops accepting connections and waits up to grace for
+// in-flight requests, such as a live ladder, to finish.
+func shutdownServer(srv *http.Server, grace time.Duration, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("shutdown did not complete within the grace period", "grace", grace.String(), "error", err)
+	}
 }
 
 // openStore opens the run store, or returns a no-op store when history is off.
