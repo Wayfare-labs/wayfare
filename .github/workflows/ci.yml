@@ -137,7 +137,7 @@ jobs:
           # that follows is the very thing being blocked.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-          unshare -rn bash -c 'ip link set lo up 2>/dev/null; go test -count=1 ./...'
+          unshare -rn bash -c 'ip link set lo up 2>/dev/null; go test -count=3 -shuffle=on ./...'
 
   # The image is how the monitor actually runs. Building it only at deploy
   # time means it breaks at the least convenient moment.

@@ -46,7 +46,7 @@ offline-test: ## Run the test suite with no external network (mirrors the CI job
 	@# CI blocks ports 80 and 443 with iptables instead, which leaves the
 	@# ephemeral ports httptest uses untouched and reaches the same end.
 	$(GO) build $(PKGS)
-	unshare -rn bash -c 'ip link set lo up 2>/dev/null; $(GO) test -count=1 $(PKGS)'
+	unshare -rn bash -c 'ip link set lo up 2>/dev/null; $(GO) test -count=3 -shuffle=on $(PKGS)'
 
 docker-build: ## Build the container image (mirrors the CI job)
 	docker build -t $(IMAGE) .
