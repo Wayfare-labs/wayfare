@@ -84,8 +84,8 @@ ready_for_review, labeled, unlabeled, edited), `workflow_run` on CI completion,
 
 **What it can do.** It evaluates an open pull request against seven mechanical
 gates and, if all pass, enqueues a squash merge with the default token. It can
-label a PR `needs-maintainer-review`, add a comment, and — when it merges —
-close a linked issue that the merge body references.
+label a PR `needs-maintainer-review`, add a comment, and — when it merges — close
+a linked issue that the merge body references.
 
 **What it cannot do.** It never checks out or executes the PR head's code. It
 reads metadata through the GitHub API only — diff files, check-run state,
