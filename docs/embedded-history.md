@@ -51,7 +51,9 @@ asserts in CI that the embedded history loads and verifies.
 The clock is `.github/workflows/measure.yml`: every six hours it runs
 `wayfared -once -data ./data`, rotates any chain that has outgrown the window
 ceiling (`-rotate-store`), verifies the result, and commits the records back
-to `data/` in the repository. That is where new measurements go.
+to `data/` in the repository. That is where new measurements go — through one
+standing pull request from `automation/measure`, which accumulates sweeps
+until it is merged ([ADR 008](adr/008-why-measurements-stay-on-main.md)).
 
 The committed store is a **bounded window**, not the whole chain (ADR 007):
 each corridor keeps its newest 366 records (one quarter at this cadence), and
@@ -104,10 +106,17 @@ To get a figure measured now, ask for `?live=1`.
 As checked 2026-08-27 against the tree, the embedded `data/` holds one run
 per corridor (USDC-NGNC recorded 2026-08-22T12:09:59Z, USDC-GHSC recorded
 2026-08-22T12:10:05Z, USDC-KESC recorded 2026-08-22T12:10:09Z). The example
-above is the USDC-NGNC record as it would be served that day. The measure
-workflow's push failure ([#63](https://github.com/Wayfare-labs/wayfare/issues/63))
-means the served history has not advanced since then — see the README's
-"Try Wayfare" section for the live status.
+above is the USDC-NGNC record as it would be served that day.
+
+The measure workflow has landed no sweep since: first the push failure
+([#63](https://github.com/Wayfare-labs/wayfare/issues/63)), then the refusal
+to open a pull request
+([#555](https://github.com/Wayfare-labs/wayfare/issues/555)), which failed
+every scheduled run up to 2026-10-17. Both causes are addressed in
+`measure.yml`; the route it now takes needs the `MEASURE_TOKEN` secret
+described in [deployment.md](deployment.md#running-the-ci-path), and until a
+sweep merges the committed window is still the one record per corridor above.
+See the README's "Verification status" for where that stands.
 
 ## Related
 

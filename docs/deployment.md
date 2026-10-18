@@ -34,7 +34,7 @@ settings below exist to prevent it.
 
 **Scheduled CI** (`.github/workflows/measure.yml`) — a workflow measures every
 six hours and commits the hash-chained store back to the repository. No host,
-no bill, no credentials.
+no bill, and one repository secret ([below](#running-the-ci-path)).
 
 **A hosted instance** (the rest of this document) — serves the API and UI at a
 public URL, and measures on its own schedule.
@@ -47,7 +47,7 @@ They are not alternatives so much as different products. Pick on what you need:
 | History is publicly auditable | **yes — it is in the repo** | only via the running instance |
 | Live `/api/corridor` and UI | no | yes |
 | Cost | none | a few dollars a month |
-| Credentials to manage | none | a Fly account |
+| Credentials to manage | one repository secret (`MEASURE_TOKEN`) | a Fly account |
 
 The CI path has one genuine advantage over hosting, and it is not cost.
 **Anyone can clone the repository and run `wayfared -verify-store -data ./data`
@@ -63,13 +63,88 @@ guarantee.
 
 ### Running the CI path
 
-Nothing to configure. The workflow needs `contents: write`, which it declares,
-and runs on the repository's default token.
+**One secret, `MEASURE_TOKEN`, and nothing else.** The CI path used to
+advertise no credentials at all; that turned out to be the reason it did not
+work. [#555](https://github.com/Wayfare-labs/wayfare/issues/555) ran red on
+every scheduled sweep from 2026-08-22 to 2026-10-17 — *GitHub Actions is not
+permitted to create or approve pull requests* — and the setting that would
+silence that message is not sufficient on its own.
+
+#### The route, and why it is this one
+
+Measurements land on `main` through one standing pull request from
+`automation/measure`. [ADR 008](adr/008-why-measurements-stay-on-main.md)
+records why the data is not on a branch of its own instead.
+
+Opening that pull request needs a token that is **not** `GITHUB_TOKEN`, for two
+independent reasons:
+
+1. Without the repository setting *Allow GitHub Actions to create and approve
+   pull requests*, the API refuses the call outright.
+2. Events raised by `GITHUB_TOKEN` do not start workflow runs. A pull request
+   opened — or a head pushed — by `GITHUB_TOKEN` never gets a CI run, so the
+   checks `main` requires stay pending forever and the measurement can never
+   merge. Enabling the setting does not change this.
+
+The second reason is the one that decides it. The workflow checks out, pushes
+and calls `gh` as `secrets.MEASURE_TOKEN`.
+
+#### The token and its scope
+
+Either a **GitHub App installation token** (preferred — short-lived, bound to
+the installation, nothing to rotate by hand) or a **fine-grained personal
+access token**. Scoped to this repository only:
+
+| Permission | Level | What needs it |
+|:---|:---|:---|
+| Contents | read and write | pushing `automation/measure` |
+| Pull requests | read and write | opening and updating the standing pull request |
+
+Nothing else. In particular **not** Actions, Administration, Workflows, or any
+organization-level permission. Store it as the repository secret
+`MEASURE_TOKEN`. A fine-grained PAT expires; set a reminder, because an expired
+token presents as the same red run as a missing one — and the alert described
+below is what makes that visible.
+
+Why a scoped secret rather than the repository setting: the setting is
+ambient. It grants *every* workflow in the repository the ability to create and
+approve pull requests, including ones that run with a write token on
+`pull_request_target` — `auto-merge.yml` does. A secret is granted only to the
+workflow that names it, and is never available to a run from a fork.
+
+#### With the secret absent
+
+The workflow falls back to `GITHUB_TOKEN`. The sweep still measures, verifies
+and **pushes to `automation/measure`**, so no record is lost; it then fails on
+the pull request with an error naming this section. A fork that only wants the
+measurements in its own history needs nothing configured.
+
+#### What the branch does
+
+Every run fetches `automation/measure` and adopts its `data/` before
+measuring, so a sweep extends the chain the previous run left there rather
+than replacing it ([#556](https://github.com/Wayfare-labs/wayfare/issues/556)).
+The branch is then rewritten as one commit on top of `main` and force-pushed
+under a lease pinned to the SHA that run fetched: non-destructive, because the
+tree being pushed contains every record the branch carried, and a branch that
+moved under the run fails the push rather than overwriting whoever moved it.
+
+The inherited chain is verified before the sweep appends to it. A chain that
+does not verify is a **hard stop**, not a reason to start again from `main` —
+starting over would discard the pending sweeps, and appending would bury the
+break under later valid records.
 
 To measure on demand:
 
 ```bash
 gh workflow run measure --repo <owner>/<repo>
+```
+
+To see where the pipeline stands:
+
+```bash
+gh run list --workflow measure.yml --limit 5
+gh pr list --head automation/measure
 ```
 
 The chain is verified **before** anything is committed. A chain that does not
@@ -291,10 +366,26 @@ recorded, and `2` when the check itself could not run (unreadable store,
 non-positive `-max-age`). The checked set is the scheduler's expected
 corridors unioned with whatever the store holds, so a corridor whose history
 vanished fails exactly like a stale one: unknown is never a silent pass. A
-non-zero exit from either half should be made loud by the runner — the
-`measure` workflow carries an alert step that opens or updates a single
-tracking issue rather than emitting one new issue per failure (detection is
-idempotent; see [spike-alerting-semantics.md](spike-alerting-semantics.md)).
+non-zero exit from either half should be made loud by the runner.
+
+The `measure` workflow does this itself
+([#558](https://github.com/Wayfare-labs/wayfare/issues/558)): its last two
+steps keep **exactly one** tracking issue open while the sweep is failing, and
+close it on the next success.
+
+| | |
+|:---|:---|
+| Opens at | two consecutive failures — twelve hours, the same ceiling `-check-fresh` uses by default, and the point at which a gap stops being explainable by one transient upstream error |
+| Counts by | reading the workflow's own run conclusions back from the Actions API, so the count cannot drift from what happened. A success ends the streak; a cancelled or skipped run is stepped over rather than counted or treated as a reset |
+| Finds the issue by | a `<!-- measure-alert -->` marker in its body, not a title or a label — so a renamed issue is still found and a second one is never opened |
+| Updates | that issue's body, listing the most recent failing runs and where to look first |
+| Closes | on the next successful run, with a comment naming it |
+
+It uses `gh` and `GITHUB_TOKEN` with `issues: write`: no third-party action,
+and no state stored outside the issue itself. Detection stays idempotent in
+the sense [spike-alerting-semantics.md](spike-alerting-semantics.md) requires
+— the same state produces the same single issue however many times it is
+evaluated.
 
 ---
 
@@ -450,6 +541,8 @@ If checking manually without the script:
 - [embedded-history.md](embedded-history.md) — the deployed instance serves history embedded at build time; freshness depends on redeploys, not the scheduler
 - [upstream-failures.md](upstream-failures.md) — what each upstream failure shape means
 - [run-store.md](run-store.md) — the chain, and what verification proves
+- [ADR 008](adr/008-why-measurements-stay-on-main.md) — why the committed chain
+    is on `main` rather than a data branch, and what would reopen that
 - [verify-store.md](verify-store.md) — running `-verify-store`, exit codes, and what broken chains look like
 - [snapshot-format.md](snapshot-format.md) — recorded upstream bytes
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — project invariants
