@@ -506,3 +506,33 @@ func TestRecordedGapIsVerifiable(t *testing.T) {
 		t.Error("USDC-KESC Finding is empty; a gap must be explained")
 	}
 }
+
+// TestSweepCoversEveryRegisteredCorridor pins the sweep set to the registry.
+//
+// Every verified corridor destination in asset must appear in
+// DefaultCorridors(), so a newly registered corridor cannot be measured in
+// asset and silently skipped by the monitor. Removing a corridor from the
+// sweep makes this test fail.
+func TestSweepCoversEveryRegisteredCorridor(t *testing.T) {
+	sweep := make(map[string]Corridor)
+	for _, c := range DefaultCorridors() {
+		sweep[c.Receive.Code+":"+c.Receive.Issuer] = c
+	}
+
+	for _, e := range asset.Registry() {
+		if e.Code == "USDC" || e.Peg == "" {
+			// USDC is the settlement asset; every other registered entry
+			// with a peg is a corridor destination.
+			continue
+		}
+		key := e.Code + ":" + e.Issuer
+		c, ok := sweep[key]
+		if !ok {
+			t.Errorf("registered corridor %s is not in the monitor's sweep set", runstore.CorridorKey("USDC", e.Code))
+			continue
+		}
+		if c.ReferenceBase == "" || c.ReferenceQuote == "" {
+			t.Errorf("%s has no reference pair; it could not be scored", c.Key())
+		}
+	}
+}

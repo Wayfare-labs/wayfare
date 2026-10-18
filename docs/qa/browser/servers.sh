@@ -33,14 +33,18 @@ start() {
   echo "building $BIN"
   (cd "$ROOT" && go build -o "$BIN" ./cmd/wayfared)
 
-  : >"$PIDFILE"
-  setsid "$BIN" -schedule=0 -history-first -addr=127.0.0.1:8099 -log-level=warn \
+  local setsid_cmd=""
+  if command -v setsid >/dev/null 2>&1; then
+    setsid_cmd="setsid"
+  fi
+
+  $setsid_cmd "$BIN" -schedule=0 -history-first -addr=127.0.0.1:8099 -log-level=warn \
     >"$RUN_DIR/normal.log" 2>&1 &
   echo $! >>"$PIDFILE"
-  setsid "$BIN" -schedule=0 -addr=127.0.0.1:8098 -data "$RUN_DIR/empty" \
+  $setsid_cmd "$BIN" -schedule=0 -addr=127.0.0.1:8098 -data "$RUN_DIR/empty" \
     -horizon http://127.0.0.1:9 -log-level=warn >"$RUN_DIR/down.log" 2>&1 &
   echo $! >>"$PIDFILE"
-  setsid "$BIN" -schedule=0 -addr=127.0.0.1:8097 -data "$RUN_DIR/empty" \
+  $setsid_cmd "$BIN" -schedule=0 -addr=127.0.0.1:8097 -data "$RUN_DIR/empty" \
     -timeout=2s -horizon http://10.255.255.1:9 -log-level=warn >"$RUN_DIR/slow.log" 2>&1 &
   echo $! >>"$PIDFILE"
 

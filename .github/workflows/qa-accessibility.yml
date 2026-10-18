@@ -1,0 +1,70 @@
+# Re-run the accessibility audit (#273) on a schedule with the browser harness
+# and fail on new violations (issue #751).
+
+name: qa-accessibility
+
+on:
+  schedule:
+    # Run nightly at 03:00 UTC
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.22"
+  NODE_VERSION: "22"
+
+jobs:
+  accessibility:
+    name: WCAG accessibility audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: docs/qa/browser/package-lock.json
+
+      - name: install browser dependencies
+        run: |
+          cd docs/qa/browser
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: start test servers
+        run: |
+          ./docs/qa/browser/servers.sh start
+
+      - name: run accessibility audit
+        run: |
+          cd docs/qa/browser
+          npm run accessibility
+
+      - name: run contrast audit
+        run: |
+          cd docs/qa/browser
+          npm run contrast
+
+      - name: stop test servers
+        if: always()
+        run: |
+          ./docs/qa/browser/servers.sh stop
+
+      - name: upload accessibility results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: accessibility-audit-results
+          path: docs/qa/browser/results/accessibility.json
+          if-no-files-found: ignore

@@ -42,16 +42,24 @@ func (c Corridor) Key() string {
 	return runstore.CorridorKey(c.Send.Code, c.Receive.Code)
 }
 
-// DefaultCorridors are the three corridors of case study #1.
+// DefaultCorridors are every registered corridor destination.
 //
-// Each is included because it exhibits a different integrity state, so a
-// deployment measuring all three exercises the whole taxonomy continuously
-// rather than only the state that happens to be interesting today.
+// The sweep covers the whole registry so that no verified corridor is
+// measured in one place and served in another: a destination registered in
+// asset is a destination the monitor prices. The case-study trio (USDC-NGNC
+// DIRECT, USDC-GHSC DERIVATIVE, USDC-KESC NO-MARKET) still exercises each
+// integrity state, and the remaining registered corridors extend the same
+// coverage to every verified destination token.
 func DefaultCorridors() []Corridor {
 	return []Corridor{
 		{Send: asset.USDC(), Receive: asset.NGNC(), ReferenceBase: "USD", ReferenceQuote: "NGN"},
 		{Send: asset.USDC(), Receive: asset.GHSC(), ReferenceBase: "USD", ReferenceQuote: "GHS"},
 		{Send: asset.USDC(), Receive: asset.KESC(), ReferenceBase: "USD", ReferenceQuote: "KES"},
+		{Send: asset.USDC(), Receive: asset.NGNT(), ReferenceBase: "USD", ReferenceQuote: "NGN"},
+		{Send: asset.USDC(), Receive: asset.USDZ(), ReferenceBase: "USD", ReferenceQuote: "USD"},
+		{Send: asset.USDC(), Receive: asset.ZARZ(), ReferenceBase: "USD", ReferenceQuote: "ZAR"},
+		{Send: asset.USDC(), Receive: asset.EURMTL(), ReferenceBase: "USD", ReferenceQuote: "EUR"},
+		{Send: asset.USDC(), Receive: asset.PYUSD(), ReferenceBase: "USD", ReferenceQuote: "USD"},
 	}
 }
 

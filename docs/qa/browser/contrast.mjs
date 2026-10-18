@@ -38,18 +38,32 @@ const darkBlock = html.slice(html.indexOf('prefers-color-scheme: dark'));
 const lightTokens = parseTokens(lightBlock);
 const darkTokens = { ...lightTokens, ...parseTokens(darkBlock) };
 
-// Resolve a custom property through its var() chain to a hex literal.
-const hex = (scheme, name) => {
+// Resolve a custom property through its var() chain to a hex literal,
+// compositing rgba values over the panel background.
+const hex = (scheme, name, bgRef = '--panel') => {
   const tokens = scheme === 'dark' ? darkTokens : lightTokens;
   let value = tokens[name];
+  if (!value && name === '--availability-undetermined') {
+    value = tokens['--unknown'] || tokens['--neutral'];
+  }
   const seen = new Set();
-  while (value && !value.startsWith('#')) {
+  while (value && !value.startsWith('#') && !value.startsWith('rgba')) {
     const ref = value.match(/var\((--[a-z0-9-]+)/);
-    if (!ref || seen.has(ref[1])) return null; // unresolved or cyclic
+    if (!ref || seen.has(ref[1])) break;
     seen.add(ref[1]);
     value = tokens[ref[1]];
   }
-  return value && value.startsWith('#') ? value : null;
+  if (!value) return null;
+  if (value.startsWith('#')) return value;
+  const m = value.match(/rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)/);
+  if (m) {
+    const [r, g, b] = [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+    const alpha = parseFloat(m[4]);
+    const bgHex = hex(scheme, bgRef, null) || (scheme === 'dark' ? '#0F172A' : '#FFFFFF');
+    const bgRgb = rgb(bgHex);
+    return '#' + [r, g, b].map((c, i) => Math.round(c * alpha + bgRgb[i] * (1 - alpha)).toString(16).padStart(2, '0')).join('');
+  }
+  return null;
 };
 
 const rgb = (h) => {

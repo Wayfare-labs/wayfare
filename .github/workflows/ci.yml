@@ -26,10 +26,18 @@ permissions:
 # A construct accepted by one toolchain and rejected by another would have
 # shown up as a job disagreeing with its neighbours for reasons unrelated to
 # the change under test. Defining it once removes that failure mode, and keeps
-# CI honest about go.mod (go 1.22.2), the Dockerfile (golang:1.22-alpine) and
-# the "Go 1.22+" both README.md and CONTRIBUTING.md promise.
+# CI honest about go.mod (go 1.27), the Dockerfile (golang:1.27-alpine) and
+# the "Go 1.27+" README.md and CONTRIBUTING.md promise.
+#
+# Go 1.22 reached end of life and its standard library carried 22 HIGH/CRITICAL
+# advisories (net/http and crypto/tls sit on the service's trust boundary;
+# recorded rather than gated in SECURITY.md, measured 2026-09-25). Every fix is
+# on the 1.24, 1.25, 1.26 or 1.27 release line — none on 1.22 — so the
+# toolchain moves to a supported release in one place here (#564). This is a
+# deliberate decision, not a quiet bump: #467 deliberately returned CI to 1.22,
+# and staying there would keep carrying known-bad stdlib advisories.
 env:
-  GO_VERSION: "1.22"
+  GO_VERSION: "1.27.2"
 
 jobs:
   build:
@@ -91,16 +99,13 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      # v7 of the action is the first that installs golangci-lint v2, which
-      # is the schema .golangi.yml is written against. v6 installs the v1
-
-      # line and rejects the config outright.
-      #
-      # The version is pinned rather than tracking latest so the binary and
-      # the config cannot drift apart again without someone choosing to.
+      # Build from source with the configured Go toolchain: the prebuilt
+      # golangci-lint binary is built with an older Go version and rejects
+      # this module's Go 1.27.2 target.
       - uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.1.6
+          version: v2.15.0
+          install-mode: goinstall
 
   # Every test is meant to run from recorded bytes. snapshot.Replayer returns
   # ErrNotRecorded rather than falling through to the network, so a test that
@@ -151,7 +156,7 @@ jobs:
           # that follows is the very thing being blocked.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-          unshare -rn bash -c 'ip link set lo up 2>/dev/null; go test -count=1 ./...'
+          unshare -rn bash -c 'ip link set lo up 2>/dev/null; go test -count=3 -shuffle=on ./...'
 
   # The image is how the monitor actually runs. Building it only at deploy
   # time means it breaks at the least convenient moment.

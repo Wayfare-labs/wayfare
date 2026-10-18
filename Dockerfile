@@ -4,7 +4,7 @@
 # keys and moves no funds, but it does publish figures under Wayfare's name,
 # and the smallest possible surface is the cheapest way to keep it that way.
 
-FROM golang:1.22-alpine AS build
+FROM golang:1.27.2-alpine AS build
 
 WORKDIR /src
 

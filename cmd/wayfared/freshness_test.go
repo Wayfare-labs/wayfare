@@ -98,9 +98,15 @@ func TestCheckFreshAllCorridorsFresh(t *testing.T) {
 func TestCheckFreshStaleCorridorFails(t *testing.T) {
 	now := time.Now().UTC()
 	st := openFreshStore(t)
-	appendRecord(t, st, "USDC-NGNC", now.Add(-time.Hour))
-	appendRecord(t, st, "USDC-GHSC", now.Add(-72*time.Hour))
-	appendRecord(t, st, "USDC-KESC", now.Add(-time.Hour))
+	// Every registered corridor is expected by the sweep; one of them is
+	// stale, the rest fresh. A single stale corridor must fail the check.
+	for _, c := range monitor.DefaultCorridors() {
+		at := now.Add(-time.Hour)
+		if c.Key() == "USDC-GHSC" {
+			at = now.Add(-72 * time.Hour)
+		}
+		appendRecord(t, st, c.Key(), at)
+	}
 
 	var out string
 	code := captureExit(t, func() int {
@@ -115,7 +121,7 @@ func TestCheckFreshStaleCorridorFails(t *testing.T) {
 	if strings.Contains(out, "FAIL USDC-NGNC") {
 		t.Errorf("output flags a fresh corridor:\n%s", out)
 	}
-	if !strings.Contains(out, "1 of 3 corridors") {
+	if !strings.Contains(out, "1 of 8 corridors") {
 		t.Errorf("output missing failure tally:\n%s", out)
 	}
 }

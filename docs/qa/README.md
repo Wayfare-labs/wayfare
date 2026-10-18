@@ -23,6 +23,7 @@ findings in:
 | #272 QA both colour schemes | [`artifacts/272-color-schemes.md`](artifacts/272-color-schemes.md) |
 | #293 errors preserve the page | [`artifacts/293-error-preservation.md`](artifacts/293-error-preservation.md) |
 | #304 state legible without colour | [`artifacts/304-state-legibility.md`](artifacts/304-state-legibility.md) |
+| #751 scheduled accessibility re-audit | [`artifacts/751-scheduled-wcag-audit.md`](artifacts/751-scheduled-wcag-audit.md) |
 
 ## Setup
 
