@@ -464,7 +464,7 @@ Every `cmd/ladder` run also runs the same counterparty checks the server runs
 then carries no findings block — the difference is a flag the operator chose,
 not an accident of which binary produced the document.
 
-Go 1.22+. Dependencies: `shopspring/decimal` and `BurntSushi/toml` — exactly
+Go 1.27+. Dependencies: `shopspring/decimal` and `BurntSushi/toml` — exactly
 two, version-pinned, and enforced in CI so the surface cannot drift quietly
 ([docs/dependency-policy.md](docs/dependency-policy.md)). Both
 binaries need live network access — there are no cached figures to fall back
@@ -729,7 +729,7 @@ The full register — what this project refuses to build, and why, plus the
 | NGNC anchor lacks SEP-38 | Verified from live stellar.toml |
 | Corridor figures in docs/ | Measured, live Horizon strict-send, timestamped |
 | Recorded snapshots | Hash-verified on load; provenance refuses a dirty tree |
-| Container image scan | Run in CI on the image it has just built. Measured 2026-09-25: the image's own packages clean; the Go 1.22.12 standard library carried 22 `HIGH`/`CRITICAL` advisories, recorded rather than gated — see [SECURITY.md](SECURITY.md) |
+| Container image scan | Run in CI on the image it has just built. Measured 2026-09-25 on Go 1.22.12: the image's own packages clean; the standard library carried 22 `HIGH`/`CRITICAL` advisories, recorded rather than gated. Measured 2026-10-17 on Go 1.27.2: 0 `HIGH`/`CRITICAL` advisories — every fix is on the 1.24+ line, none on 1.22. See [SECURITY.md](SECURITY.md) |
 | SEP-38 fee identity | Verified against SEP-0038 spec text, pinned in golden files |
 | USDC issuer is Circle's | **Not yet verified** against circle.com stellar.toml |
 | Live SEP-38 round-trip | **Verified** — recorded fixture from testanchor.stellar.org in `sep38/testdata/live/` |

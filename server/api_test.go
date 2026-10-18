@@ -534,6 +534,36 @@ func TestHealthzFreshnessReported(t *testing.T) {
 	}
 }
 
+// TestHealthzFreshnessAdvancesAfterSweep is the issue #563 contract: a new
+// committed record (a sweep that lands on data/, then a redeploy) advances the
+// freshness block, so the served history stops being stale. Verified once here.
+func TestHealthzFreshnessAdvancesAfterSweep(t *testing.T) {
+	base := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendHealthRecord(t, st, "USDC-NGNC", base)
+
+	srv := freshnessServer(t, st, `{"core_ledger_seq": 1}`)
+	newest := func() string {
+		_, body := getJSON(t, srv.URL+"/healthz")
+		f, _ := body["freshness"].(map[string]any)
+		ts, _ := f["newest_record_at"].(string)
+		return ts
+	}
+	if got := newest(); got != base.Format(time.RFC3339) {
+		t.Errorf("before sweep newest_record_at = %v, want %s", got, base.Format(time.RFC3339))
+	}
+
+	// A sweep lands: a newer record for NGNT.
+	appendHealthRecord(t, st, "USDC-NGNT", base.Add(time.Hour))
+
+	if got := newest(); got != base.Add(time.Hour).Format(time.RFC3339) {
+		t.Errorf("after sweep newest_record_at = %v, want %s", got, base.Add(time.Hour).Format(time.RFC3339))
+	}
+}
+
 // TestHealthzFreshnessChainHeadUnknown covers the unknown half: Horizon
 // refusing the root lookup must null the field, never fill it with 0 — a
 // reader must not be able to mistake "unaskable" for "ledger zero". The

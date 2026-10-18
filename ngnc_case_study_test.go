@@ -637,7 +637,7 @@ func implementsMetric(t reflect.Type) bool {
 	if t.Implements(metric) {
 		return true
 	}
-	if t.Kind() != reflect.Interface && t.Kind() != reflect.Ptr {
+	if t.Kind() != reflect.Interface && t.Kind() != reflect.Pointer {
 		return reflect.PointerTo(t).Implements(metric)
 	}
 	return false

@@ -79,6 +79,31 @@ afterwards.
 
 ---
 
+### Redeploying when measurement data lands
+
+The hosted Render deployment serves history embedded at build time
+(`-schedule=0 -history-first`, docs/embedded-history.md), so a committed sweep
+does **not** freshen the served data by itself: it only reaches readers once a
+new image is deployed. `.github/workflows/deploy.yml` closes that gap — on
+every push to `data/` on `main` it calls Render's deploy hook, which builds and
+deploys a fresh image embedding the new `data/`.
+
+The hook is kept as the repository secret `RENDER_DEPLOY_HOOK` and is never
+logged: the workflow posts to it with `curl --silent` and never echoes the URL,
+and GitHub Actions redacts any secret that leaks into job output. Add the
+Render deploy hook URL as that secret in the repository settings; the workflow
+needs no other credentials.
+
+Between redeploys the instance serves the history embedded in the image it is
+running, so `/healthz`'s `freshness.newest_record_at` advances only when a
+data commit is deployed — check it after a sweep lands:
+
+```bash
+curl -s https://<app>.onrender.com/healthz | jq '.freshness.newest_record_at'
+```
+
+---
+
 ## First deploy
 
 ```bash
