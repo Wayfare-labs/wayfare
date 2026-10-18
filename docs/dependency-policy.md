@@ -65,15 +65,33 @@ together:
 3. The guard tests will fail until both move together — that is them
    working as intended, not a test to delete.
 
+## Automated updates
+
+Dependabot ([`.github/dependabot.yml`](../.github/dependabot.yml)) opens
+weekly, grouped pull requests for the three pinned surfaces: the GitHub
+Actions the workflows run (pinned by commit SHA), the two Go modules, and
+the container base images (pinned by tag and digest). It exists so a patch
+release, a moved action, or a rebuilt base image is surfaced rather than
+noticed by accident.
+
+An update is a proposal, not a move. Every update PR still passes the
+dependency-surface check described above: the guard tests parse `go.mod`
+and `go.sum` on every build, so a Go version bump that does not carry the
+matching `deps.go` and `DirectDependenciesPinned` changes fails CI until
+both move together. The auto-merge gate reads any `go.mod` or `go.sum`
+change as a dependency decision and routes it to a maintainer. Automation
+keeps the movement visible; taking it stays the human supply-chain call
+this policy describes.
+
 ## What is deliberately not done
 
 - **No vendoring.** `go.sum` already pins content hashes; a vendor tree
   would double the review surface without adding a guarantee.
 - **No tool-based pinning beyond go.mod.** `go.mod` + `go.sum` is Go's
   lockfile. Adding a second pinning format creates two places to disagree.
-- **No automated dependency updates.** Dependabot-style automation would
-  move the pin without a human arguing the supply-chain decision each
-  move represents. Bumps are small and manual on purpose.
+- **No automated application of dependency updates.** Dependabot opens the
+  pull request, but the pin only moves in a change a human has argued and
+  CI has checked. Bumps are small and deliberate on purpose.
 
 ---
 

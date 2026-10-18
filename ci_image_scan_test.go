@@ -45,7 +45,7 @@ func TestCIImageIsScannedForKnownVulnerabilities(t *testing.T) {
 		// between two runs of the same commit. The lint job pins its action
 		// for exactly this reason.
 		if !pinnedTrivyAction.MatchString(s.flat) {
-			t.Errorf("%s does not pin the action to a version", where)
+			t.Errorf("%s does not pin the action to a commit SHA", where)
 		}
 
 		// It must inspect the image this workflow built, not a registry tag
@@ -110,15 +110,13 @@ func TestCIImageIsScannedForKnownVulnerabilities(t *testing.T) {
 	}
 }
 
-// pinnedTrivyAction matches the action reference with an explicit version,
-// which rejects @master, @main and @latest.
-//
-// The leading `v` is required, not cosmetic: that is how this action tags its
-// releases (its container image, confusingly, is tagged without one). A
-// reference that merely looks like a version — `@0.36.0` against `v0.36.0` —
-// fails the job before a single scan runs, which is a failure mode worth a
-// test rather than a review.
-var pinnedTrivyAction = regexp.MustCompile(`aquasecurity/trivy-action@v\d+\.\d+\.\d+`)
+// pinnedTrivyAction matches the action reference pinned to a full commit
+// SHA, which rejects @master, @main, @latest and the movable version tags
+// the action publishes. The human-readable release is kept in a trailing
+// comment — note its leading `v`, which is how this action tags its releases
+// (its container image, confusingly, is tagged without one) — but the pin,
+// and what this test reads, is the SHA.
+var pinnedTrivyAction = regexp.MustCompile(`aquasecurity/trivy-action@[0-9a-f]{40}`)
 
 // scanStep is one workflow step that runs the container scanner: the text as
 // written, for a failure message a reader can act on, and the same text with

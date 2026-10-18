@@ -4,7 +4,11 @@
 # keys and moves no funds, but it does publish figures under Wayfare's name,
 # and the smallest possible surface is the cheapest way to keep it that way.
 
-FROM golang:1.27.2-alpine AS build
+# golang:1.27.2-alpine, pinned by digest so the same commit builds against the
+# same bytes. The tag stays in the reference — Dependabot's docker ecosystem
+# uses it to know which release to move to (.github/dependabot.yml) — and the
+# digest is what actually fixes the image.
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS build
 
 WORKDIR /src
 
@@ -22,7 +26,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w" \
     -o /out/wayfared ./cmd/wayfared
 
-FROM gcr.io/distroless/static-debian12:nonroot
+# gcr.io/distroless/static-debian12:nonroot, pinned by digest for the same
+# reason: a tag is a mutable pointer, and the runtime image is the artifact
+# the scans in CI describe.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 COPY --from=build /out/wayfared /wayfared
 
