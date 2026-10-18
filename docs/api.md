@@ -478,6 +478,51 @@ authenticate anyone.
 
 Reference rates are never averaged. The response identifies the provider and, when available, the second provider and divergence. `NO-MARKET` means no path was returned; it is not the same claim as a priced route with an `UNUSABLE` verdict.
 
+## API deprecation policy
+
+Breaking changes to wire shapes without notice break consumers that depend on published measurements. As established in the consumer spike (`docs/spike-api-consumers.md`), the contract's difficulty is not the schema, it is the discipline. This policy defines how endpoints and response fields are phased out.
+
+### Scope of changes
+
+- **Non-breaking (additive):** Introducing optional query parameters or new JSON response fields. Clients must ignore unknown JSON keys.
+- **Breaking:** Renaming or removing endpoints, query parameters, or response fields; changing field types; or modifying error code formats. Any breaking change must follow the full deprecation lifecycle below.
+
+### Deprecation lifecycle
+
+1. **Announcement:**
+   - Documented in the release notes of the version introducing the deprecation.
+   - A dedicated GitHub tracking issue opened under `area:api`.
+   - Updated status and timeline recorded in `docs/api.md`.
+
+2. **In-band signalling (`Deprecation` and `Sunset` headers):**
+   - Deprecated endpoints emit the standard `Deprecation` response header with the date or Unix timestamp representing when deprecation was announced:
+     ```http
+     Deprecation: @1760000000
+     ```
+   - When a definite retirement date is determined, responses also emit the `Sunset` header (RFC 8594) indicating the cutoff date after which the endpoint will be shut down:
+     ```http
+     Sunset: Wed, 11 Nov 2026 00:00:00 GMT
+     ```
+   - A `Link` header with `rel="deprecation"` points consumers to migration guidance:
+     ```http
+     Link: <https://github.com/Wayfare-labs/wayfare/blob/main/docs/api.md>; rel="deprecation"
+     ```
+
+3. **Minimum notice window:**
+   - **Endpoints and fields have a minimum deprecation window of 90 days** (or at least two minor release cycles, whichever is longer) before removal.
+   - During the notice window, the endpoint or field remains fully functional and continues returning real measurements. A deprecated field is never filled with fabricated or estimated numbers: unknown remains reported as unknown.
+
+4. **Removal:**
+   - At the sunset date, the deprecated endpoint or field is permanently removed.
+   - Requests to removed endpoints return HTTP `410 Gone` with a structured JSON error body:
+     ```json
+     {
+       "error": "this endpoint has been retired; refer to docs/api.md for current endpoints",
+       "code": "endpoint_deprecated"
+     }
+     ```
+   - Field removals drop the key from the JSON payload.
+
 ## Related contracts
 
 - [Reading the API correctly](api-consumer.md) — a worked consumer that
