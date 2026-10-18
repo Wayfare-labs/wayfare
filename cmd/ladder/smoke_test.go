@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -168,6 +169,63 @@ func TestReferenceProviderUnknown(t *testing.T) {
 	_, err := referenceProvider("bogus")
 	if err == nil {
 		t.Fatal("expected error for unknown provider, got nil")
+	}
+	wantPrefix := `unknown reference provider "bogus"; known: `
+	if !strings.HasPrefix(err.Error(), wantPrefix) {
+		t.Errorf("error %q should start with %q", err.Error(), wantPrefix)
+	}
+	for _, name := range refProviderNames() {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("error %q should list known provider %q", err.Error(), name)
+		}
+	}
+}
+
+func TestReferenceProviderCaseAndWhitespace(t *testing.T) {
+	ref, err := referenceProvider("  ExChAnGeRaTe-ApI  ")
+	if err != nil {
+		t.Fatalf("referenceProvider with mixed case/whitespace: %v", err)
+	}
+	if ref.provider == nil || ref.provider.Name() != "exchangerate-api" {
+		t.Fatalf("unexpected provider: %v", ref.provider)
+	}
+}
+
+func TestRefProviderNames(t *testing.T) {
+	names := refProviderNames()
+	if len(names) == 0 {
+		t.Fatal("refProviderNames() returned no providers")
+	}
+	expected := []string{"exchangerate-api", "currency-api"}
+	if len(names) != len(expected) {
+		t.Fatalf("got %d providers, want %d", len(names), len(expected))
+	}
+	for i, want := range expected {
+		if names[i] != want {
+			t.Errorf("refProviderNames()[%d] = %q, want %q", i, names[i], want)
+		}
+	}
+	for _, name := range names {
+		ref, err := referenceProvider(name)
+		if err != nil {
+			t.Errorf("referenceProvider(%q) failed: %v", name, err)
+		}
+		if ref.provider == nil {
+			t.Errorf("referenceProvider(%q) returned nil provider", name)
+		}
+	}
+}
+
+func TestRefHelp(t *testing.T) {
+	help := refHelp()
+	wantPrefix := "reference rate provider: "
+	if !strings.HasPrefix(help, wantPrefix) {
+		t.Errorf("refHelp() = %q, want prefix %q", help, wantPrefix)
+	}
+	for _, name := range refProviderNames() {
+		if !strings.Contains(help, name) {
+			t.Errorf("refHelp() = %q should contain provider %q", help, name)
+		}
 	}
 }
 
