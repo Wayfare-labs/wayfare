@@ -17,6 +17,56 @@
 # verifies; the dropped, older records remain in the repository's own git
 # history, which is the archive this workflow commits to. Measurement data
 # itself is never edited: only the two hash fields move.
+#
+# ---------------------------------------------------------------------------
+# How a sweep reaches main, and why it is shaped this way
+# ---------------------------------------------------------------------------
+#
+# Measurements land on main through one standing pull request. ADR 008 records
+# why — the committed chain is embedded into the binary at build time, so a
+# build has to be reproducible from one commit, and that rules out resolving
+# the data from a floating branch at build time.
+#
+# **The branch accumulates; it is never a fresh start (#556).** Every run
+# fetches `automation/measure` first and adopts its `data/` wholesale before
+# measuring, so a sweep extends the chain the previous run left there rather
+# than replacing it. The branch is then rewritten as exactly one commit on top
+# of main — a force push, but a non-destructive one, because every record that
+# was on the branch is in the tree being pushed. `--force-with-lease` is
+# pinned to the SHA this run actually fetched, so a branch that moved under us
+# fails the push instead of overwriting the writer we raced.
+#
+# The adopted chain is verified **before** this run appends to it. A chain
+# that does not verify is a hard stop, not something to start over from:
+# silently rebasing onto main would discard exactly the records #556 is about,
+# and appending to a broken chain buries the break under later valid records.
+#
+# **Creating the pull request needs a token that is not GITHUB_TOKEN (#555).**
+# Two independent reasons, and enabling the repository's "Allow GitHub Actions
+# to create and approve pull requests" setting only fixes the first:
+#
+#   1. Without that setting the API refuses outright — "GitHub Actions is not
+#      permitted to create or approve pull requests" — which is how every run
+#      from 2026-08-22 to 2026-10-17 ended.
+#   2. Events raised by GITHUB_TOKEN do not start workflow runs. A pull
+#      request opened (or a head pushed) by GITHUB_TOKEN never gets a CI run,
+#      so the checks main requires stay pending forever and the measurement
+#      can never merge.
+#
+# So the checkout, and therefore both the push and the `gh` calls, run as
+# `secrets.MEASURE_TOKEN` when it is configured — a GitHub App installation
+# token or a fine-grained PAT scoped to this repository's Contents (read and
+# write) and Pull requests (read and write), and nothing else. Scope and
+# rotation are documented in docs/deployment.md. With the secret absent the
+# workflow falls back to GITHUB_TOKEN and still pushes the branch, so no
+# measurement is lost; it then fails loudly on the pull request rather than
+# reporting a success nobody can merge.
+#
+# **A dead pipeline is now loud (#558).** Twelve consecutive failures produced
+# no signal anyone acted on. The last two steps open, update and close a
+# single tracking issue using `gh` and GITHUB_TOKEN — no third-party action,
+# and the consecutive-failure count is read back from the Actions API rather
+# than kept in state that can drift.
 
 name: measure
 
@@ -40,16 +90,105 @@ permissions:
   contents: write
   pull-requests: write
 
+  # The alert steps open, update and close one tracking issue. Without this
+  # scope they fail silently-ish at the end of an already-failing run, which
+  # is the exact failure mode #558 exists to remove.
+  issues: write
+
+env:
+  MEASURE_BRANCH: automation/measure
+  REPO: ${{ github.repository }}
+
+  # The alert opens at two consecutive failures rather than one. Two missed
+  # sweeps is twelve hours, which is also the default `-max-age` the staleness
+  # detector uses (`wayfared -check-fresh`): the point at which served data
+  # stops being explainable by one transient upstream error.
+  ALERT_THRESHOLD: "2"
+
+  # Identifies the tracking issue without depending on search indexing or on
+  # a label that may not exist. The auto-merge gate dedupes its own comments
+  # the same way.
+  ALERT_MARKER: "<!-- measure-alert -->"
+
 jobs:
   measure:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          # The branch is rewritten as one commit on top of main every run, so
+          # the push is never a fast-forward and a shallow clone cannot serve
+          # it.
+          fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+          # Persisted for the push and read by `gh` in the steps below. See
+          # the header: GITHUB_TOKEN can neither create the pull request nor
+          # cause CI to run on it.
+          token: ${{ secrets.MEASURE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.27.2"
           cache: true
+          cache-dependency-path: go.sum
+
+      # Adopt whatever the last run left unmerged, before measuring, so this
+      # sweep extends that chain instead of replacing it (#556).
+      - name: Adopt any unmerged measurements
+        run: |
+          set -euo pipefail
+
+          # What main already carries, so the pull request can say how many of
+          # the records on the branch are not yet merged.
+          # The subshell keeps an unmatched glob from aborting the step under
+          # `pipefail`: no corridor files is a count of zero, not a crash.
+          main_records=$( { cat data/*.ndjson 2>/dev/null || true; } | wc -l | tr -d ' ')
+          echo "MAIN_RECORDS=$main_records" >>"$GITHUB_ENV"
+          echo "main carries $main_records record(s)"
+
+          # Absent branch and unreachable remote are different answers, and
+          # only one of them means "start from main". `ls-remote` prints
+          # nothing and exits 0 when the ref does not exist; any non-zero exit
+          # is a real failure and must not be read as an empty branch.
+          remote_head=$(git ls-remote --heads origin "refs/heads/$MEASURE_BRANCH")
+          if [ -z "$remote_head" ]; then
+            echo "PENDING_SHA=" >>"$GITHUB_ENV"
+            echo "no $MEASURE_BRANCH on origin; this sweep starts from main"
+            exit 0
+          fi
+
+          git fetch --no-tags origin \
+            "+refs/heads/$MEASURE_BRANCH:refs/remotes/origin/$MEASURE_BRANCH"
+          pending=$(git rev-parse "refs/remotes/origin/$MEASURE_BRANCH")
+
+          # Recorded now, and the push is leased against it. If the branch
+          # moves between here and the push, the push is rejected rather than
+          # overwriting whoever moved it.
+          echo "PENDING_SHA=$pending" >>"$GITHUB_ENV"
+
+          if [ -z "$(git ls-tree -r --name-only "$pending" -- data)" ]; then
+            echo "::error::$MEASURE_BRANCH ($pending) carries no data/ — refusing to adopt a branch this workflow did not write. Delete the branch if it is not a pending sweep."
+            exit 1
+          fi
+
+          # Wholesale, not a merge: the branch is this workflow's own output
+          # and already contains every record main has, plus any sweep not yet
+          # merged. Removing data/ first means a corridor file deleted on the
+          # branch does not survive as a stale leftover from main.
+          rm -rf data
+          git checkout "$pending" -- data
+
+          # A chain that does not verify is a hard stop. Falling back to main
+          # would silently discard the pending sweeps — the loss #556 is
+          # about — and appending would bury the break under valid records.
+          if ! go run ./cmd/wayfared -verify-store -data ./data; then
+            echo "::error::the chain on $MEASURE_BRANCH ($pending) does not verify; refusing to extend it. Inspect the branch by hand: a measurement must never be appended to a broken chain, and must never be thrown away to get past one."
+            exit 1
+          fi
+
+          adopted=$( { cat data/*.ndjson 2>/dev/null || true; } | wc -l | tr -d ' ')
+          echo "adopted $adopted record(s) from $MEASURE_BRANCH ($pending)"
 
       - name: Measure corridors
         run: go run ./cmd/wayfared -once -data ./data
@@ -68,19 +207,236 @@ jobs:
       - name: Verify the chain
         run: go run ./cmd/wayfared -verify-store -data ./data
 
+      - name: Commit and push the sweep
+        id: push
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- data; then
+            echo "pushed=false" >>"$GITHUB_OUTPUT"
+            echo "the sweep produced no new records; nothing to push"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- data
+          git commit --quiet \
+            -m "measure: corridor sweep ${GITHUB_RUN_ID}" \
+            -m "Every record the branch already carried is in this commit; the chain was verified before it was written."
+
+          total=$( { cat data/*.ndjson 2>/dev/null || true; } | wc -l | tr -d ' ')
+          unmerged=$((total - MAIN_RECORDS))
+
+          {
+            echo "pushed=true"
+            echo "total=$total"
+            echo "unmerged=$unmerged"
+            echo 'corridors<<CORRIDORS'
+            for f in data/*.ndjson; do
+              [ -e "$f" ] || continue
+              printf -- '- `%s` — %s record(s), newest `%s`\n' \
+                "$f" \
+                "$(wc -l <"$f" | tr -d ' ')" \
+                "$(tail -n 1 "$f" | sed -n 's/.*"recorded_at":"\([^"]*\)".*/\1/p')"
+            done
+            echo CORRIDORS
+          } >>"$GITHUB_OUTPUT"
+
+          # Leased against the SHA this run fetched. The force is what lets
+          # the branch be one commit on top of a main that has moved; the
+          # lease is what stops it being the data loss of #556.
+          if [ -n "${PENDING_SHA:-}" ]; then
+            git push --force-with-lease="$MEASURE_BRANCH:$PENDING_SHA" \
+              origin "HEAD:refs/heads/$MEASURE_BRANCH"
+          else
+            git push origin "HEAD:refs/heads/$MEASURE_BRANCH"
+          fi
+
+          echo "pushed $total record(s) to $MEASURE_BRANCH, $unmerged of them not yet on main"
+
       # Main is protected by a pull-request ruleset. Keep measurements subject
       # to the same required checks as code changes instead of pushing around
       # that protection from the scheduled workflow.
-      - name: Open measurement pull request
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          branch: automation/measure
-          delete-branch: true
-          add-paths: data/
-          commit-message: "measure: corridor sweep ${{ github.run_id }}"
-          title: "measure: corridor sweep ${{ github.run_id }}"
-          body: |
-            Automated corridor measurement generated by the scheduled measure workflow.
+      #
+      # One standing pull request, not one per sweep: while it waits for
+      # review the branch keeps accumulating and this step updates the body it
+      # already opened.
+      - name: Open or update the measurement pull request
+        if: steps.push.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.MEASURE_TOKEN || secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TOTAL: ${{ steps.push.outputs.total }}
+          UNMERGED: ${{ steps.push.outputs.unmerged }}
+          CORRIDORS: ${{ steps.push.outputs.corridors }}
+        run: |
+          set -euo pipefail
 
-            The store was verified before this pull request was opened.
+          title="measure: corridor sweeps awaiting merge"
+
+          existing=$(gh pr list --repo "$REPO" --head "$MEASURE_BRANCH" \
+            --base main --state open --json number --jq '.[0].number // empty')
+
+          # The sweeps already listed on the open pull request, newest first,
+          # so the body says which runs the branch is carrying rather than
+          # only the latest. awk rather than grep: no match is an ordinary
+          # answer here, not a failure for `pipefail` to trip on.
+          previous=""
+          if [ -n "$existing" ]; then
+            previous=$(gh pr view "$existing" --repo "$REPO" --json body --jq '.body // ""')
+          fi
+          earlier=$(printf '%s\n' "$previous" \
+            | awk -v cur="- $RUN_URL" '/^- https?:\/\// && $0 != cur' \
+            | head -n 19)
+
+          {
+            echo "Automated corridor measurement from the scheduled measure workflow."
+            echo
+            echo "**The chain was verified before this branch was pushed.** It carries"
+            echo "$TOTAL record(s), $UNMERGED of which are not yet on \`main\`."
+            echo
+            echo "$CORRIDORS"
+            echo
+            echo "### Sweeps on this branch"
+            echo
+            echo "- $RUN_URL"
+            if [ -n "$earlier" ]; then echo "$earlier"; fi
+            echo
+            echo "Each run adopts this branch's \`data/\` before measuring, so a sweep that"
+            echo "lands here while the pull request waits for review extends the chain"
+            echo "rather than replacing it. Merging is what moves these records to \`main\`;"
+            echo "nothing is lost by waiting."
+          } >"$RUNNER_TEMP/measure-pr.md"
+
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --repo "$REPO" \
+              --title "$title" --body-file "$RUNNER_TEMP/measure-pr.md"
+            echo "updated the open measurement pull request #$existing"
+            exit 0
+          fi
+
+          if out=$(gh pr create --repo "$REPO" --base main --head "$MEASURE_BRANCH" \
+                     --title "$title" --body-file "$RUNNER_TEMP/measure-pr.md" 2>&1); then
+            echo "$out"
+            exit 0
+          fi
+
+          echo "$out" >&2
+          if printf '%s' "$out" | grep -qi "not permitted to create or approve pull requests"; then
+            echo "::error::the API refused to open the pull request. The records are safe on $MEASURE_BRANCH and the next run will extend them, but nothing reaches main until a human merges. Fix: configure the MEASURE_TOKEN secret (GitHub App installation token or fine-grained PAT, Contents read+write and Pull requests read+write on this repository). See docs/deployment.md, 'Running the CI path'."
+          fi
+          exit 1
+
+      # ---------------------------------------------------------------------
+      # Alerting (#558)
+      #
+      # A red run is only a signal if somebody sees it, and twelve in a row
+      # produced nothing anybody acted on. These two steps keep exactly one
+      # issue open while the workflow is failing and close it on the next
+      # success. Idempotent by construction: the issue is found by a marker in
+      # its body, and the consecutive-failure count is read back from the
+      # Actions API rather than carried in state that can drift.
+      # ---------------------------------------------------------------------
+      - name: Alert on repeated failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          THIS_RUN: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          # This run has failed and is not yet recorded as completed, so it is
+          # counted here and excluded from the history below.
+          streak=1
+          conclusions=$(gh api \
+            "repos/$REPO/actions/workflows/measure.yml/runs?status=completed&per_page=100" \
+            --jq '.workflow_runs[] | select((.id|tostring) != env.THIS_RUN) | .conclusion')
+
+          # Newest first. A success ends the streak; a cancelled or skipped run
+          # is neither a failure nor evidence of recovery, so it is stepped
+          # over rather than counted or treated as a reset.
+          while IFS= read -r conclusion; do
+            case "$conclusion" in
+              success) break ;;
+              failure|timed_out|startup_failure) streak=$((streak + 1)) ;;
+              *) ;;
+            esac
+          done <<<"$conclusions"
+
+          echo "measure has failed $streak time(s) in a row"
+          if [ "$streak" -lt "$ALERT_THRESHOLD" ]; then
+            echo "::notice::below the alert threshold of $ALERT_THRESHOLD consecutive failures; not opening an issue"
+            exit 0
+          fi
+
+          # Found by marker, not by title or label: a title can be edited and
+          # a label may not exist, and either would silently open a second
+          # issue. Pull requests are issues to this endpoint, so they are
+          # filtered out.
+          number=$(gh api "repos/$REPO/issues?state=open&per_page=100" \
+            --jq '[.[] | select(has("pull_request") | not)
+                       | select((.body // "") | contains(env.ALERT_MARKER))]
+                  | .[0].number // empty')
+
+          previous=""
+          if [ -n "$number" ]; then
+            previous=$(gh api "repos/$REPO/issues/$number" --jq '.body // ""')
+          fi
+          earlier=$(printf '%s\n' "$previous" \
+            | awk -v cur="- $RUN_URL" '/^- https?:\/\// && $0 != cur' \
+            | head -n 9)
+
+          {
+            echo "$ALERT_MARKER"
+            echo "The scheduled \`measure\` workflow has failed **$streak time(s) in a row**."
+            echo "No corridor measurement has reached \`main\` since the last success."
+            echo
+            echo "This issue is maintained by the workflow itself: it is updated on each"
+            echo "further failure and closed automatically on the next successful run."
+            echo
+            echo "### Failing runs"
+            echo
+            echo "- $RUN_URL"
+            if [ -n "$earlier" ]; then echo "$earlier"; fi
+            echo
+            echo "### Where to look first"
+            echo
+            echo "- \`gh run view --log-failed\` on the run above — the step that failed names the cause."
+            echo "- A refused pull request means \`MEASURE_TOKEN\` is missing or its scope lapsed (docs/deployment.md, 'Running the CI path')."
+            echo "- A rejected push means \`$MEASURE_BRANCH\` moved under the run; inspect the branch before re-running."
+            echo "- A chain that does not verify is a hard stop by design — do not delete the branch to get past it."
+          } >"$RUNNER_TEMP/measure-alert.md"
+
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --repo "$REPO" --body-file "$RUNNER_TEMP/measure-alert.md"
+            echo "updated the open measure alert #$number"
+          else
+            gh issue create --repo "$REPO" \
+              --title "measure: the scheduled corridor sweep is failing" \
+              --body-file "$RUNNER_TEMP/measure-alert.md"
+          fi
+
+      - name: Clear the failure alert
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          number=$(gh api "repos/$REPO/issues?state=open&per_page=100" \
+            --jq '[.[] | select(has("pull_request") | not)
+                       | select((.body // "") | contains(env.ALERT_MARKER))]
+                  | .[0].number // empty')
+
+          if [ -z "$number" ]; then
+            echo "no open measure alert to clear"
+            exit 0
+          fi
+
+          gh issue comment "$number" --repo "$REPO" \
+            --body "The scheduled sweep succeeded again: $RUN_URL. Closing — the workflow reopens this issue if it starts failing again."
+          gh issue close "$number" --repo "$REPO" --reason completed
+          echo "closed the measure alert #$number"
