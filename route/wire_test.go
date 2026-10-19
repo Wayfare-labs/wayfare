@@ -48,6 +48,48 @@ func TestToQuoteJSONNilIsNil(t *testing.T) {
 // DEX-priced rung and asserts the kind survives all the way to both the
 // per-rung quote and the recommended quote on the rendered CorridorJSON —
 // the actual shape a client reads over HTTP.
+func TestToCorridorJSONCarriesPathCount(t *testing.T) {
+	send, recv := asset.USDC(), asset.NGNC()
+	q := Quote{
+		Kind:          KindDEX,
+		Description:   "USDC -> NGNC",
+		Source:        "stellar-dex",
+		SendAsset:     send,
+		SendAmount:    decimal.RequireFromString("100"),
+		ReceiveAsset:  recv,
+		ReceiveAmount: decimal.RequireFromString("129000"),
+		EffectiveRate: decimal.RequireFromString("1290"),
+		LossPct:       decimal.RequireFromString("4.46"),
+		Verdict:       VerdictFair,
+		PathCount:     3,
+		QuotedAt:      time.Now(),
+	}
+
+	lr := &LadderResult{
+		Request: LadderRequest{SendAsset: send, ReceiveAsset: recv, ReferenceBase: "USD", ReferenceQuote: "NGN"},
+		Rungs: []Rung{{
+			SendAmount: decimal.RequireFromString("100"),
+			Result:     &Result{Quotes: []Quote{q}, Integrity: IntegrityDirect},
+		}},
+		Integrity:       IntegrityDirect,
+		ReferenceMid:    decimal.RequireFromString("1350"),
+		ReferenceSource: "exchangerate-api",
+		Recommended:     &q,
+		RecommendedSize: decimal.RequireFromString("100"),
+	}
+
+	out := ToCorridorJSON(lr, "USD/NGN")
+	if got := out.Rungs[0].PathCount; got != 3 {
+		t.Fatalf("rung path_count = %d, want 3", got)
+	}
+	if out.Rungs[0].Quote == nil || out.Rungs[0].Quote.PathCount != 3 {
+		t.Fatalf("rung quote path_count = %+v, want 3", out.Rungs[0].Quote)
+	}
+	if out.Recommended == nil || out.Recommended.PathCount != 3 {
+		t.Fatalf("recommended path_count = %+v, want 3", out.Recommended)
+	}
+}
+
 func TestToCorridorJSONPropagatesQuoteKind(t *testing.T) {
 	send, recv := asset.USDC(), asset.NGNC()
 	q := Quote{

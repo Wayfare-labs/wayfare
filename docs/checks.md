@@ -205,7 +205,7 @@ class as the verdict thresholds, and it needs its components to exist first.
 ## Whose failure is it? — learned from implementing
 
 A transport error means different things depending on **who published the
-address**, and the three reference checks split on exactly this:
+address**, and the reference checks split on exactly this:
 
 | Situation | Result | Why |
 |:---|:---|:---|
@@ -236,10 +236,10 @@ blame issuers for Horizon outages.
 
 ---
 
-## The three reference checks
+## The reference checks
 
-Deliberately structurally different, so implementing them tests the contract
-rather than one shape of it:
+The first three were deliberately structurally different, so that implementing
+them tested the contract rather than one shape of it:
 
 | Check | Kind | Why this one |
 |:---|:---|:---|
@@ -248,7 +248,25 @@ rather than one shape of it:
 | `issuer.auth-flags` | on-chain, `CostOneRequest` | `AUTH_REQUIRED`, `AUTH_REVOCABLE`, clawback — these determine whether a payment can be blocked or reversed, which is the most consequential thing a check can report |
 
 If implementing the third shows the contract is wrong, the contract changes —
-that is why three exist before the backlog does.
+that is why three existed before the backlog did. It did not need to change, so
+the set grew to seven, which is what `checks.Runner.Default()` returns today:
+
+| Check | Scope | Cost | Severity |
+|:---|:---|:---|:---|
+| `toml.anchor-asset-iso4217` | asset | free | notice |
+| `sep10.endpoint-responds` | anchor | one-request | warning |
+| `sep24.info-lists-asset` | asset | one-request | notice |
+| `sep38.quote-server-published` | anchor | free | notice |
+| `issuer.auth-flags` | asset | one-request | critical |
+| `issuer.auth-immutable` | asset | one-request | info |
+| `toml.home-domain-roundtrip` | asset | expensive | notice |
+
+`checks/issuer_drift.go` also implements `Check` (`issuer.drift`) and is **not**
+in the default set, so it does not run on a sweep.
+
+**Writing one.** [docs/adding-a-check.md](adding-a-check.md) walks the whole
+path for a new check — ID, scope, subject fields, evidence, the tests CI runs,
+and the line in `Runner.Default()` that makes it reach a reader.
 
 ---
 
@@ -265,6 +283,10 @@ that is why three exist before the backlog does.
 
 ## Related
 
+- [adding-a-check.md](adding-a-check.md) — the worked example: writing a new
+  check from an empty file to a registered one
+- [adding-a-metric.md](adding-a-metric.md) — the same, for quantities, and why
+  a metric is not reachable yet
 - [glossary.md](glossary.md) — every state a reader can meet, including the
   three-valued check result and severity levels
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — project invariants

@@ -1,6 +1,7 @@
 # HTTP API reference
 
-**Status:** implemented in the repository as of 2026-08-27. This document describes the handlers and wire fields present in `server/` at that date. It does not describe roadmap capabilities.
+**Status:** implemented API contracts, including `GET /api/chain-heads` added
+2026-09-26. This document does not describe roadmap capabilities.
 
 All endpoints are read-only. The service does not hold funds, issue tokens, sign transactions, or execute payments.
 
@@ -9,12 +10,15 @@ All endpoints are read-only. The service does not hold funds, issue tokens, sign
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/corridor` | Measure or retrieve one corridor |
+| `GET` | `/api/corridor/stream` | Measure one corridor, streaming per-rung progress as Server-Sent Events |
 | `GET` | `/api/corridor/trend` | Read stored measurements for a corridor |
+| `GET` | `/api/chain-heads` | Publish the current hash-chain tip for each stored corridor |
 | `GET` | `/api/assets` | List verified assets configured in the binary |
+| `GET` | `/api/market-structure` | Identify shared issuer dependencies across corridors |
 | `GET` | `/healthz` | Return service health |
 | `GET` | `/` | Serve the embedded single-file UI |
 
-Unsupported methods return `405`. JSON errors have the shape `{ "error": "..." }`.
+Unsupported methods return `405`. Requests beyond the per-client rate limit return `429` with a `Retry-After` header (seconds) and the error code `rate_limited` (see [Rate limiting](#rate-limiting)). JSON errors have the shape `{ "error": "...", "code": "..." }`; the machine-readable codes are the contract and are enumerated in [errors.md](errors.md).
 
 ## `GET /api/corridor`
 
@@ -49,7 +53,7 @@ Each rung includes `send_amount`, `priced`, `integrity`, optional `quote`, notes
 
 - `marginal_cost` — the change in effective receive-asset cost from the previous valid priced rung.
 - `marginal_from` and `marginal_to` — the valid ladder sizes defining that marginal measurement.
-- `cost` — the available cost decomposition.
+- `cost` — the available cost decomposition (see [cost-decomposition.md](cost-decomposition.md)).
 
 The first valid priced rung has no marginal cost. Missing rungs are skipped, never treated as zero. The current marginal classification is available on the internal ladder result as `improving`, `flat`, `worsening`, or `undetermined`; fewer than two valid priced points are undetermined.
 
@@ -191,6 +195,59 @@ curl -s "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC&sizes=
 }
 ```
 
+## `GET /api/corridor/stream`
+
+The same corridor measurement as `GET /api/corridor`, but reported as it
+happens. A live ladder is a dozen round trips to Horizon and can take 30–90
+seconds; this endpoint sends each rung as it resolves instead of blocking until
+the whole ladder is finished, so a client can show progress and partial results.
+
+Query parameters are identical to `GET /api/corridor` (`from`, `to`, `sizes`),
+minus `live` — a stream is always a live measurement. Validation and failure
+policy are shared with the JSON endpoint: a malformed request is refused with the
+same JSON error and code before the stream opens, and a live failure that has
+stored history to fall back on serves the same stale envelope.
+
+The response is `Content-Type: text/event-stream`. Events are separated by a
+blank line and named:
+
+| Event | Data |
+|---|---|
+| `start` | `{ "corridor", "total_rungs", "budget", "reference_pair" }` — sent once, when the ladder begins |
+| `rung` | `{ "index", "total", "rung" }` — one rung, in the same wire shape the JSON response uses for that rung; sent as each size resolves, and not necessarily in index order |
+| `final` | The complete corridor document — the same body `GET /api/corridor?live=1` would have returned, produced by the same conversion |
+| `error` | The same `{ "error", "code", ... }` body the JSON endpoint sends on failure |
+| `done` | `{ "status": <http status> }` — always the last event |
+
+```sh
+curl -N "https://wayfare-cdb9.onrender.com/api/corridor/stream?from=USDC&to=NGNC&sizes=10,100,500"
+```
+
+```
+: wayfare live measurement
+
+event: start
+data: {"budget":"44s","corridor":"USDC-NGNC","reference_pair":"USD/NGN","total_rungs":3}
+
+event: rung
+data: {"index":0,"rung":{...},"total":3}
+
+event: final
+data: {...}
+
+event: done
+data: {"status":200}
+```
+
+The number of concurrent streams one instance will hold open is bounded; beyond
+it the request is refused immediately with `503` and code `too_many_streams`
+(see [errors.md](errors.md)) rather than queued. The per-client rate limit
+applies to opening a stream like any other request. A client that disconnects
+cancels the ladder: the server ties the measurement to the request context, so
+navigating away ends the round trips rather than letting them run to completion.
+
+---
+
 ## `GET /api/corridor/trend`
 
 Query parameters:
@@ -200,6 +257,15 @@ Query parameters:
 - `limit` — positive whole number; defaults to 100 and is capped at 500.
 
 This endpoint reads stored history only; it never measures. It returns `200` with `count: 0` and `runs: []` for an empty history. Runs are returned oldest first. Each run carries its sequence, timestamp, integrity, dependencies, reference details, ladder summary, finding, and rung loss/verdict values.
+
+`integrity_transitions` is an always-present array of structural changes
+between consecutive runs in that returned window, in chronological order. A
+change in integrity state (for example, `DIRECT` to `DERIVATIVE` or
+`DERIVATIVE` to `NO-MARKET`) is included, as is a `depends_on` change while
+remaining `DERIVATIVE`. A pair involving `UNKNOWN` is omitted: it cannot
+establish that structure changed. An empty array means no such transition was
+established in the window. The series is descriptive and does not alter a
+verdict or integrity state.
 
 **cURL:**
 
@@ -235,6 +301,58 @@ curl -s "https://wayfare-cdb9.onrender.com/api/corridor/trend?to=NGNC&limit=7"
         {"send_amount": "0.1", "priced": true, "loss_pct": "27.15", "verdict": "UNUSABLE"},
         {"send_amount": "5000", "priced": true, "loss_pct": "97.52", "verdict": "UNUSABLE"}
       ]
+    }
+  ]
+}
+```
+
+## `GET /api/chain-heads`
+
+Returns the current stored hash-chain tip for every corridor, sorted by
+corridor key. This endpoint is read-only and does not measure. Each entry
+contains:
+
+**Query parameter:** `pretty=1` is optional and indents the JSON response for
+humans.
+
+Each item in `heads` contains:
+
+- `corridor` — stable corridor key, such as `USDC-NGNC`.
+- `seq` — sequence number of the current tip.
+- `recorded_at` — the tip record's UTC timestamp in RFC 3339 form.
+- `hash` — the full SHA-256 record hash, including its `sha256:` prefix.
+
+An empty or unconfigured store returns `200` with `heads: []`. The endpoint
+does not sign the response or provide a trusted timestamp: a third party should
+retain the returned hash and the time and source at which it observed it. The
+hash is a pin for comparing later observations, not proof that the underlying
+measurement was correct or that the publisher included every scheduled run.
+To establish that a later chain still contains a pinned head, the reader must
+obtain the corresponding NDJSON history from the repository's
+[committed data](../data/) and verify its links; this endpoint publishes the
+tip only and does not return per-record proofs.
+
+At present, the committed store is a rolling window. When rotation trims a
+corridor, its surviving records are re-sealed from a new window head, so its
+published tip hash changes and is not a continuation of the previously pinned
+chain. See [ADR 007](adr/007-why-the-committed-chain-is-a-rolling-window.md).
+
+**cURL:**
+
+```bash
+curl -s https://wayfare-cdb9.onrender.com/api/chain-heads
+```
+
+**Example Response (200 OK):**
+
+```json
+{
+  "heads": [
+    {
+      "corridor": "USDC-NGNC",
+      "seq": 1,
+      "recorded_at": "2026-08-22T12:09:59Z",
+      "hash": "sha256:424b33fcf1202487e493e905a7710247489ccd4d943eb182ce6f0f4f0fb4144f"
     }
   ]
 }
@@ -280,7 +398,49 @@ curl -s https://wayfare-cdb9.onrender.com/api/assets
       "can_be_destination": true
     }
   ]
+}
 ```
+
+## `GET /api/market-structure`
+
+Returns issuer concentrations — cases where a single issuer backs multiple corridor destination tokens. This is a structural fact about the corridor set, not a measurement, and it does not change between runs.
+
+Query parameters:
+
+- `pretty=1` — optional; pretty-print the JSON response.
+
+A successful response contains:
+
+- `issuer_concentrations` — map of issuer account ID to the list of corridor asset codes it issues. Only issuers with two or more corridors are included.
+- `corridor_count` — total number of registered corridor destinations (assets with a fiat peg, excluding USDC).
+- `concentrated_corridor_count` — number of corridors that share an issuer with at least one other corridor.
+- `generated_at` — RFC3339 timestamp when this analysis was produced.
+
+**cURL:**
+
+```bash
+curl -s https://wayfare-cdb9.onrender.com/api/market-structure
+curl -s https://wayfare-cdb9.onrender.com/api/market-structure?pretty=1
+```
+
+**Example Response (200 OK):**
+
+```json
+{
+  "issuer_concentrations": {
+    "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6": [
+      "GHSC",
+      "KESC",
+      "NGNC"
+    ]
+  },
+  "corridor_count": 8,
+  "concentrated_corridor_count": 3,
+  "generated_at": "2026-08-27T12:00:00Z"
+}
+```
+
+In the current registry, LinkIOIssuer (`GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6`) backs three corridors: NGNC (naira), GHSC (Ghanaian cedi), and KESC (Kenyan shilling). This concentration is a market-structure fact — if that issuer fails, all three corridors fail together.
 
 ## `GET /healthz`
 
@@ -288,16 +448,86 @@ A healthy service returns status `200` with:
 
 **cURL:**
 ```bash
-curl -s https://wayfare-cdb9.onrender.com/healthz 
+curl -s https://wayfare-cdb9.onrender.com/healthz
 ```
 
 **Example Response (200 OK):**
 
 ```json
-{ "status": "ok" }
+{
+  "status": "ok",
+  "data": {
+    "USDC-NGNC": {
+      "recorded_at": "2026-09-26T08:00:00Z",
+      "age_seconds": 45,
+      "age_human": "45s"
+    }
+  },
+  "freshness": {
+    "chain_head": 55101724,
+    "newest_record_at": "2026-09-26T08:00:00Z",
+    "record_count": 431
+  }
+}
 ```
 
+`data` maps each corridor that has stored history to its newest run and the
+age of that run; a corridor with no stored run is omitted rather than
+reported as fresh, and the whole field is `null` when no history is
+configured.
+
 This endpoint checks that the HTTP service is responding. It does not perform a live corridor measurement or validate upstream availability.
+
+### Freshness fields
+
+`freshness` describes how current the recorded data is, so a consumer can tell
+"is old" apart from "is down":
+
+- `chain_head`: the Stellar core ledger sequence reported by Horizon's root
+  endpoint at request time.
+- `newest_record_at`: RFC 3339 timestamp of the most recent recorded corridor
+  measurement in the run store (null when the store holds no records).
+- `record_count`: number of records held by the run store.
+
+Unknown values are rendered as `null`, never as zero or a synthesised guess.
+If Horizon's root is unreachable, `chain_head` is `null` while store-derived
+fields are still reported; if the store cannot be read, its fields are `null`
+while `chain_head` is still reported. A `200` with nulls means the check could
+not be made, not that data is absent. The freshness block does not change the
+endpoint's health verdict: it remains `200` as long as the HTTP service is
+answering.
+
+## Rate limiting
+
+Every route — including `/healthz` and the UI — passes through a per-client
+limiter, because the thing being bounded is the service's cost (upstream
+calls, CPU), and that cost is real on every path.
+
+- **Sustained rate:** 4 requests/second per client (`-rate-limit`)
+- **Burst:** 10 requests (`-rate-burst`)
+- **Client identity:** the connecting peer's host, or the client named in
+  `X-Forwarded-For` when the request arrives from loopback or a private-range
+  address (the reverse-proxy shape of the hosted deployment). On Render, every
+  request arrives from a private-range proxy peer; the key is the address the
+  proxy appended to the right. Leftmost entries are client-controlled and
+  ignored so spoofed headers cannot bypass the limiter. A directly connected
+  public peer cannot choose its own bucket by setting that header.
+- **Off switch:** `-rate-limit=0` disables limiting entirely — for an
+  operator who already has a limiter in front.
+
+A refused request answers:
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 1
+
+{"error": "rate limit exceeded; ...", "code": "rate_limited"}
+```
+
+`Retry-After` is rounded up to whole seconds so a client that honours it is
+never refused twice for the same bucket. The limit is a fairness mechanism,
+not a security boundary: it bounds what one client can cost, and does not
+authenticate anyone.
 
 ## Freshness and provenance
 
@@ -305,8 +535,59 @@ This endpoint checks that the HTTP service is responding. It does not perform a 
 
 Reference rates are never averaged. The response identifies the provider and, when available, the second provider and divergence. `NO-MARKET` means no path was returned; it is not the same claim as a priced route with an `UNUSABLE` verdict.
 
+## API deprecation policy
+
+Breaking changes to wire shapes without notice break consumers that depend on published measurements. As established in the consumer spike (`docs/spike-api-consumers.md`), the contract's difficulty is not the schema, it is the discipline. This policy defines how endpoints and response fields are phased out.
+
+### Scope of changes
+
+- **Non-breaking (additive):** Introducing optional query parameters or new JSON response fields. Clients must ignore unknown JSON keys.
+- **Breaking:** Renaming or removing endpoints, query parameters, or response fields; changing field types; or modifying error code formats. Any breaking change must follow the full deprecation lifecycle below.
+
+### Deprecation lifecycle
+
+1. **Announcement:**
+   - Documented in the release notes of the version introducing the deprecation.
+   - A dedicated GitHub tracking issue opened under `area:api`.
+   - Updated status and timeline recorded in `docs/api.md`.
+
+2. **In-band signalling (`Deprecation` and `Sunset` headers):**
+   - Deprecated endpoints emit the standard `Deprecation` response header with the date or Unix timestamp representing when deprecation was announced:
+     ```http
+     Deprecation: @1760000000
+     ```
+   - When a definite retirement date is determined, responses also emit the `Sunset` header (RFC 8594) indicating the cutoff date after which the endpoint will be shut down:
+     ```http
+     Sunset: Wed, 11 Nov 2026 00:00:00 GMT
+     ```
+   - A `Link` header with `rel="deprecation"` points consumers to migration guidance:
+     ```http
+     Link: <https://github.com/Wayfare-labs/wayfare/blob/main/docs/api.md>; rel="deprecation"
+     ```
+
+3. **Minimum notice window:**
+   - **Endpoints and fields have a minimum deprecation window of 90 days** (or at least two minor release cycles, whichever is longer) before removal.
+   - During the notice window, the endpoint or field remains fully functional and continues returning real measurements. A deprecated field is never filled with fabricated or estimated numbers: unknown remains reported as unknown.
+
+4. **Removal:**
+   - At the sunset date, the deprecated endpoint or field is permanently removed.
+   - Requests to removed endpoints return HTTP `410 Gone` with a structured JSON error body:
+     ```json
+     {
+       "error": "this endpoint has been retired; refer to docs/api.md for current endpoints",
+       "code": "endpoint_deprecated"
+     }
+     ```
+   - Field removals drop the key from the JSON payload.
+
 ## Related contracts
 
+- [Error responses](errors.md) — the machine-readable `code` on every failure
+  path, and the shape a client can rely on
+- [Cost decomposition](cost-decomposition.md) — the rung `cost` block's
+  components, and which are undetermined
+- [Reading the API correctly](api-consumer.md) — a worked consumer that
+  respects `live`, `scored` and a null `recommended`, with its offline tests
 - [Run store](run-store.md) — stored record and hash-chain format
 - [Snapshot format](snapshot-format.md) — recorded upstream bytes
 - [Checks](checks.md) — tri-state counterparty findings and metrics

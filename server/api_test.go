@@ -475,6 +475,146 @@ func TestHealthzEmptyStoreIsUnknown(t *testing.T) {
 	}
 }
 
+// freshnessServer wires a store plus a Horizon root fake serving rootBody,
+// the two inputs the /healthz freshness block reads.
+func freshnessServer(t *testing.T, st runstore.Store, rootBody string) *httptest.Server {
+	t.Helper()
+	horizon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.Error(w, "not recorded", http.StatusServiceUnavailable)
+			return
+		}
+		if rootBody == "" {
+			http.Error(w, "horizon down", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/hal+json")
+		_, _ = w.Write([]byte(rootBody))
+	}))
+	t.Cleanup(horizon.Close)
+
+	s := &Server{
+		Store:  st,
+		Engine: &route.Engine{DEX: &dex.Client{HorizonURL: horizon.URL}},
+	}
+	api := httptest.NewServer(s.Handler())
+	t.Cleanup(api.Close)
+	return api
+}
+
+// TestHealthzFreshnessReported is the issue #311 contract: chain head,
+// newest record and total record count are readable straight off /healthz,
+// without parsing any corridor response.
+func TestHealthzFreshnessReported(t *testing.T) {
+	base := time.Now().UTC().Add(-6 * time.Hour).Truncate(time.Second)
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendHealthRecord(t, st, "USDC-NGNC", base)
+	appendHealthRecord(t, st, "USDC-NGNC", base.Add(time.Hour))
+	appendHealthRecord(t, st, "USDC-GHSC", base.Add(-time.Hour))
+
+	srv := freshnessServer(t, st, `{"core_ledger_seq": 55101724}`)
+	_, body := getJSON(t, srv.URL+"/healthz")
+
+	f, _ := body["freshness"].(map[string]any)
+	if f == nil {
+		t.Fatalf("freshness = %v, want an object", body["freshness"])
+	}
+	if f["chain_head"] != float64(55101724) {
+		t.Errorf("chain_head = %v, want 55101724", f["chain_head"])
+	}
+	if f["record_count"] != float64(3) {
+		t.Errorf("record_count = %v, want 3 (two NGNC runs plus one GHSC)", f["record_count"])
+	}
+	if f["newest_record_at"] != base.Add(time.Hour).Format(time.RFC3339) {
+		t.Errorf("newest_record_at = %v, want %s", f["newest_record_at"],
+			base.Add(time.Hour).Format(time.RFC3339))
+	}
+}
+
+// TestHealthzFreshnessAdvancesAfterSweep is the issue #563 contract: a new
+// committed record (a sweep that lands on data/, then a redeploy) advances the
+// freshness block, so the served history stops being stale. Verified once here.
+func TestHealthzFreshnessAdvancesAfterSweep(t *testing.T) {
+	base := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendHealthRecord(t, st, "USDC-NGNC", base)
+
+	srv := freshnessServer(t, st, `{"core_ledger_seq": 1}`)
+	newest := func() string {
+		_, body := getJSON(t, srv.URL+"/healthz")
+		f, _ := body["freshness"].(map[string]any)
+		ts, _ := f["newest_record_at"].(string)
+		return ts
+	}
+	if got := newest(); got != base.Format(time.RFC3339) {
+		t.Errorf("before sweep newest_record_at = %v, want %s", got, base.Format(time.RFC3339))
+	}
+
+	// A sweep lands: a newer record for NGNT.
+	appendHealthRecord(t, st, "USDC-NGNT", base.Add(time.Hour))
+
+	if got := newest(); got != base.Add(time.Hour).Format(time.RFC3339) {
+		t.Errorf("after sweep newest_record_at = %v, want %s", got, base.Add(time.Hour).Format(time.RFC3339))
+	}
+}
+
+// TestHealthzFreshnessChainHeadUnknown covers the unknown half: Horizon
+// refusing the root lookup must null the field, never fill it with 0 — a
+// reader must not be able to mistake "unaskable" for "ledger zero". The
+// store-derived fields keep reporting what they know.
+func TestHealthzFreshnessChainHeadUnknown(t *testing.T) {
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendHealthRecord(t, st, "USDC-NGNC", time.Now().UTC().Add(-time.Hour))
+
+	srv := freshnessServer(t, st, "")
+	_, body := getJSON(t, srv.URL+"/healthz")
+	f, _ := body["freshness"].(map[string]any)
+	if f == nil {
+		t.Fatalf("freshness = %v, want an object even when parts are unknown", body["freshness"])
+	}
+	if head, ok := f["chain_head"]; !ok || head != nil {
+		t.Errorf("chain_head = %v, want null when Horizon refused", head)
+	}
+	if f["record_count"] != float64(1) {
+		t.Errorf("record_count = %v, want 1", f["record_count"])
+	}
+	if ts, ok := f["newest_record_at"].(string); !ok || ts == "" {
+		t.Errorf("newest_record_at = %v, want the stored run's timestamp", f["newest_record_at"])
+	}
+}
+
+// TestHealthzFreshnessNoStoreIsUnknown pins the deployment with no history:
+// the whole freshness block is present and every field is null. Presence
+// with nulls means "looked, unknown" — the honest state a consumer can
+// alert on — where an absent block could be read as "this version does not
+// report it".
+func TestHealthzFreshnessNoStoreIsUnknown(t *testing.T) {
+	srv := freshnessServer(t, nil, `{"core_ledger_seq": 1}`)
+	_, body := getJSON(t, srv.URL+"/healthz")
+	f, _ := body["freshness"].(map[string]any)
+	if f == nil {
+		t.Fatalf("freshness = %v, want an object", body["freshness"])
+	}
+	if f["chain_head"] != float64(1) {
+		t.Errorf("chain_head = %v, want 1", f["chain_head"])
+	}
+	if count, ok := f["record_count"]; !ok || count != nil {
+		t.Errorf("record_count = %v, want null without a store", count)
+	}
+	if ts, ok := f["newest_record_at"]; !ok || ts != nil {
+		t.Errorf("newest_record_at = %v, want null without a store", ts)
+	}
+}
+
 // appendHealthRecord appends one record for the given corridor and time.
 func appendHealthRecord(t *testing.T, st runstore.Store, corridor string, at time.Time) {
 	t.Helper()
@@ -558,13 +698,30 @@ func TestPrettyOptInIndents(t *testing.T) {
 			}
 
 			// Formatting must never change the document.
-			var prettyDoc, plainDoc any
+			//
+			// The two bodies come from two independent measurements, so the
+			// fields that record when each one was taken legitimately differ:
+			// measured_at is formatted with RFC3339 second precision, and two
+			// requests milliseconds apart straddle a second tick often enough
+			// to fail this comparison for a reason that has nothing to do with
+			// ?pretty. They are asserted present and then set aside, so the
+			// comparison covers the measurement itself rather than the clock.
+			var prettyDoc, plainDoc map[string]any
 			if err := json.Unmarshal(raw, &prettyDoc); err != nil {
 				t.Fatalf("parsing body: %v", err)
 			}
 			_, plain := rawGet(t, base)
 			if err := json.Unmarshal(plain, &plainDoc); err != nil {
 				t.Fatalf("parsing plain body: %v", err)
+			}
+			for _, doc := range []map[string]any{prettyDoc, plainDoc} {
+				if _, ok := doc["measured_at"]; !ok {
+					t.Fatal("the corridor body has no measured_at; a reading with no time on it is not verifiable")
+				}
+			}
+			for _, field := range []string{"measured_at", "reference_fetched_at"} {
+				delete(prettyDoc, field)
+				delete(plainDoc, field)
 			}
 			if !reflect.DeepEqual(prettyDoc, plainDoc) {
 				t.Error("?pretty changed the document, not just the formatting")
@@ -961,4 +1118,102 @@ func metricString(t *testing.T, entry map[string]json.RawMessage, field string) 
 		t.Fatalf("%s = %s, want a JSON string (decimal strings cross the wire, never numbers)", field, raw)
 	}
 	return s
+}
+
+// TestMarketStructureEndpoint verifies the /api/market-structure endpoint
+// returns the issuer concentration analysis. The known registry has one
+// issuer (LinkIOIssuer) backing three corridors (NGNC, GHSC, KESC), which
+// is the concentration the endpoint must surface.
+func TestMarketStructureEndpoint(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	status, body := getJSON(t, srv.URL+"/api/market-structure")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %v", status, body)
+	}
+
+	// Verify issuer_concentrations has the LinkIOIssuer entry.
+	concentrations, ok := body["issuer_concentrations"].(map[string]any)
+	if !ok {
+		t.Fatal("issuer_concentrations missing or not a map")
+	}
+
+	linkIOCorridors, ok := concentrations["GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"].([]any)
+	if !ok {
+		t.Fatalf("LinkIOIssuer not found in concentrations: %v", concentrations)
+	}
+	if len(linkIOCorridors) != 3 {
+		t.Errorf("LinkIOIssuer corridors = %v, want 3", linkIOCorridors)
+	}
+
+	// Verify the three expected corridors are present.
+	expected := map[string]bool{"NGNC": false, "GHSC": false, "KESC": false}
+	for _, c := range linkIOCorridors {
+		if code, ok := c.(string); ok {
+			expected[code] = true
+		}
+	}
+	for code, found := range expected {
+		if !found {
+			t.Errorf("missing corridor %q in LinkIOIssuer concentration", code)
+		}
+	}
+
+	// Verify corridor_count and concentrated_corridor_count.
+	if got := body["corridor_count"]; got != float64(8) { // 8 corridors with pegs excluding USDC
+		t.Errorf("corridor_count = %v, want 8", got)
+	}
+	if got := body["concentrated_corridor_count"]; got != float64(3) {
+		t.Errorf("concentrated_corridor_count = %v, want 3", got)
+	}
+
+	// Verify generated_at is present and parseable.
+	generatedAt, ok := body["generated_at"].(string)
+	if !ok {
+		t.Fatal("generated_at missing or not a string")
+	}
+	if _, err := time.Parse(time.RFC3339, generatedAt); err != nil {
+		t.Errorf("generated_at = %q, want RFC3339 timestamp: %v", generatedAt, err)
+	}
+
+	// No other issuer should have a concentration.
+	for issuer := range concentrations {
+		if issuer != "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6" {
+			t.Errorf("unexpected issuer in concentration map: %q", issuer)
+		}
+	}
+}
+
+// TestMarketStructureUnknownParamsAreRejected verifies the endpoint enforces
+// the same strict parameter handling as other endpoints.
+func TestMarketStructureUnknownParamsAreRejected(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	status, body := getJSON(t, srv.URL+"/api/market-structure?foo=bar")
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", status)
+	}
+	msg, _ := body["error"].(string)
+	if !strings.Contains(msg, "unknown query parameter") {
+		t.Errorf("error = %q, want it to say unknown query parameter", msg)
+	}
+	if !strings.Contains(msg, `"foo"`) {
+		t.Errorf("error = %q, want it to name the unknown parameter", msg)
+	}
+}
+
+// TestMarketStructureKnownParamsAreAccepted verifies the documented
+// parameters are accepted.
+func TestMarketStructureKnownParamsAreAccepted(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	status, _ := getJSON(t, srv.URL+"/api/market-structure")
+	if status != http.StatusOK {
+		t.Errorf("status = %d, want 200", status)
+	}
+
+	status, _ = getJSON(t, srv.URL+"/api/market-structure?pretty=1")
+	if status != http.StatusOK {
+		t.Errorf("status = %d, want 200 with pretty=1", status)
+	}
 }

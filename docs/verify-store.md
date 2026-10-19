@@ -212,6 +212,9 @@ backup nobody has restored from is a hypothesis. See
 
 ## Related
 
+- [rollback.md](rollback.md) — the rollback procedure this command anchors:
+  how to return to an older image (including one with older embedded
+  history) and verify the chain afterwards
 - [run-store.md](run-store.md) — record shape, preimage rule, storage format
 - [deployment.md](deployment.md) — how to run continuously and verify after
   restore

@@ -32,8 +32,14 @@ embedded in the binary at build time. Every response carries `live: false` and a
 
 **Freshness depends on the measure workflow, not on the deployment.** New
 records are written by `.github/workflows/measure.yml` and committed to `data/`.
-That workflow is currently unable to push ([#63](https://github.com/Wayfare-labs/wayfare/issues/63)),
-so the served history is older than its six-hour cadence implies. Read
+The committed history is a bounded window, not the whole chain: each corridor
+keeps its newest 366 records and rotates the rest (ADR 007) — the dropped,
+older records live on in the repository's git history. No sweep has reached
+`main` since 2026-08-22 — the workflow could not push
+([#63](https://github.com/Wayfare-labs/wayfare/issues/63)) and then could not
+open a pull request
+([#555](https://github.com/Wayfare-labs/wayfare/issues/555)) — so the served
+history is far older than its six-hour cadence implies. Read
 `stale.age_human` rather than assuming. The mechanism — history embedded at
 build time, so freshness advances by redeploy rather than by scheduler — is
 [documented in full](docs/embedded-history.md).
@@ -76,6 +82,9 @@ That is also why the reference rate is a required dependency rather than an
 optional enrichment. Without it the engine can rank, but it cannot tell a good
 deal from a disaster.
 
+The full argument, with the measurements behind it: **[docs/why-wayfare.md](docs/why-wayfare.md)**.
+Why Stellar-native and what the code uses: **[docs/why-stellar-native.md](docs/why-stellar-native.md)**.
+
 ---
 
 ## What the measurements found
@@ -98,6 +107,9 @@ Three findings shaped the design:
 and NGNC still loses 25%. That floor is the corridor's spread, not its depth —
 which means no trade size can be acceptable, because the zero-size limit is
 already unacceptable. Slippage then stacks on top, reaching 97.68% at 5000.
+Written up as a case study, with the floor reproduced across three dates and
+three different route shapes — and an explicit account of which part of it the
+tool has measured: **[docs/ngnc-structural-floor.md](docs/ngnc-structural-floor.md)**.
 
 **The three corridors fail in three different ways.** One prices continuously
 and prices badly. One has no independent market and inherits another token's
@@ -142,8 +154,16 @@ LAYER 2 — DETERMINISTIC CALCULATION                               [live]
   divergence between reference providers
   packages: route, refrate, checks
 
-  spread, depth, price impact, concentration, cost decomposition
+  spread, depth, price impact, concentration
                                              [implemented, not yet reachable]
+  cost decomposition                         [implemented, on the wire]
+
+  Market-structure vocabulary and current limits:
+  [docs/market-structure.md](docs/market-structure.md)
+  Cost decomposition, component by component:
+  [docs/cost-decomposition.md](docs/cost-decomposition.md)
+  Regime classification and its documented thresholds:
+  [docs/regime-classification.md](docs/regime-classification.md)
 
         │
         ▼
@@ -162,6 +182,12 @@ LAYER 4 — VERIFIABLE OUTPUT                 [not built — needs a trust model
 Layers 3 and 4 have **no packages and no stubs**, deliberately. Speculative
 structure is worse than none: an empty package invites code that has no inputs
 yet. **[ADR 003](docs/adr/003-why-layers-3-and-4-have-no-packages.md)**
+
+The bounded-history research finding asks what the planned 90-day sample could
+and could not support: **[docs/spike-90-day-history.md](docs/spike-90-day-history.md)**.
+The value finding asks whether a layer-3 model would add anything over the
+deterministic measurements, and answers no on the evidence the repository has:
+**[docs/spike-model-vs-deterministic.md](docs/spike-model-vs-deterministic.md)**.
 
 ### How the pieces fit
 
@@ -210,6 +236,18 @@ These are the agreements other code and other people depend on. **Changing any
 of them is a breaking change**, not a refactor.
 
 A glossary of every state a reader can meet: **[docs/glossary.md](docs/glossary.md)**
+
+New to the project and want the one-page story — what it measures, what it
+refuses to do, who it is for, and the non-custodial position stated once?
+**[docs/about.md](docs/about.md)**
+
+Completely new to the ideas, and want the prose version — what a reference
+rate is, why one corridor is priced at twelve sizes, and what a verdict is
+allowed to claim? **[docs/how-wayfare-works.md](docs/how-wayfare-works.md)**
+
+Why the monitor is Stellar-native, grounded in what the code uses (assets,
+pathfinding, order books, anchors, SEP-1, SEP-38) without unsupported exclusivity claims:
+**[docs/why-stellar-native.md](docs/why-stellar-native.md)**
 
 ### Verdict thresholds — breaking if altered
 
@@ -321,6 +359,11 @@ into a verdict is maintainer-owned.
 
 Full spec: **[docs/checks.md](docs/checks.md)**
 Methodology: **[docs/metrics.md](docs/metrics.md)**
+Writing a check: **[docs/adding-a-check.md](docs/adding-a-check.md)**
+Writing a metric: **[docs/adding-a-metric.md](docs/adding-a-metric.md)** — which
+opens with the one thing a contributor has to know: a metric written today is
+validated and testable, and reaches no response, because `checks.Runner` has no
+metric path ([#91](https://github.com/Wayfare-labs/wayfare/issues/91)).
 
 ### Asset identity — breaking if altered
 
@@ -368,6 +411,13 @@ a legacy record encodes byte-for-byte as it did when it was written.
 Version 3 added `reference.fetched_at`, which lets a stored reading say how
 old its benchmark was when the reading was taken.
 
+The chain also answers longitudinal questions derived on read, appending
+nothing: `runstore.DetectTransitions` reconstructs integrity-state
+transitions, and `runstore.MeasurabilityOf` reports how often a corridor was
+measurable at all — how many scheduled sweeps produced a priced ladder. A
+corridor that prices nothing measurable reports that plainly; an unmeasured
+one reports unknown, never zero.
+
 Full spec: **[docs/run-store.md](docs/run-store.md)**
 
 What verification looks like — including broken-chain output: **[docs/verify-store.md](docs/verify-store.md)**
@@ -384,13 +434,14 @@ What verification looks like — including broken-chain output: **[docs/verify-s
 | `sep38` | Anchor RFQ client, with the fee-denomination identity |
 | `dex` | On-chain pricing via Horizon pathfinding, plus market health |
 | `route` | Ladder sweep, verdicts, integrity, and the shared wire shape |
-| `checks` | Counterparty checks and metrics; qualify the headline, never move it |
+| `checks` | Counterparty checks and metrics (including bounded upstream request cost classification for metric sweeps across sizes); qualify the headline, never move it |
 | `runstore` | Hash-chained measurement history |
 | `monitor` | Scheduled measurement, independent of HTTP |
 | `snapshot` | Record and replay upstream responses |
 | `server` | HTTP surface and the embedded single-file UI |
 | `cmd/ladder` | Measurement CLI |
 | `cmd/wayfared` | Server and scheduler |
+| `examples/api-consumer` | Worked example of reading the API correctly |
 
 `anchor.Profile.SEPs()` returns the numbers of the SEPs an anchor advertises
 in its `stellar.toml` — SEP-1 (the document itself), 6, 10, 12, 24, 31, 38 —
@@ -421,9 +472,17 @@ Every `cmd/ladder` run also runs the same counterparty checks the server runs
 then carries no findings block — the difference is a flag the operator chose,
 not an accident of which binary produced the document.
 
-Go 1.22+. Dependencies: `shopspring/decimal` and `BurntSushi/toml`. Both
+Go 1.27+. Dependencies: `shopspring/decimal` and `BurntSushi/toml` — exactly
+two, version-pinned, and enforced in CI so the surface cannot drift quietly
+([docs/dependency-policy.md](docs/dependency-policy.md)). Both
 binaries need live network access — there are no cached figures to fall back
 on, by design.
+
+What each `make` target runs and what CI runs:
+**[docs/development-loop.md](docs/development-loop.md)** — including why
+`make run` exits 1 on the default corridor.
+When a live measurement fails, how to tell which upstream refused, and what to
+do next: **[docs/live-measurement-failures.md](docs/live-measurement-failures.md)**.
 
 Deployment, cost and backup: **[docs/deployment.md](docs/deployment.md)**
 
@@ -433,6 +492,8 @@ Deployment, cost and backup: **[docs/deployment.md](docs/deployment.md)**
 - [GET /api/assets](docs/api.md#get-api-assets)
 - [GET /api/corridor](docs/api.md#get-apicorridor)
 - [GET /api/corridor/trend](docs/api.md#get-apicorridortrend)
+- [GET /api/chain-heads](docs/api.md#get-apichain-heads) — pin the current stored chain tips
+- Error responses and their machine-readable codes: [docs/errors.md](docs/errors.md)
 - `GET /` single-file UI, no build step
 
 Beyond the contracts above, two fields to know. **`live`** is on every
@@ -452,7 +513,10 @@ lands (a live SEP-38 round-trip has never been performed — see
 The API is public, keyless and read-only, and answers cross-origin requests
 from any origin (`Access-Control-Allow-Origin: *`), so browser consumers on
 another origin can call it directly. No credentials are ever attached to a
-cross-origin read.
+cross-origin read. A worked consumer — one small program that reads a corridor,
+respects `live` and `scored`, and refuses to render a verdict it should not —
+lives in `examples/api-consumer`, and the reading rules it encodes are written
+out in **[docs/api-consumer.md](docs/api-consumer.md)**.
 
 The `sizes` parameter overrides the default ladder (0.1 → 5000 USDC across
 12 rungs). The default sizes and the rationale for each rung are documented
@@ -463,7 +527,11 @@ in **[docs/ladder-sizes.md](docs/ladder-sizes.md)**.
 (`recorded_at`, `age_seconds`, `age_human`) — the thing actually at risk on a
 `-history-first` deployment, whose served history is only as fresh as its last
 deploy. `data` is `null` when no history exists to describe: unknown, never a
-fabricated age.
+fabricated age. Alongside it, `freshness` reports the cross-corridor view in
+one place: `chain_head` (the ledger Horizon is on right now),
+`newest_record_at` and `record_count` over the whole run store. Each is
+`null` when it cannot be known — Horizon unreachable, store unreadable or
+empty — never a zero that would read as "very old" or "ledger 0".
 
 Bodies are compact by default; append `&pretty=1` (or `?pretty` on an
 endpoint with no other parameters) to any of the JSON endpoints to get an
@@ -504,7 +572,10 @@ The interface is one embedded file, `server/index.html`. Its light and dark
 colour schemes are recorded, with measured contrast ratios, in
 **[docs/qa/artifacts/272-color-schemes.md](docs/qa/artifacts/272-color-schemes.md)**;
 the browser QA harness that produced the computed colours lives in
-[docs/qa/README.md](docs/qa/README.md).
+[docs/qa/README.md](docs/qa/README.md). The interactive state contract —
+focus, hover, active, disabled, and the reduced-motion behaviour — is
+specified in **[docs/ui-states.md](docs/ui-states.md)** and pinned by source
+text in `go test`.
 
 ---
 
@@ -532,10 +603,11 @@ code is marked as what it is.
 taxonomy, cross-checked reference rates, recorded snapshots, pinned arithmetic.
 
 **v2 — Corridor intelligence.** **IN PROGRESS**, and further from done than the
-merge log suggests. Counterparty checks are **DONE**: three run per corridor and
-appear in every live response. Market-quality metrics — spread, observed versus
-executable depth, price impact, liquidity concentration — are **implemented but
-not reachable**: `checks.Runner` has no way to run a `Metric`, so none of them
+merge log suggests. Counterparty checks are **DONE**: seven run per corridor and
+appear in every live response (`checks.Runner.Default()`), and
+[docs/adding-a-check.md](docs/adding-a-check.md) walks the path to an eighth.
+Market-quality metrics — spread, observed versus executable depth, price
+impact, liquidity concentration — are **implemented but not reachable**: `checks.Runner` has no way to run a `Metric`, so none of them
 has ever appeared in a response, been recorded, or been rendered. Effective
 transfer cost (`route.Decompose`) is in the same state — merged, with no caller.
 Wiring that path is [#91](https://github.com/Wayfare-labs/wayfare/issues/91) and
@@ -577,6 +649,14 @@ milestone so you can see which part of the project your work moves. Start with
 
 The full contributor backlog — every gap found in the current tree, with the
 file or response that evidences it — is **[docs/backlog.md](docs/backlog.md)**.
+The dated review of the open `good first issue` label set is
+**[docs/good-first-issue-audit.md](docs/good-first-issue-audit.md)**.
+
+New here? The **[first 15 minutes](docs/first-15-minutes.md)** walkthrough goes
+from a fresh clone to a reproduced measurement, and
+**[docs/troubleshooting.md](docs/troubleshooting.md)** answers the four
+stumbles people actually hit — rate limits, a sleeping deployment, a
+`stellar.toml` that will not resolve, a chain that will not verify.
 
 **Milestones:**
 
@@ -607,9 +687,14 @@ expect close review and discuss the approach first:
 - the integrity taxonomy
 - SEP-38 fee handling
 - the check engine and how results compose
-- the corridor health score — how signals become one published number. Not yet
-  designed, and deliberately so: it needs its components to exist first, and it
-  is a judgement of the same class as the verdict bands
+- the corridor health score — how signals become one published number. Merged
+  and **not reachable** (`route/health_score.go` has no non-test caller, and its
+  blended value is deliberately absent from the wire). It needs its component
+  metrics to exist first, and it is a judgement of the same class as the
+  verdict bands
+
+Each area's blast radius, what defends it, and what is *not* owned:
+**[docs/maintainer-owned-areas.md](docs/maintainer-owned-areas.md)**.
 
 Everything else — UI, CLI, docs, tests, new corridors, reference providers,
 storage backends — is open. Adding a corridor is the highest-value first
@@ -617,12 +702,16 @@ contribution and has its own guide:
 **[docs/adding-a-corridor.md](docs/adding-a-corridor.md)**
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) first. The invariants there are hard
-constraints, not style preferences.
+constraints, not style preferences. Submissions follow the templates in
+[.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/) and
+[.github/pull_request_template.md](.github/pull_request_template.md).
 
 **Questions?** The [contributor FAQ](docs/contributor-faq.md) covers what the
 project does and does not do, how to get set up, what is not built yet, and how
 to check a claim against the code. Ask the rest in
 [Discussions → Q&A](https://github.com/Wayfare-labs/wayfare/discussions/categories/q-a).
+What contributors have actually asked here, with each answer checked against the
+code: **[docs/discussion-questions.md](docs/discussion-questions.md)**.
 
 ---
 
@@ -635,6 +724,9 @@ These keep the project shippable and legal for a small team:
 - **Not a money transmitter.** No custody, so no licensing surface.
 - **Not a KYC provider.** Delegated to anchors via SEP-12.
 
+The full register — what this project refuses to build, and why, plus the
+"not yet, blocked on evidence" items — is **[docs/non-goals.md](docs/non-goals.md)**
+
 ---
 
 ## Verification status
@@ -646,11 +738,12 @@ These keep the project shippable and legal for a small team:
 | NGNC anchor lacks SEP-38 | Verified from live stellar.toml |
 | Corridor figures in docs/ | Measured, live Horizon strict-send, timestamped |
 | Recorded snapshots | Hash-verified on load; provenance refuses a dirty tree |
+| Container image scan | Run in CI on the image it has just built. Measured 2026-09-25 on Go 1.22.12: the image's own packages clean; the standard library carried 22 `HIGH`/`CRITICAL` advisories, recorded rather than gated. Measured 2026-10-17 on Go 1.27.2: 0 `HIGH`/`CRITICAL` advisories — every fix is on the 1.24+ line, none on 1.22. See [SECURITY.md](SECURITY.md) |
 | SEP-38 fee identity | Verified against SEP-0038 spec text, pinned in golden files |
 | USDC issuer is Circle's | **Not yet verified** against circle.com stellar.toml |
 | Live SEP-38 round-trip | **Verified** — recorded fixture from testanchor.stellar.org in `sep38/testdata/live/` |
 | Public deployment | Running at [wayfare-cdb9.onrender.com](https://wayfare-cdb9.onrender.com/); `/healthz` verified 200 on 2026-08-24 |
-| Continuous measurement | **Not currently running** — the measure workflow cannot push ([#63](https://github.com/Wayfare-labs/wayfare/issues/63)), so the served history is frozen at its last successful sweep |
+| Continuous measurement | **Not yet running** — no sweep has reached `main` since 2026-08-22. The two causes are fixed in `measure.yml`: the push rejection ([#63](https://github.com/Wayfare-labs/wayfare/issues/63)) and the refusal to open a pull request ([#555](https://github.com/Wayfare-labs/wayfare/issues/555)), which failed every scheduled run to 2026-10-17. The workflow's steps are exercised offline by `go test ./measure`; **the route is not yet confirmed against a live run** — that needs the `MEASURE_TOKEN` secret ([docs/deployment.md](docs/deployment.md#running-the-ci-path)) and a merged measurement pull request. Until then the served history is frozen at its last successful sweep |
 
 Unverified claims are marked in the code at the point they are used.
 

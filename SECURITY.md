@@ -88,6 +88,49 @@ These are the bugs that matter most, because someone sends money on the output.
 - **Missing corridors or missing anchors.** A source Wayfare does not price yet
   is a feature request — open an issue.
 
+## Third-party code in the shipped image
+
+The service ships as a static binary on
+`gcr.io/distroless/static-debian12:nonroot`, so its third-party surface is two
+things: the base image, and whatever the Go toolchain compiles into the binary.
+
+CI scans the image it has just built. The report covers OS packages and language
+packages; a fixable `HIGH` or `CRITICAL` finding in the image's own packages
+fails the build, because the fix is a newer base image and that is a change this
+repository can make.
+
+**Measured 2026-09-25 (before)** against the image this repository builds with
+Go 1.22.12: the image's own packages were clean, and `/wayfared` carried 22
+`HIGH`/`CRITICAL` advisories with fixes — one `CRITICAL` — all in `stdlib` at
+Go 1.22.12. Every fix is on the 1.24, 1.25, 1.26 or 1.27 line; none is on the
+1.22 line the Dockerfile, `go.mod` and CI were pinned to.
+
+**Measured 2026-10-17 (after)** against the image built with Go 1.27.2: 0
+`HIGH`/`CRITICAL` advisories — the image's own packages are clean and the
+compiled standard library carries no known-bad versions (#564).
+
+Go 1.22 reached end of life, so the toolchain moved to a supported release in
+the single toolchain definition (`.github/workflows/ci.yml`, `GO_VERSION`),
+propagated to `go.mod` and the `Dockerfile`. This was a deliberate decision,
+not a quiet bump: #467 deliberately returned CI to 1.22, and staying there
+would keep carrying known-bad stdlib advisories on the service's trust
+boundary (`net/http` and `crypto/tls`). While on 1.22 the findings were
+**recorded by the scan and deliberately not gated**: no change in this
+repository could fix them, and a required check that is always red teaches
+people to ignore it. Now that the toolchain is supported, the scan is clean.
+Those findings have been fixed by the toolchain move rather than accepted.
+
+Both invocations pass `--ignore-unfixed`, so an advisory with no available
+patch cannot fail a build either.
+
+A finding you believe is a false positive can be accepted deliberately: put its
+identifier in a `.trivyignore` file at the repository root and say in the pull
+request why it does not apply. Accepting a finding is a decision, and a decision
+belongs in a diff rather than in a re-run.
+
+What the scan cannot see is behaviour — it names known-bad versions, not flaws
+in how this code uses them. Those are the findings below.
+
 ## No funds move
 
 Wayfare is non-custodial and read-only: it never issues tokens, never holds

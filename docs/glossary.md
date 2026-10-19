@@ -278,7 +278,7 @@ spread of nothing and a spread that could not be read are different facts,
 and zero is a plausible-looking number for the second.
 
 **Source:** `checks/metric.go` — `MetricResult`, `RunMetric()`.
-`checks/checks.md` — the two-shape contract.
+[docs/checks.md](checks.md) — the two-shape contract.
 Checked 2026-08-25.
 
 ---
@@ -338,7 +338,8 @@ smaller than the number of runs in the response.
 **Regime is not reported here.** `analysis.DefaultRegimeThresholds` is
 calibrated to loss percentages, an unrelated scale — applying it to a
 divergence series would publish a classification against thresholds nobody
-chose for that purpose.
+chose for that purpose. The thresholds themselves, and the justification for
+them, are in [regime-classification.md](regime-classification.md).
 
 **Never moves a verdict or an integrity state.** Like every check and metric
 in this project, this is a measurement of the benchmark's own behaviour,
@@ -347,6 +348,28 @@ reported alongside the corridor's history and never fed back into it.
 **Source:** `analysis/divergence.go` — `DivergencePctSeries()`,
 `DivergenceHistory()`. `server/trend.go` — `DivergenceStatsJSON`.
 Checked 2026-08-30.
+
+---
+
+## Floor
+
+**Question:** What does the corridor lose at its smallest measured size?
+
+The **floor** is the loss percentage at the smallest size the ladder priced
+(`floor_loss_pct`), and `floor_size` is the size it was measured at. At dust
+size price impact is negligible, so what remains is the corridor's **spread**
+— its structural floor — rather than a depth effect. A floor above the
+[unusable](#verdict) threshold (20%) means no size can be acceptable, because
+every larger size stacks slippage on top of it.
+
+The floor is a summary of the ladder, not a verdict. It is read from the priced
+rungs; `worst_loss_pct` / `worst_size` name the other end of the same ladder.
+When nothing priced — a `NO-MARKET` or `UNKNOWN` run — there is no floor to
+report, and the zero is the absence of a measurement rather than a 0% loss.
+
+**Source:** `route/ladder.go` — `Floor`, `FloorSize`, `WorstLoss`,
+`WorstSize`. `route/wire.go` — `floor_loss_pct`, `floor_size`.
+Checked 2026-10-19.
 
 ---
 

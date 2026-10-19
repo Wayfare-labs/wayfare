@@ -21,6 +21,9 @@ findings in:
 | #269 cross-browser matrix | [`artifacts/269-cross-browser.md`](artifacts/269-cross-browser.md) |
 | #270 mobile device QA | [`artifacts/270-mobile.md`](artifacts/270-mobile.md) |
 | #272 QA both colour schemes | [`artifacts/272-color-schemes.md`](artifacts/272-color-schemes.md) |
+| #293 errors preserve the page | [`artifacts/293-error-preservation.md`](artifacts/293-error-preservation.md) |
+| #304 state legible without colour | [`artifacts/304-state-legibility.md`](artifacts/304-state-legibility.md) |
+| #751 scheduled accessibility re-audit | [`artifacts/751-scheduled-wcag-audit.md`](artifacts/751-scheduled-wcag-audit.md) |
 
 ## Setup
 
@@ -54,6 +57,8 @@ node run-error-paths.mjs --engine=chromium,firefox,webkit   # #266
 node run-cross-browser.mjs                                  # #269
 node run-mobile.mjs                                         # #270
 node run-color-schemes.mjs                                  # #272
+node run-error-preservation.mjs                             # #293
+node run-state-legibility.mjs                               # #304
 ./servers.sh stop
 ```
 
@@ -64,6 +69,8 @@ each one prints.
 
 Flags: `--base=URL`, `--upstream-down=URL`, `--upstream-slow=URL`,
 `--engine=`/`--engines=` (comma separated), `--devices=` (mobile only).
+`--executable=PATH` points an engine at an installed browser instead of
+Playwright's own download, for a machine that cannot fetch one.
 
 ## Scope limits, stated up front
 
@@ -82,3 +89,14 @@ repeat them where they apply:
   values, but only one engine was measured; see `artifacts/272-color-schemes.md`.
 - The harness never writes to the repository under test; it only reads the UI and
   the API.
+
+## HTTP API QA
+
+A sibling, dependency-free harness drives the deployed HTTP API directly, from a
+consumer's perspective rather than the UI's: endpoint and parameter fixtures, a
+served-history-versus-committed-chain check, and a cold-start measurement. See
+[`api/README.md`](api/README.md); the written findings are
+[`artifacts/258-cold-start-distribution.md`](artifacts/258-cold-start-distribution.md),
+[`artifacts/259-served-history-vs-committed.md`](artifacts/259-served-history-vs-committed.md),
+[`artifacts/260-api-consumer-qa.md`](artifacts/260-api-consumer-qa.md) and
+[`artifacts/262-healthz-cold-start.md`](artifacts/262-healthz-cold-start.md).
