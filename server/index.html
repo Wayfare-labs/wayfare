@@ -366,6 +366,7 @@
   th, td { text-align: right; padding: var(--space-2) var(--space-2); border-bottom: 1px solid var(--grid); }
   th:first-child, td:first-child, th:last-child, td:last-child { text-align: left; }
   th { color: var(--muted); font-weight: 550; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+  th[title] { cursor: help; }
   td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
   .v-unusable { color: var(--bad); font-weight: 600; }
   .v-poor { color: var(--warn); }
@@ -1490,6 +1491,11 @@ function table(rungs, scored, depends) {
         <td class="integrity-cell">${cell}</td></tr>`;
     }
     const q = r.quote;
+    const pathCount = (typeof r.path_count === 'number' && r.path_count > 0)
+      ? String(r.path_count)
+      : (q && typeof q.path_count === 'number' && q.path_count > 0)
+      ? String(q.path_count)
+      : '&mdash;';
     if (scored) {
       // The loss figure keeps its colour as a scanning aid, but the grade
       // beside it is what the row asserts — the number is the engine's, the
@@ -1501,25 +1507,29 @@ function table(rungs, scored, depends) {
         <td class="num">${esc(q.effective_rate)}</td>
         <td class="num ${verdictClass(q.verdict)}">${formatPct(q.loss_pct)}%</td>
         <td class="${verdictClass(q.verdict)}"><span class="v-cell">${verdictMark(q.verdict)}${esc(q.verdict)}</span></td>
+        <td class="num">${pathCount}</td>
         <td>${esc(q.description)}</td>
       </tr>`;
     }
-    // When not scored, show structural facts only: send, receive, rate, path.
+    // When not scored, show structural facts only: send, receive, rate, paths, path.
     // Loss and verdict are omitted — they are derived from a benchmark the
     // engine refused to stand behind.
     return `<tr>
       <td class="num">${esc(r.send_amount)}</td>
       <td class="num">${esc(q.receive_amount)}</td>
       <td class="num">${esc(q.effective_rate)}</td>
+      <td class="num">${pathCount}</td>
       <td>${esc(q.description)}</td>
     </tr>`;
   }).join('');
+
+  const pathCountHeader = `<th scope="col" class="num" title="Number of distinct candidate payment paths Horizon found for this size (different hop asset sequences). A rung priced through a single path is more fragile than one with multiple independent routes.">Paths</th>`;
 
   if (scored) {
     return `<table>
       <caption>Every size measured, and the loss and verdict the curve plots</caption>
       <thead><tr>
-        <th scope="col">Send</th><th scope="col">Receive</th><th scope="col">Rate</th><th scope="col">Loss</th><th scope="col">Verdict</th><th scope="col">Path</th>
+        <th scope="col">Send</th><th scope="col">Receive</th><th scope="col">Rate</th><th scope="col">Loss</th><th scope="col">Verdict</th>${pathCountHeader}<th scope="col">Path</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
@@ -1528,7 +1538,7 @@ function table(rungs, scored, depends) {
     <caption>Every size measured. No loss or verdict: the reference providers
       disagreed, so none was derived</caption>
     <thead><tr>
-      <th scope="col">Send</th><th scope="col">Receive</th><th scope="col">Rate</th><th scope="col">Path</th>
+      <th scope="col">Send</th><th scope="col">Receive</th><th scope="col">Rate</th>${pathCountHeader}<th scope="col">Path</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
