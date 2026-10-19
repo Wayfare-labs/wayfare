@@ -9,6 +9,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/refrate"
 )
 
 // TestToQuoteJSONCarriesKind pins that ToQuoteJSON never drops Kind. The
@@ -87,6 +88,125 @@ func TestToCorridorJSONCarriesPathCount(t *testing.T) {
 	}
 	if out.Recommended == nil || out.Recommended.PathCount != 3 {
 		t.Fatalf("recommended path_count = %+v, want 3", out.Recommended)
+	}
+}
+
+// TestToCorridorJSONCarriesReferenceDiagnostic pins the wire shape for the
+// third-provider attribution: it appears only when a diagnostic exists, names
+// the provider and the outlier, and carries the figures that justify the
+// attribution as decimal strings.
+func TestToCorridorJSONCarriesReferenceDiagnostic(t *testing.T) {
+	asOf := time.Date(2026, 10, 19, 7, 55, 4, 0, time.UTC)
+	lr := &LadderResult{
+		Reference: refrate.Rate{
+			Base:            "USD",
+			Quote:           "NGN",
+			Mid:             decimal.RequireFromString("1365"),
+			Source:          "secondary",
+			Agreement:       refrate.AgreementDisagree,
+			SecondaryMid:    decimal.RequireFromString("1300"),
+			SecondarySource: "primary",
+			DivergencePct:   decimal.RequireFromString("5"),
+			Diagnostic: &refrate.Diagnostic{
+				Source:             "floatrates",
+				Mid:                decimal.RequireFromString("1350"),
+				AsOf:               asOf,
+				Outlier:            "primary",
+				OutlierDistancePct: decimal.RequireFromString("3.8461538"),
+				OtherDistancePct:   decimal.RequireFromString("1.1111111"),
+			},
+		},
+	}
+
+	out := ToCorridorJSON(lr, "USD/NGN")
+	d := out.ReferenceDiagnostic
+	if d == nil {
+		t.Fatal("reference_diagnostic is nil; a Diagnostic must reach the wire")
+	}
+	if d.Source != "floatrates" || d.Outlier != "primary" {
+		t.Errorf("diagnostic = %+v, want source floatrates naming primary as the outlier", d)
+	}
+	if d.Mid != "1350" {
+		t.Errorf("diagnostic mid = %q, want 1350", d.Mid)
+	}
+	if d.AsOf != asOf.Format(time.RFC3339) {
+		t.Errorf("diagnostic as_of = %q, want %q", d.AsOf, asOf.Format(time.RFC3339))
+	}
+	if d.OutlierDistancePct != "3.8462" || d.OtherDistancePct != "1.1111" {
+		t.Errorf("diagnostic distances = %q/%q, want 3.8462/1.1111",
+			d.OutlierDistancePct, d.OtherDistancePct)
+	}
+	if d.Reason != "" {
+		t.Errorf("diagnostic reason = %q, want empty when an outlier was named", d.Reason)
+	}
+
+	// The diagnostic's own figures are money and must be walked at the
+	// boundary like every other decimal string.
+	values := MoneyStrings(out)
+	for _, want := range []string{"1350", "3.8462", "1.1111"} {
+		found := false
+		for _, got := range values {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("MoneyStrings omits the diagnostic value %q", want)
+		}
+	}
+}
+
+// TestToCorridorJSONOmitsAFailedDiagnosticsMid pins the unknown-versus-zero
+// rule on the diagnostic: a provider that failed has no mid, so the field is
+// absent rather than published as "0", which a client would read as a quoted
+// rate of zero.
+func TestToCorridorJSONOmitsAFailedDiagnosticsMid(t *testing.T) {
+	lr := &LadderResult{
+		Reference: refrate.Rate{
+			Mid:       decimal.RequireFromString("1365"),
+			Agreement: refrate.AgreementDisagree,
+			Diagnostic: &refrate.Diagnostic{
+				Source: "floatrates",
+				Reason: "diagnostic provider unavailable: timeout",
+			},
+		},
+	}
+
+	out := ToCorridorJSON(lr, "USD/NGN")
+	d := out.ReferenceDiagnostic
+	if d == nil {
+		t.Fatal("reference_diagnostic is nil; the attempted provider must be named")
+	}
+	if d.Mid != "" {
+		t.Errorf("diagnostic mid = %q, want empty: a failed provider quoted no rate", d.Mid)
+	}
+	if d.Source != "floatrates" || d.Outlier != "" || !strings.Contains(d.Reason, "unavailable") {
+		t.Errorf("diagnostic = %+v, want floatrates named with a failure reason and no outlier", d)
+	}
+	// On the wire the key must be absent entirely: a "0" would read as a
+	// quoted rate of zero rather than as an unavailable observation.
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshaling: %v", err)
+	}
+	var doc struct {
+		Diagnostic map[string]json.RawMessage `json:"reference_diagnostic"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshaling: %v", err)
+	}
+	if _, ok := doc.Diagnostic["mid"]; ok {
+		t.Errorf("reference_diagnostic carries a mid key: %s", raw)
+	}
+}
+
+func TestToCorridorJSONOmitsAbsentReferenceDiagnostic(t *testing.T) {
+	out := ToCorridorJSON(&LadderResult{
+		Reference: refrate.Rate{Mid: decimal.RequireFromString("1350")},
+	}, "USD/NGN")
+	if out.ReferenceDiagnostic != nil {
+		t.Errorf("reference_diagnostic = %+v, want absent when no diagnostic ran", out.ReferenceDiagnostic)
 	}
 }
 

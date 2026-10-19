@@ -311,9 +311,11 @@ identical zero-valued figures.
 
 The architectural decision behind this contract is documented in **[ADR: reference mids are never averaged](docs/adr-reference-mids.md)**.
 
-Two providers are queried per measurement. Rates are **never averaged**: a
+Two providers are scored per measurement. Rates are **never averaged**: a
 blended mid names no provider, and every figure has to be traceable to a source
-a reader can check.
+a reader can check. When those two disagree, an independent third provider is
+consulted only to report which one is the outlier; it never enters the scored
+mid ([reference providers](docs/reference-providers.md)).
 
 | Divergence | State | Scored against |
 |:---|:---|:---|
@@ -429,7 +431,7 @@ What verification looks like — including broken-chain output: **[docs/verify-s
 | Package | Responsibility |
 |:---|:---|
 | `asset` | Corridor endpoints, verified issuers, the fiat-peg registry |
-| `refrate` | Reference mid-market rates: two providers, cached, cross-checked |
+| `refrate` | Reference mid-market rates: two scored providers plus a diagnostic third, cached, cross-checked |
 | `anchor` | SEP-1 discovery — can this anchor be priced at all, and which SEPs does it advertise? |
 | `sep38` | Anchor RFQ client, with the fee-denomination identity |
 | `dex` | On-chain pricing via Horizon pathfinding, plus market health |

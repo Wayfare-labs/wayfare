@@ -37,6 +37,7 @@ A successful response contains:
 - `depends_on` — fiat-token dependencies for a derivative corridor.
 - `reference_mid`, `reference_source`, `reference_pair` — the benchmark used for scoring.
 - `reference_agreement`, optional secondary mid/source/divergence/note, and `scored` — the two-provider benchmark cross-check.
+- `reference_diagnostic` — optional third-provider attribution of a `DISAGREE`: `source`, `mid`, optional `as_of`, `outlier`, the two relative distances, and optional `reason`. It is evidence only; `reference_mid`, `reference_source` and `scored` are chosen exactly as they would be without it. See [reference providers](reference-providers.md).
 - `reference_fetched_at` — when the benchmark was obtained, when available.
 - `floor_loss_pct`, `floor_size`, `worst_loss_pct`, `worst_size` — ladder summary values.
 - `recommended` — the best acceptable quote, or JSON `null` when no size is recommendable.
@@ -486,7 +487,7 @@ authenticate anyone.
 
 `live` is not a verdict. It describes where the response came from. A response with `live: false` is historical, and its `stale` envelope is authoritative for age. Consumers must not infer freshness from deployment time, request time, or the absence of an error.
 
-Reference rates are never averaged. The response identifies the provider and, when available, the second provider and divergence. `NO-MARKET` means no path was returned; it is not the same claim as a priced route with an `UNUSABLE` verdict.
+Reference rates are never averaged. The response identifies the provider and, when available, the second provider and divergence. On a `DISAGREE` it may also carry `reference_diagnostic`, which names an independent third provider and which of the two primaries is farther from it; that attribution never changes the scored mid. `NO-MARKET` means no path was returned; it is not the same claim as a priced route with an `UNUSABLE` verdict.
 
 ## API deprecation policy
 

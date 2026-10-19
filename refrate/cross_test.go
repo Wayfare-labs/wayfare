@@ -793,6 +793,260 @@ func TestPrimaryUnparseableFallsToSecondary(t *testing.T) {
 	}
 }
 
+// diagnosticProvider is a third provider that records whether it was asked.
+// It is deliberately separate from fakeProvider so a test can assert the
+// diagnostic was not consulted outside the disagreement band.
+type diagnosticProvider struct {
+	name  string
+	mid   string
+	asOf  time.Time
+	err   error
+	calls int
+}
+
+func (d *diagnosticProvider) Name() string { return d.name }
+
+func (d *diagnosticProvider) Rate(_ context.Context, base, quote string) (Rate, error) {
+	d.calls++
+	if d.err != nil {
+		return Rate{}, d.err
+	}
+	asOf := d.asOf
+	if asOf.IsZero() {
+		asOf = time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC)
+	}
+	return Rate{
+		Base: base, Quote: quote,
+		Mid:    decimal.RequireFromString(d.mid),
+		AsOf:   asOf,
+		Source: d.name,
+	}, nil
+}
+
+// TestDiagnosticAttributesTheOutlierWithoutMovingTheScoredMid is the central
+// contract of issue #597: the third provider reports which primary is farther
+// from it, and the mid chosen by the conservative rule is byte-for-byte the
+// one the same pair produces without a diagnostic. ADR 001 forbids averaging;
+// it does not forbid consulting.
+func TestDiagnosticAttributesTheOutlierWithoutMovingTheScoredMid(t *testing.T) {
+	baseline := rateOf(t, crossOf("1300", "1365"))
+
+	diag := &diagnosticProvider{name: "floatrates", mid: "1350"}
+	withDiag := rateOf(t, &Cross{
+		Primary:    &fakeProvider{name: "primary", mid: "1300"},
+		Secondary:  &fakeProvider{name: "secondary", mid: "1365"},
+		Diagnostic: diag,
+	})
+
+	if diag.calls != 1 {
+		t.Errorf("diagnostic provider was asked %d time(s), want exactly 1 on a DISAGREE", diag.calls)
+	}
+
+	// The scored decision is untouched: same mid, same source, same
+	// secondary, same divergence, same prose. The diagnostic is evidence
+	// beside the result, not an input to it.
+	if !withDiag.Mid.Equal(baseline.Mid) || withDiag.Source != baseline.Source {
+		t.Errorf("scored mid changed from %s (%s) to %s (%s); a diagnostic must never move it",
+			baseline.Mid, baseline.Source, withDiag.Mid, withDiag.Source)
+	}
+	if withDiag.Source != "secondary" || !withDiag.Mid.Equal(decimal.RequireFromString("1365")) {
+		t.Errorf("scored against %s (%s), want the conservative 1365 from secondary",
+			withDiag.Mid, withDiag.Source)
+	}
+	if !withDiag.SecondaryMid.Equal(baseline.SecondaryMid) || withDiag.SecondarySource != baseline.SecondarySource {
+		t.Errorf("secondary observation changed: got %s/%s, want %s/%s",
+			withDiag.SecondaryMid, withDiag.SecondarySource, baseline.SecondaryMid, baseline.SecondarySource)
+	}
+	if !withDiag.DivergencePct.Equal(baseline.DivergencePct) {
+		t.Errorf("DivergencePct moved from %s to %s", baseline.DivergencePct, withDiag.DivergencePct)
+	}
+	if withDiag.Note != baseline.Note {
+		t.Errorf("Note changed:\n  without diagnostic: %q\n  with diagnostic:    %q", baseline.Note, withDiag.Note)
+	}
+	if withDiag.Agreement != AgreementDisagree {
+		t.Errorf("Agreement = %s, want DISAGREE", withDiag.Agreement)
+	}
+
+	d := withDiag.Diagnostic
+	if d == nil {
+		t.Fatal("Diagnostic is nil; the third provider answered and must be attributed")
+	}
+	if d.Source != "floatrates" {
+		t.Errorf("Diagnostic.Source = %q, want the provider that answered", d.Source)
+	}
+	if !d.Mid.Equal(decimal.RequireFromString("1350")) {
+		t.Errorf("Diagnostic.Mid = %s, want 1350", d.Mid)
+	}
+	if d.Outlier != "primary" {
+		t.Errorf("Diagnostic.Outlier = %q, want primary: it is 3.846%% from 1350, while secondary is 1.111%% away",
+			d.Outlier)
+	}
+	// 50/1300 = 3.8462%, 15/1350 = 1.1111%.
+	if got := d.OutlierDistancePct.StringFixed(4); got != "3.8462" {
+		t.Errorf("OutlierDistancePct = %s, want 3.8462", got)
+	}
+	if got := d.OtherDistancePct.StringFixed(4); got != "1.1111" {
+		t.Errorf("OtherDistancePct = %s, want 1.1111", got)
+	}
+	if d.Reason != "" {
+		t.Errorf("Diagnostic.Reason = %q, want empty when an outlier was named", d.Reason)
+	}
+}
+
+// TestDiagnosticAttributesTheSameOutlierRegardlessOfPrimaryOrder keeps the
+// attribution independent of which feed happens to be configured first.
+func TestDiagnosticAttributesTheSameOutlierRegardlessOfPrimaryOrder(t *testing.T) {
+	cases := []struct {
+		name               string
+		primary, secondary *fakeProvider
+	}{
+		{"primary is the outlier",
+			&fakeProvider{name: "low", mid: "1300"},
+			&fakeProvider{name: "high", mid: "1365"}},
+		{"secondary is the outlier",
+			&fakeProvider{name: "high", mid: "1365"},
+			&fakeProvider{name: "low", mid: "1300"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := rateOf(t, &Cross{
+				Primary:    tc.primary,
+				Secondary:  tc.secondary,
+				Diagnostic: &diagnosticProvider{name: "floatrates", mid: "1350"},
+			})
+			if r.Diagnostic == nil {
+				t.Fatal("Diagnostic is nil")
+			}
+			if r.Diagnostic.Outlier != "low" {
+				t.Errorf("Outlier = %q, want low in both orderings", r.Diagnostic.Outlier)
+			}
+			if !r.Mid.Equal(decimal.RequireFromString("1365")) || r.Source != "high" {
+				t.Errorf("scored against %s (%s), want the conservative 1365 from high",
+					r.Mid, r.Source)
+			}
+		})
+	}
+}
+
+// TestDiagnosticOnlyConsultedOnDisagree pins the cost and the scope: a third
+// provider is not asked on AGREE, STALE, MALFUNCTION or SINGLE. Asking it
+// outside DISAGREE would add a request for no attribution, and could tempt a
+// later change into letting it influence a band it was never meant to see.
+func TestDiagnosticOnlyConsultedOnDisagree(t *testing.T) {
+	now := time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name string
+		c    *Cross
+	}{
+		{"AGREE", &Cross{
+			Primary:   &fakeProvider{name: "primary", mid: "1348"},
+			Secondary: &fakeProvider{name: "secondary", mid: "1350"},
+		}},
+		{"STALE", &Cross{
+			Primary:   &fakeProvider{name: "fresh", mid: "1300", asOf: now},
+			Secondary: &fakeProvider{name: "stale", mid: "1365", asOf: now.Add(-96 * time.Hour)},
+		}},
+		{"MALFUNCTION", &Cross{
+			Primary:   &fakeProvider{name: "primary", mid: "100"},
+			Secondary: &fakeProvider{name: "secondary", mid: "500"},
+		}},
+		{"SINGLE", &Cross{
+			Primary:   &fakeProvider{name: "primary", mid: "1350"},
+			Secondary: &fakeProvider{name: "secondary", err: errors.New("down")},
+		}},
+		{"no secondary", &Cross{
+			Primary: &fakeProvider{name: "primary", mid: "1350"},
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diag := &diagnosticProvider{name: "floatrates", mid: "1350"}
+			tc.c.Diagnostic = diag
+			r := rateOf(t, tc.c)
+
+			if diag.calls != 0 {
+				t.Errorf("diagnostic provider was asked %d time(s) on %s, want 0", diag.calls, r.Agreement)
+			}
+			if r.Diagnostic != nil {
+				t.Errorf("Diagnostic = %+v on %s, want nil", r.Diagnostic, r.Agreement)
+			}
+		})
+	}
+}
+
+// TestDiagnosticTieNamesNoOutlier covers the honest unattributed case: a third
+// mid exactly equidistant from both primaries cannot say which side is wrong.
+// The distances are still reported so a reader can see the tie.
+func TestDiagnosticTieNamesNoOutlier(t *testing.T) {
+	// 100 -> 104.04 is a 4.04% disagreement, inside the band. 102 is
+	// equidistant in relative terms: (102-100)/100 = (104.04-102)/102 = 2%.
+	r := rateOf(t, &Cross{
+		Primary:    &fakeProvider{name: "low", mid: "100"},
+		Secondary:  &fakeProvider{name: "high", mid: "104.04"},
+		Diagnostic: &diagnosticProvider{name: "floatrates", mid: "102"},
+	})
+
+	if r.Agreement != AgreementDisagree {
+		t.Fatalf("Agreement = %s, want DISAGREE (divergence %s%%)",
+			r.Agreement, r.DivergencePct.StringFixed(4))
+	}
+	d := r.Diagnostic
+	if d == nil {
+		t.Fatal("Diagnostic is nil; the provider answered, so the attempted attribution must be recorded")
+	}
+	if d.Outlier != "" {
+		t.Errorf("Outlier = %q, want empty when the primaries are equidistant", d.Outlier)
+	}
+	if !d.OutlierDistancePct.Equal(d.OtherDistancePct) {
+		t.Errorf("distances = %s and %s, want the equal distances that explain the missing attribution",
+			d.OutlierDistancePct, d.OtherDistancePct)
+	}
+	if !strings.Contains(d.Reason, "equidistant") {
+		t.Errorf("Reason = %q, want it to explain the tie", d.Reason)
+	}
+	// A tie must not move the scored mid either.
+	if !r.Mid.Equal(decimal.RequireFromString("104.04")) || r.Source != "high" {
+		t.Errorf("scored against %s (%s), want the conservative 104.04", r.Mid, r.Source)
+	}
+}
+
+// TestDiagnosticFailureLeavesTheRateIntact keeps a failing third provider a
+// missing diagnostic, never a failed measurement: the two primaries answered
+// and the conservative rule is still fully applicable.
+func TestDiagnosticFailureLeavesTheRateIntact(t *testing.T) {
+	baseline := rateOf(t, crossOf("1300", "1365"))
+
+	r := rateOf(t, &Cross{
+		Primary:   &fakeProvider{name: "primary", mid: "1300"},
+		Secondary: &fakeProvider{name: "secondary", mid: "1365"},
+		Diagnostic: &diagnosticProvider{
+			name: "floatrates",
+			err:  &ErrUnavailable{Source: "floatrates", Err: errors.New("timeout")},
+		},
+	})
+
+	if r.Agreement != AgreementDisagree || !r.Scorable() {
+		t.Errorf("Agreement = %s (scorable %v), want the scorable DISAGREE the primaries produced",
+			r.Agreement, r.Scorable())
+	}
+	if !r.Mid.Equal(baseline.Mid) || r.Source != baseline.Source {
+		t.Errorf("scored against %s (%s), want the unchanged %s (%s)",
+			r.Mid, r.Source, baseline.Mid, baseline.Source)
+	}
+	if r.Diagnostic == nil {
+		t.Fatal("Diagnostic is nil; the attempted provider must be named even when it failed")
+	}
+	if r.Diagnostic.Source != "floatrates" || r.Diagnostic.Outlier != "" {
+		t.Errorf("Diagnostic = %+v, want floatrates named with no outlier", r.Diagnostic)
+	}
+	if !strings.Contains(r.Diagnostic.Reason, "unavailable") {
+		t.Errorf("Reason = %q, want the failure to be reported", r.Diagnostic.Reason)
+	}
+}
+
 // TestNeverAverageTwoProviderMids pins the rule that a cross-checked mid is
 // always one provider's own figure, never the arithmetic mean of two.
 //

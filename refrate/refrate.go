@@ -63,6 +63,12 @@ type Rate struct {
 	// Note explains a non-trivial Agreement in prose, for surfaces that
 	// show a reason rather than a state.
 	Note string
+
+	// Diagnostic is the optional third-provider attribution of a DISAGREE.
+	// It is nil unless a diagnostic provider was configured and the two
+	// primaries genuinely disagreed; it never participates in choosing Mid,
+	// Source or AsOf. See Diagnostic and Cross.Diagnostic.
+	Diagnostic *Diagnostic
 }
 
 // Scorable reports whether a verdict may be derived from this rate.

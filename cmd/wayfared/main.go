@@ -131,6 +131,12 @@ func main() {
 		RefRate: &refrate.Cross{
 			Primary:   &refrate.Cached{Inner: &refrate.ExchangeRateAPI{Logger: logger}},
 			Secondary: &refrate.Cached{Inner: &refrate.CurrencyAPI{Logger: logger}},
+			// The third provider is consulted only when the first two
+			// disagree, and only to attribute which of them is the outlier.
+			// It never contributes a scored mid (see refrate.Cross). Cached
+			// because a sweep prices many rungs and a diagnostic is a
+			// daily-published figure, not a per-rung one.
+			Diagnostic: &refrate.Cached{Inner: &refrate.FloatRates{Logger: logger}},
 		},
 	}
 

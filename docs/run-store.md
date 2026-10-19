@@ -104,6 +104,16 @@ carries `fetched_at` — when this project last obtained the rate, which can be
 older than `recorded_at` when a cached rate was reused — so a reader can tell
 how old the benchmark was when the reading was taken.
 
+On a `DISAGREE` where the optional third provider answered, `reference` also
+carries `diagnostic_source`, `diagnostic_mid`, `diagnostic_as_of`,
+`diagnostic_outlier`, `diagnostic_outlier_distance_pct` and
+`diagnostic_other_distance_pct` (plus `diagnostic_reason` when no side could be
+attributed). These fields are `omitempty` and were declared after every earlier
+field, so a record written before the diagnostic existed encodes exactly as it
+always did and still verifies. They are evidence about which primary is the
+outlier; `mid` and `scored_against` are unaffected. See
+[reference providers](reference-providers.md).
+
 **`checks` and `metrics` carry the findings taken with the measurement.** A
 check result preserves its tri-state — `determined: false` is *not* a failure —
 plus its `reason`, `summary`, evidence and timestamp, exactly as a live

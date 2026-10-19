@@ -118,6 +118,22 @@ type RungJSON struct {
 	Error        string         `json:"error,omitempty"`
 }
 
+// ReferenceDiagnosticJSON is the third-provider attribution of a DISAGREE.
+//
+// It is present only when a diagnostic provider was configured and the two
+// scored providers disagreed. It is evidence about which primary is the
+// outlier, not an input: reference_mid, reference_source and every verdict are
+// chosen exactly as they would be without it.
+type ReferenceDiagnosticJSON struct {
+	Source             string `json:"source"`
+	Mid                string `json:"mid,omitempty"`
+	AsOf               string `json:"as_of,omitempty"`
+	Outlier            string `json:"outlier,omitempty"`
+	OutlierDistancePct string `json:"outlier_distance_pct,omitempty"`
+	OtherDistancePct   string `json:"other_distance_pct,omitempty"`
+	Reason             string `json:"reason,omitempty"`
+}
+
 type CorridorJSON struct {
 	SendAsset    AssetJSON `json:"send_asset"`
 	ReceiveAsset AssetJSON `json:"receive_asset"`
@@ -136,12 +152,13 @@ type CorridorJSON struct {
 	// verdict could honestly be derived from either; a client rendering the
 	// loss curve without checking it would show zeroes as though they were
 	// measurements.
-	ReferenceAgreement       string `json:"reference_agreement"`
-	ReferenceSecondaryMid    string `json:"reference_secondary_mid,omitempty"`
-	ReferenceSecondarySource string `json:"reference_secondary_source,omitempty"`
-	ReferenceDivergencePct   string `json:"reference_divergence_pct,omitempty"`
-	ReferenceNote            string `json:"reference_note,omitempty"`
-	Scored                   bool   `json:"scored"`
+	ReferenceAgreement       string                   `json:"reference_agreement"`
+	ReferenceSecondaryMid    string                   `json:"reference_secondary_mid,omitempty"`
+	ReferenceSecondarySource string                   `json:"reference_secondary_source,omitempty"`
+	ReferenceDivergencePct   string                   `json:"reference_divergence_pct,omitempty"`
+	ReferenceNote            string                   `json:"reference_note,omitempty"`
+	ReferenceDiagnostic      *ReferenceDiagnosticJSON `json:"reference_diagnostic,omitempty"`
+	Scored                   bool                     `json:"scored"`
 
 	// ReferenceAsOf is the upstream provider's rate timestamp. Omitted if
 	// the provider provided no timestamp.
@@ -380,6 +397,27 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 	}
 	if !l.Reference.DivergencePct.IsZero() {
 		out.ReferenceDivergencePct = l.Reference.DivergencePct.StringFixed(4)
+	}
+	if d := l.Reference.Diagnostic; d != nil {
+		out.ReferenceDiagnostic = &ReferenceDiagnosticJSON{
+			Source: d.Source,
+			Reason: d.Reason,
+		}
+		// A failed diagnostic has no mid; zero is absence, not a quoted
+		// figure, so it is omitted rather than published as "0".
+		if !d.Mid.IsZero() {
+			out.ReferenceDiagnostic.Mid = d.Mid.String()
+		}
+		if !d.AsOf.IsZero() {
+			out.ReferenceDiagnostic.AsOf = d.AsOf.UTC().Format(time.RFC3339)
+		}
+		out.ReferenceDiagnostic.Outlier = d.Outlier
+		if !d.OutlierDistancePct.IsZero() {
+			out.ReferenceDiagnostic.OutlierDistancePct = d.OutlierDistancePct.StringFixed(4)
+		}
+		if !d.OtherDistancePct.IsZero() {
+			out.ReferenceDiagnostic.OtherDistancePct = d.OtherDistancePct.StringFixed(4)
+		}
 	}
 	if l.Parallel != nil {
 		out.ParallelStatus = l.Parallel.Status.String()
