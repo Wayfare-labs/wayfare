@@ -77,11 +77,25 @@ jobs:
       - name: go build
         run: go build ./...
 
+  # No job goes without an explicit timeout (#573). GitHub's default ceiling is
+  # six hours; these numbers come from observed durations on GitHub-hosted
+  # runners, sampled across a week of runs, and leave headroom for a cold or
+  # contended runner rather than being chosen at random.
+  #
+  # This job is a needs-gate: it runs a single `test` against needs.build's
+  # aggregated result, and exits as soon as the matrix resolves — measured
+  # check-run spans are 2–4s with a ~4s runner-scheduling tail, so the job is
+  # bounded by the matrix above, whose slowest run finishes in under 10 minutes
+  # (typical axes complete in <1; the worst observed is <3m under cold caches).
+  # The floor of 1m covers the runner and steps alone; 10 matches the matrix's
+  # own timeout, so the gate can never hold a finished branch open longer than
+  # the work it is gating is known to take.
   build-and-test:
     name: build and test
     needs: build
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: require all timezone runs to pass
         run: test "${{ needs.build.result }}" = success

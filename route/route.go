@@ -192,6 +192,16 @@ type Quote struct {
 	Description string // e.g. "USDC -> XLM -> NGNC"
 	Source      string // anchor domain, or "stellar-dex"
 
+	// Hops are the intermediate assets the priced path routes through, in
+	// execution order, between SendAsset and ReceiveAsset. Empty means a
+	// direct market — the same fact dex.Path.Hops records, carried onto
+	// the quote because Description cannot carry it: the arrow-joined
+	// string is display text, and an asset code identifies nothing
+	// without its issuer. The full path in execution order is SendAsset,
+	// then Hops, then ReceiveAsset; QuoteJSON.Hops publishes exactly that
+	// sequence (backlog #84, issue #100).
+	Hops []asset.Asset
+
 	SendAsset     asset.Asset
 	SendAmount    decimal.Decimal
 	ReceiveAsset  asset.Asset
@@ -628,6 +638,7 @@ func (e *Engine) quoteDEX(ctx context.Context, req Request, ref refrate.Rate) (*
 		Kind:          KindDEX,
 		Description:   best.Describe(),
 		Source:        "stellar-dex",
+		Hops:          best.Hops,
 		SendAsset:     req.SendAsset,
 		SendAmount:    req.SendAmount,
 		ReceiveAsset:  req.ReceiveAsset,

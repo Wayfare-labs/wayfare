@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -190,6 +191,67 @@ func TestLiveCorridorIsRefused(t *testing.T) {
 	joined := strings.Join(res.Notes, " ")
 	if !strings.Contains(joined, "No viable route") {
 		t.Errorf("expected an explicit no-viable-route note, got: %v", res.Notes)
+	}
+}
+
+// TestQuoteHopsCarryThePathAsStructuredData follows the route from
+// pathfinding to the wire (backlog #84, issue #100). The recorded best path
+// on this corridor routes USDC through native XLM to NGNC; the quote must
+// carry that intermediate hop, and ToQuoteJSON must publish the path as
+// structured assets in execution order — both endpoints, the intermediate,
+// issuers where they exist — while the description string stays byte-for-
+// byte what it was, because it is a display field existing clients read.
+//
+// The assertion is exact (reflect.DeepEqual against the wanted entries), so
+// it fails if a hop is dropped, reordered, published without its issuer, or
+// if the description is touched on the way out.
+func TestQuoteHopsCarryThePathAsStructuredData(t *testing.T) {
+	srv := horizonStub(t, liveStrictSendResponse)
+	defer srv.Close()
+
+	e := &Engine{DEX: &dex.Client{HorizonURL: srv.URL}, RefRate: usdToNGN("1500")}
+	res, err := e.Quote(context.Background(), ngnRequest("100"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+	if len(res.Quotes) == 0 {
+		t.Fatal("expected at least one quote")
+	}
+	q := res.Quotes[0]
+
+	// The intermediate hops travel with the quote: exactly the native XLM
+	// bridge this recorded path takes.
+	if len(q.Hops) != 1 || !q.Hops[0].IsNative() {
+		t.Fatalf("Quote.Hops = %+v, want exactly the native XLM hop", q.Hops)
+	}
+
+	// The description string is unchanged: display text, still published,
+	// still the same bytes.
+	const wantDescription = "USDC -> XLM -> NGNC"
+	if q.Description != wantDescription {
+		t.Fatalf("Description = %q, want %q — it must stay exactly as it was", q.Description, wantDescription)
+	}
+
+	j := ToQuoteJSON(&q)
+	if j.Description != wantDescription {
+		t.Errorf("wire Description = %q, want %q", j.Description, wantDescription)
+	}
+
+	want := []AssetJSON{
+		{Code: "USDC", Issuer: asset.USDCIssuer, Asset: "stellar:USDC:" + asset.USDCIssuer},
+		{Code: "XLM", Asset: "stellar:native"},
+		{Code: "NGNC", Issuer: asset.LinkIOIssuer, Peg: "NGN", Asset: "stellar:NGNC:" + asset.LinkIOIssuer},
+	}
+	if !reflect.DeepEqual(j.Hops, want) {
+		t.Errorf("hops =\n  %+v\nwant (execution order, both endpoints, issuers where known):\n  %+v",
+			j.Hops, want)
+	}
+
+	// The native hop carries no issuer — correctly, because XLM has none
+	// and stellar:native identifies it — and must not claim its issuer is
+	// merely unknown.
+	if j.Hops[1].IssuerUnknown {
+		t.Error("the native XLM hop must not be marked issuer_unknown; native assets have no issuer by nature")
 	}
 }
 

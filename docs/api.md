@@ -164,6 +164,11 @@ curl -s "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC&sizes=
       "integrity": "DIRECT",
       "quote": {
         "description": "USDC -> XLM -> NGNC",
+        "hops": [
+          {"code": "USDC", "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", "asset": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+          {"code": "XLM", "asset": "stellar:native"},
+          {"code": "NGNC", "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6", "peg": "NGN", "asset": "stellar:NGNC:GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"}
+        ],
         "source": "stellar-dex",
         "receive_amount": "186947.8515264",
         "effective_rate": "37.38957030528",
@@ -193,6 +198,8 @@ curl -s "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC&sizes=
   ]
 }
 ```
+
+Every quote — `recommended` and each rung's `quote` — carries `hops`: the path as structured data, in execution order with both endpoints, each entry an asset with its `issuer` where one was established and its `peg` where known. `description` stays exactly as it was, for display and compatibility; `hops` is the field to consume, because an asset code identifies nothing without its issuer and a client must not parse prose or guess an issuer from a code. A hop whose issuing account could not be established says so with `issuer_unknown: true` instead of omitting the field silently; native and fiat assets have no issuer by nature and are identified in full by `asset`. A stored (stale) reading serves `hops: null` — the run store records the description string only, and “not recorded” is not the same claim as “no intermediate assets”.
 
 ## `GET /api/corridor/trend`
 

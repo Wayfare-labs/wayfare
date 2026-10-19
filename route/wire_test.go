@@ -284,3 +284,255 @@ func TestToAssetJSONOmitsWireFormForIncompleteAsset(t *testing.T) {
 		})
 	}
 }
+
+// assertHopKeys fails unless the marshaled hop carries exactly the named
+// keys — no dropped field, and no new one appearing silently. This is the
+// shape pin of the hops schema: values are asserted alongside it, but the
+// key set is the contract a client decodes against.
+func assertHopKeys(t *testing.T, i int, got map[string]json.RawMessage, want ...string) {
+	t.Helper()
+	wantSet := make(map[string]bool, len(want))
+	for _, k := range want {
+		wantSet[k] = true
+	}
+	for k, v := range got {
+		if !wantSet[k] {
+			t.Errorf("hop %d carries unexpected key %q (value %s)", i, k, v)
+		}
+	}
+	for k := range wantSet {
+		if _, ok := got[k]; !ok {
+			t.Errorf("hop %d is missing key %q", i, k)
+		}
+	}
+}
+
+// hopsOf marshals a rendered QuoteJSON and returns its hops array as raw
+// JSON per entry, failing the test when the key is absent or is not an
+// array — the shape check runs on the actual bytes, not the Go struct.
+func hopsOf(t *testing.T, j *QuoteJSON) []map[string]json.RawMessage {
+	t.Helper()
+	buf, err := json.Marshal(j)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(buf, &top); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	raw, ok := top["hops"]
+	if !ok {
+		t.Fatalf("marshaled quote has no \"hops\" key — the route must publish as data, not only as the description string: %s", buf)
+	}
+	if !strings.HasPrefix(string(raw), "[") {
+		t.Fatalf("hops = %s, want an array", raw)
+	}
+	var hops []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &hops); err != nil {
+		t.Fatalf("unmarshal hops: %v", err)
+	}
+	return hops
+}
+
+// TestQuoteJSONHopsSchema is the schema test issue #100 asks for: it pins
+// the exact wire shape of quote.hops (backlog #84) — an array beside the
+// description holding every asset of the path in execution order with both
+// endpoints, each entry carrying code, issuer where established, peg where
+// known, and the SEP-38 wire form, and no other keys.
+//
+// The path is the recorded USDC -> GHSC shape documented in route/route.go:
+// every priced path ran through XLM and NGNC. Exact key sets and exact
+// values are both asserted, so a dropped field, a renamed tag, a reordered
+// hop or an issuer quietly going missing all fail this test — as does any
+// change to the description string, which must stay byte-for-byte display
+// text beside the new data.
+func TestQuoteJSONHopsSchema(t *testing.T) {
+	const wantDescription = "USDC -> XLM -> NGNC -> GHSC"
+	q := &Quote{
+		Kind:          KindDEX,
+		Description:   wantDescription,
+		Source:        "stellar-dex",
+		SendAsset:     asset.USDC(),
+		SendAmount:    decimal.RequireFromString("100"),
+		Hops:          []asset.Asset{asset.Native(), asset.NGNC()},
+		ReceiveAsset:  asset.GHSC(),
+		ReceiveAmount: decimal.RequireFromString("600"),
+		Verdict:       VerdictFair,
+	}
+
+	j := ToQuoteJSON(q)
+
+	// The description string is unchanged — it stays for display and for
+	// compatibility, on the wire as well as on the struct.
+	buf, err := json.Marshal(j)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(buf, &top); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// Decode rather than compare raw bytes: encoding/json escapes '>' as
+	// \u003e inside strings, so the raw message is not the string itself.
+	var description string
+	if err := json.Unmarshal(top["description"], &description); err != nil {
+		t.Fatalf("unmarshal description: %v", err)
+	}
+	if description != wantDescription {
+		t.Errorf("description = %q, want %q unchanged", description, wantDescription)
+	}
+
+	hops := hopsOf(t, j)
+	if len(hops) != 4 {
+		t.Fatalf("hops has %d entries, want 4 (send, two intermediates, receive): %s", len(hops), hops)
+	}
+
+	type wantHop struct {
+		code, issuer, peg, asset string
+		keys                     []string
+	}
+	want := []wantHop{
+		{
+			code: "USDC", issuer: asset.USDCIssuer,
+			asset: "stellar:USDC:" + asset.USDCIssuer,
+			keys:  []string{"code", "issuer", "asset"},
+		},
+		{
+			// Native XLM: no issuer by nature, identified in full by
+			// stellar:native — and not marked issuer_unknown.
+			code: "XLM", asset: "stellar:native",
+			keys: []string{"code", "asset"},
+		},
+		{
+			code: "NGNC", issuer: asset.LinkIOIssuer, peg: "NGN",
+			asset: "stellar:NGNC:" + asset.LinkIOIssuer,
+			keys:  []string{"code", "issuer", "peg", "asset"},
+		},
+		{
+			// GHSC is issued by the same account as NGNC; its wire form
+			// names its own code.
+			code: "GHSC", issuer: asset.LinkIOIssuer, peg: "GHS",
+			asset: "stellar:GHSC:" + asset.LinkIOIssuer,
+			keys:  []string{"code", "issuer", "peg", "asset"},
+		},
+	}
+
+	for i, w := range want {
+		h := hops[i]
+		assertHopKeys(t, i, h, w.keys...)
+
+		if got := strings.Trim(string(h["code"]), `"`); got != w.code {
+			t.Errorf("hop %d code = %q, want %q (execution order: send, intermediates, receive)", i, got, w.code)
+		}
+		// The identity rule: an issuer in the want is present in the
+		// JSON, and an issuer absent from the want is absent from it —
+		// never a code published alone for a reader to guess at.
+		issuer, hasIssuer := h["issuer"]
+		if w.issuer == "" {
+			if hasIssuer {
+				t.Errorf("hop %d issuer = %s, want no issuer key (native asset)", i, issuer)
+			}
+		} else if !hasIssuer {
+			t.Errorf("hop %d (%s) is missing its issuer — an asset code identifies nothing without it", i, w.code)
+		} else if got := strings.Trim(string(issuer), `"`); got != w.issuer {
+			t.Errorf("hop %d issuer = %s, want %q", i, got, w.issuer)
+		}
+
+		if w.peg == "" {
+			if _, ok := h["peg"]; ok {
+				t.Errorf("hop %d carries a peg %s it does not have", i, h["peg"])
+			}
+		} else if got := strings.Trim(string(h["peg"]), `"`); got != w.peg {
+			t.Errorf("hop %d peg = %s, want %q — peg where known", i, got, w.peg)
+		}
+
+		if got := strings.Trim(string(h["asset"]), `"`); got != w.asset {
+			t.Errorf("hop %d asset = %s, want %q", i, got, w.asset)
+		}
+	}
+}
+
+// TestQuoteJSONHopsSayWhenIssuerUnknown is the negative test behind the
+// issue's fourth criterion: a hop whose issuing account cannot be
+// established must say so on the wire instead of omitting the field
+// silently. BLND is the real case — observed as a hop in recorded live
+// paths and never verified against an issuer's stellar.toml (see
+// asset/known.go) — so a consumer asking whether a route crosses a
+// particular issuer is told "unknown" rather than left to guess an issuer
+// from the code alone, which is the exact error this project refuses.
+func TestQuoteJSONHopsSayWhenIssuerUnknown(t *testing.T) {
+	q := &Quote{
+		Kind:          KindDEX,
+		Description:   "USDC -> BLND -> NGNC",
+		Source:        "stellar-dex",
+		SendAsset:     asset.USDC(),
+		Hops:          []asset.Asset{asset.Stellar("BLND", "")},
+		ReceiveAsset:  asset.NGNC(),
+		ReceiveAmount: decimal.RequireFromString("1000"),
+		Verdict:       VerdictFair,
+	}
+
+	hops := hopsOf(t, ToQuoteJSON(q))
+	if len(hops) != 3 {
+		t.Fatalf("hops has %d entries, want 3: %s", len(hops), hops)
+	}
+
+	// The BLND hop says its issuer was not established: the marker is
+	// present and true, and it is not papered over with a guessed wire
+	// form or a made-up issuer.
+	unknown := hops[1]
+	assertHopKeys(t, 1, unknown, "code", "issuer_unknown")
+	if got := string(unknown["issuer_unknown"]); got != "true" {
+		t.Errorf("BLND hop issuer_unknown = %s, want true — the hop must say its issuer could not be established", got)
+	}
+	if got := strings.Trim(string(unknown["code"]), `"`); got != "BLND" {
+		t.Errorf("BLND hop code = %q, want \"BLND\"", got)
+	}
+
+	// The neighbours are established and unaffected: real issuers, no
+	// marker on either, and each one's own key set.
+	for i, w := range []struct {
+		code, issuer string
+		keys         []string
+	}{
+		{"USDC", asset.USDCIssuer, []string{"code", "issuer", "asset"}},
+		{"NGNC", asset.LinkIOIssuer, []string{"code", "issuer", "peg", "asset"}},
+	} {
+		idx := i * 2 // 0 and 2
+		h := hops[idx]
+		assertHopKeys(t, idx, h, w.keys...)
+		if got := strings.Trim(string(h["code"]), `"`); got != w.code {
+			t.Errorf("hop %d code = %q, want %q", idx, got, w.code)
+		}
+		if got := strings.Trim(string(h["issuer"]), `"`); got != w.issuer {
+			t.Errorf("hop %d issuer = %q, want %q", idx, got, w.issuer)
+		}
+	}
+}
+
+// TestToQuoteJSONHopsIncludeBothEndpointsOnADirectPath covers the empty-
+// intermediate case: a direct market still publishes its full route as two
+// hops in execution order. An empty Hops means direct, not "route
+// unavailable" — a consumer must never have to tell those apart by the
+// absence of a field.
+func TestToQuoteJSONHopsIncludeBothEndpointsOnADirectPath(t *testing.T) {
+	q := &Quote{
+		Kind:          KindDEX,
+		Description:   "USDC -> NGNC",
+		Source:        "stellar-dex",
+		SendAsset:     asset.USDC(),
+		ReceiveAsset:  asset.NGNC(),
+		ReceiveAmount: decimal.RequireFromString("1000"),
+	}
+
+	j := ToQuoteJSON(q)
+	if len(j.Hops) != 2 {
+		t.Fatalf("hops = %+v, want exactly the two endpoints of a direct path", j.Hops)
+	}
+	if j.Hops[0].Code != "USDC" || j.Hops[0].Issuer != asset.USDCIssuer {
+		t.Errorf("hop 0 = %+v, want USDC with its issuer first", j.Hops[0])
+	}
+	if j.Hops[1].Code != "NGNC" || j.Hops[1].Issuer != asset.LinkIOIssuer {
+		t.Errorf("hop 1 = %+v, want NGNC with its issuer last", j.Hops[1])
+	}
+}

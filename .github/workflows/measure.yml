@@ -70,6 +70,11 @@
 
 name: measure
 
+# No job goes without an explicit timeout (#573). GitHub's default ceiling is
+# six hours; the one timeout here comes from observed durations — the whole
+# scheduled sweep (checkout, Go toolchain, the corridor sweeps over HTTP to
+# Horizon, and the final store verification) completes in under 1m when Horizon
+# is healthy and under 2m on slower attempts.
 on:
   schedule:
     # Every six hours. Matches monitor.DefaultInterval — the corridors move on

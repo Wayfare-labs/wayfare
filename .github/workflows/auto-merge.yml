@@ -65,6 +65,11 @@ permissions:
 # <!-- auto-merge-gate --> marker, and the workflow_run re-evaluation
 # after CI finishes must not be cancelled by the earlier pull_request_target
 # run — it is the one that sees the final check-runs state.
+#
+# No job goes without an explicit timeout (#573). GitHub's default ceiling is
+# six hours; this one is bounded by API pagination over a PR's changed files
+# and reviews — measured short (2–8s), never a hanging job by design — plus
+# just enough headroom for a slow runner rather than anything longer.
 
 jobs:
   gate:
