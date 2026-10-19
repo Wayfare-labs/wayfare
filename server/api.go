@@ -127,9 +127,10 @@ func (s *Server) budgetFor(n int) time.Duration {
 //
 // The limiter wraps every route, including /healthz: a deployment probe and
 // a browser page load are both requests a client chose to make, and the
-// free instance's cost is upstream calls plus CPU regardless of path. CORS
-// stays outermost so a rate-limited response still carries the origin
-// policy and remains readable to a browser client.
+// free instance's cost is upstream calls plus CPU regardless of path.
+// withGzip serves compressed responses when accepted (issue #610), skipping
+// tiny bodies. CORS stays outermost so a rate-limited or compressed response
+// still carries the origin policy and remains readable to a browser client.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/corridor", s.handleCorridor)
@@ -139,7 +140,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/market-structure", s.handleMarketStructure)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.Handle("/", uiHandler())
-	return withCORS(s.limit(mux))
+	return withCORS(withGzip(s.limit(mux)))
 }
 
 // limit applies the configured rate limiter, or passes through unchanged
