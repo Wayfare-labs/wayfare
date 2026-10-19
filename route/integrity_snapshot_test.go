@@ -139,6 +139,55 @@ func TestRecordedKESCHasNoMarket(t *testing.T) {
 	}
 }
 
+// TestRecordedNewHopsAreClassifiedFromSnapshots drives the expanded fiat-peg
+// registry (#23) over the recorded USDC->NGNC paths. The 2026-08-21
+// recording hops through USDZ at 5 USDC, PYUSD at 50 and 100 USDC, AQUA at
+// 0.1 and 1, yUSDC at 1, and BTC at 10. USDZ and PYUSD are now registered
+// fiat tokens, so those sizes must produce no unregistered-hop note; the
+// others must be surfaced by name.
+func TestRecordedNewHopsAreClassifiedFromSnapshots(t *testing.T) {
+	e := engineOver(loadSnap(t, "usdc-ngnc"), "USD/NGN", "1350.2568")
+
+	// Recorded paths through a now-registered fiat token (USDZ, PYUSD).
+	// Before #23 these hops were unregistered and would have been surfaced
+	// as a coverage gap; the registry now recognises them.
+	for _, amount := range []string{"5", "50", "100"} {
+		res := quoteAt(t, e, asset.NGNC(), "NGN", amount)
+		if res.Integrity != route.IntegrityDirect {
+			t.Errorf("at %s USDC: Integrity = %s, want DIRECT (XLM paths prove "+
+				"independence)", amount, res.Integrity)
+		}
+		if joined := strings.Join(res.Notes, " "); strings.Contains(joined, "Unregistered hop") {
+			t.Errorf("at %s USDC: USDZ/PYUSD is registered now, but the result "+
+				"still reports an unregistered hop: %v", amount, res.Notes)
+		}
+	}
+
+	// Recorded paths through tokens that remain unregistered (AQUA, yUSDC,
+	// BTC). The coverage gap must be surfaced by name, not silent.
+	unknown := map[string][]string{
+		"0.1": {"AQUA"},
+		"1":   {"AQUA", "yUSDC"},
+		"10":  {"BTC"},
+	}
+	for amount, codes := range unknown {
+		res := quoteAt(t, e, asset.NGNC(), "NGN", amount)
+		if res.Integrity != route.IntegrityDirect {
+			t.Errorf("at %s USDC: Integrity = %s, want DIRECT", amount, res.Integrity)
+		}
+		joined := strings.Join(res.Notes, " ")
+		if !strings.Contains(joined, "Unregistered hop") {
+			t.Errorf("at %s USDC: expected an unregistered-hop note, got notes: %v",
+				amount, res.Notes)
+		}
+		for _, code := range codes {
+			if !strings.Contains(joined, code) {
+				t.Errorf("at %s USDC: note does not name %s: %v", amount, code, res.Notes)
+			}
+		}
+	}
+}
+
 // TestRecordedLadderFindingsMatchTheirState checks the ladder-level summary
 // each corridor produces, since that string is what the UI and the API lead
 // with and is the most likely place for a state to be described as the wrong

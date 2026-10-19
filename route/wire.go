@@ -17,13 +17,53 @@ import (
 // rounding bug this project refuses internally.
 
 type QuoteJSON struct {
-	Description   string   `json:"description"`
+	// Kind is "dex" or "anchor-sep38" — see route.Kind. On-chain DEX
+	// liquidity and an anchor's own RFQ rails are two different markets
+	// that can price the same pair differently, and Source alone (a free
+	// -form domain or "stellar-dex") makes a client re-derive that
+	// distinction from a string it was never guaranteed to parse. Every
+	// quote in a response is "dex" today — see route.KindAnchorSEP38 — but
+	// the field is on the wire from the start so a caller never has to
+	// guess which rail a figure came from, and the two are never silently
+	// conflated into one number.
+	Kind        string `json:"kind"`
+	Description string `json:"description"`
+
+	// Hops is the same path as structured data: one entry per asset, in
+	// execution order, both endpoints included — [send, …intermediates,
+	// receive]. Each entry carries that asset's identity as established:
+	// code, issuer where known, peg where known (see AssetJSON).
+	//
+	// Description stays exactly as it was — display text, and the field
+	// existing clients already read. Hops exists because that string
+	// cannot be consumed: it names codes only, so a reader cannot tell
+	// which project's NGNC a path touched, and asking a client to parse
+	// prose (or guess issuers from codes) to answer that is the identity
+	// error this project refuses everywhere else. Whether a route crosses
+	// a particular issuer is the exact question the DERIVATIVE integrity
+	// state answers and the route explorer exists to show; this is the
+	// data that answers it without a parse (backlog #84, issue #100).
+	//
+	// An asset with no code to publish is skipped rather than emitted as
+	// an empty placeholder — a hop must identify something to be a hop.
+	// A hop whose issuing account could not be established carries
+	// issuer_unknown rather than a silently missing field.
+	//
+	// Null only on a stale replay: runstore.Rung records the description
+	// string and has no home for the hops (widening the record is a
+	// schema migration with its own review bar), and rebuilding them from
+	// Description would be exactly the prose parse this field exists to
+	// make unnecessary. Null means "not recorded", never "no
+	// intermediate assets".
+	Hops []AssetJSON `json:"hops"`
+
 	Source        string   `json:"source"`
 	ReceiveAmount string   `json:"receive_amount"`
 	EffectiveRate string   `json:"effective_rate"`
 	LossPct       string   `json:"loss_pct"`
 	LossAmount    string   `json:"loss_amount,omitempty"`
 	Verdict       string   `json:"verdict"`
+	PathCount     int      `json:"path_count,omitempty"`
 	Warnings      []string `json:"warnings"`
 }
 
@@ -50,14 +90,32 @@ type CostBlockJSON struct {
 	TotalLossPct string         `json:"total_loss_pct"`
 }
 
+type ExecutionRatePointJSON struct {
+	Size   string `json:"size"`
+	Rate   string `json:"rate,omitempty"`
+	Priced bool   `json:"priced"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type ExecutionRateCurveJSON struct {
+	Points           []ExecutionRatePointJSON `json:"points"`
+	PricedCount      int                      `json:"priced_count"`
+	ObservationCount int                      `json:"observation_count"`
+	NonMonotonic     bool                     `json:"non_monotonic"`
+}
+
 type RungJSON struct {
-	SendAmount string         `json:"send_amount"`
-	Priced     bool           `json:"priced"`
-	Integrity  string         `json:"integrity"`
-	Quote      *QuoteJSON     `json:"quote"`
-	Cost       *CostBlockJSON `json:"cost,omitempty"`
-	Notes      []string       `json:"notes"`
-	Error      string         `json:"error,omitempty"`
+	SendAmount   string         `json:"send_amount"`
+	MarginalCost string         `json:"marginal_cost,omitempty"`
+	MarginalFrom string         `json:"marginal_from,omitempty"`
+	MarginalTo   string         `json:"marginal_to,omitempty"`
+	Priced       bool           `json:"priced"`
+	Integrity    string         `json:"integrity"`
+	PathCount    int            `json:"path_count,omitempty"`
+	Quote        *QuoteJSON     `json:"quote"`
+	Cost         *CostBlockJSON `json:"cost,omitempty"`
+	Notes        []string       `json:"notes"`
+	Error        string         `json:"error,omitempty"`
 }
 
 type CorridorJSON struct {
@@ -84,6 +142,14 @@ type CorridorJSON struct {
 	ReferenceDivergencePct   string `json:"reference_divergence_pct,omitempty"`
 	ReferenceNote            string `json:"reference_note,omitempty"`
 	Scored                   bool   `json:"scored"`
+
+	// ReferenceAsOf is the upstream provider's rate timestamp. Omitted if
+	// the provider provided no timestamp.
+	ReferenceAsOf string `json:"reference_as_of,omitempty"`
+
+	// ReferenceSecondaryAsOf is the second provider's rate timestamp.
+	// Omitted if absent.
+	ReferenceSecondaryAsOf string `json:"reference_secondary_as_of,omitempty"`
 
 	// ReferenceFetchedAt is when the rate was last obtained from the
 	// provider, which differs from reference_as_of: as-of is the upstream's
@@ -132,9 +198,10 @@ type CorridorJSON struct {
 	// and nothing here feeds back into either.
 	Findings *checks.FindingsJSON `json:"findings,omitempty"`
 
-	Finding    string     `json:"finding"`
-	Rungs      []RungJSON `json:"rungs"`
-	MeasuredAt string     `json:"measured_at"`
+	Finding    string                  `json:"finding"`
+	Curve      *ExecutionRateCurveJSON `json:"curve"`
+	Rungs      []RungJSON              `json:"rungs"`
+	MeasuredAt string                  `json:"measured_at"`
 }
 
 // StaleJSON labels a reading served from history rather than measured now.
@@ -149,14 +216,51 @@ type StaleJSON struct {
 	AgeHuman   string `json:"age_human"`
 }
 
+// AssetJSON identifies an asset on the wire.
+//
+// Code and Issuer are kept as separate fields for a reader who wants one or
+// the other without parsing a string. Asset carries the same identity in the
+// single wire form the README specifies — "stellar:CODE:ISSUER",
+// "stellar:native", or "iso4217:CODE" — which is also the SEP-38 asset
+// identification format this project already speaks everywhere else, so a
+// client comparing an asset here against a SEP-38 quote request or response
+// can compare the strings directly rather than reassembling one from parts.
+//
+// Asset is empty whenever the source asset.Asset is not Identifiable — an
+// issued Stellar asset with no issuer, in particular — and on a wire producer
+// that has only a bare code to work from at all (see route.AssetJSON{Code:
+// code} call sites), because in both cases a wire form built from a guess
+// would state an identity nothing verified.
+//
+// IssuerUnknown is the explicit companion to that absence: it is emitted
+// exactly when the asset names a code but the issuing account could not be
+// established, so the two ways `issuer` can be empty — "there is no issuer
+// by nature" (native XLM, off-chain fiat, identified in full by the wire
+// form above) and "an issuer exists but was never established" — are never
+// indistinguishable in the JSON. Omitting the field silently would make a
+// client guess issuers from codes, which is the identity failure a hops
+// array exists to end; a hop that cannot say who issued it says so.
 type AssetJSON struct {
-	Code   string `json:"code"`
-	Issuer string `json:"issuer,omitempty"`
-	Peg    string `json:"peg,omitempty"`
+	Code          string `json:"code"`
+	Issuer        string `json:"issuer,omitempty"`
+	IssuerUnknown bool   `json:"issuer_unknown,omitempty"`
+	Peg           string `json:"peg,omitempty"`
+	Asset         string `json:"asset,omitempty"`
 }
 
 func ToAssetJSON(a asset.Asset) AssetJSON {
 	j := AssetJSON{Code: a.Code, Issuer: a.Issuer}
+	if a.Identifiable() {
+		j.Asset = a.SEP38()
+	} else if a.Code != "" {
+		// A code with no wire form behind it: native and fiat always
+		// render above, so this is an issued asset (or an unrecognised
+		// kind) naming a code whose identity nothing established. Say so
+		// rather than let the empty issuer field read as "this asset has
+		// no issuer". An asset with no code at all names nothing and
+		// gets no marker — there is no identity question to answer.
+		j.IssuerUnknown = true
+	}
 	if peg, ok := asset.FiatPeg(a); ok {
 		j.Peg = peg
 	}
@@ -172,15 +276,43 @@ func ToQuoteJSON(q *Quote) *QuoteJSON {
 		w = []string{}
 	}
 	return &QuoteJSON{
+		Kind:          string(q.Kind),
 		Description:   q.Description,
+		Hops:          hopsJSON(q),
 		Source:        q.Source,
 		ReceiveAmount: q.ReceiveAmount.String(),
 		EffectiveRate: q.EffectiveRate.String(),
-		LossPct:       q.LossPct.StringFixed(2),
+		LossPct:       q.LossPct.String(),
 		LossAmount:    q.LossAmount.StringFixed(2),
 		Verdict:       q.Verdict.String(),
+		PathCount:     q.PathCount,
 		Warnings:      w,
 	}
+}
+
+// hopsJSON renders the quote's path as structured hops in execution order:
+// the send asset, every intermediate, the receive asset — the same sequence
+// Description draws its codes from.
+//
+// An asset with no code is skipped rather than published as an empty hop. A
+// placeholder with a blank code identifies nothing at all, so emitting one
+// would put a hop on the wire that no pathfinding ever returned; the
+// endpoints of any path the engine priced always carry codes, so a hops
+// array from a real quote always includes both.
+func hopsJSON(q *Quote) []AssetJSON {
+	seq := make([]asset.Asset, 0, len(q.Hops)+2)
+	seq = append(seq, q.SendAsset)
+	seq = append(seq, q.Hops...)
+	seq = append(seq, q.ReceiveAsset)
+
+	hops := make([]AssetJSON, 0, len(seq))
+	for _, a := range seq {
+		if a.Code == "" {
+			continue
+		}
+		hops = append(hops, ToAssetJSON(a))
+	}
+	return hops
 }
 
 // ToCostBlockJSON renders a decomposition for the wire.
@@ -233,9 +365,15 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 		Rungs:              make([]RungJSON, 0, len(l.Rungs)),
 		MeasuredAt:         time.Now().UTC().Format(time.RFC3339),
 	}
+	if !l.Reference.AsOf.IsZero() {
+		out.ReferenceAsOf = l.Reference.AsOf.UTC().Format(time.RFC3339)
+	}
 	if !l.Reference.SecondaryMid.IsZero() {
 		out.ReferenceSecondaryMid = l.Reference.SecondaryMid.String()
 		out.ReferenceSecondarySource = l.Reference.SecondarySource
+	}
+	if !l.Reference.SecondaryAsOf.IsZero() {
+		out.ReferenceSecondaryAsOf = l.Reference.SecondaryAsOf.UTC().Format(time.RFC3339)
 	}
 	if !l.Reference.FetchedAt.IsZero() {
 		out.ReferenceFetchedAt = l.Reference.FetchedAt.UTC().Format(time.RFC3339)
@@ -256,6 +394,22 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 	if l.Recommended != nil {
 		out.RecommendedSize = l.RecommendedSize.String()
 	}
+	if l.Curve != nil {
+		out.Curve = &ExecutionRateCurveJSON{
+			Points:           make([]ExecutionRatePointJSON, 0, len(l.Curve.Points)),
+			PricedCount:      l.Curve.PricedCount,
+			ObservationCount: l.Curve.ObservationCount,
+			NonMonotonic:     l.Curve.NonMonotonic,
+		}
+		for _, p := range l.Curve.Points {
+			point := ExecutionRatePointJSON{Size: p.Size.String(), Priced: p.Priced, Reason: p.Reason}
+			if p.Priced {
+				point.Rate = p.Rate.String()
+			}
+			out.Curve.Points = append(out.Curve.Points, point)
+		}
+	}
+
 	for _, d := range l.DependsOn {
 		out.DependsOn = append(out.DependsOn, ToAssetJSON(d))
 	}
@@ -267,6 +421,11 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 			Integrity:  IntegrityUnknown.String(),
 			Notes:      []string{},
 		}
+		if r.MarginalCost != nil {
+			rj.MarginalCost = r.MarginalCost.Cost.String()
+			rj.MarginalFrom = r.MarginalCost.From.String()
+			rj.MarginalTo = r.MarginalCost.To.String()
+		}
 		if r.Err != nil {
 			rj.Error = r.Err.Error()
 		}
@@ -276,7 +435,9 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 				rj.Notes = r.Result.Notes
 			}
 			if len(r.Result.Quotes) > 0 {
-				rj.Quote = ToQuoteJSON(&r.Result.Quotes[0])
+				q := &r.Result.Quotes[0]
+				rj.PathCount = q.PathCount
+				rj.Quote = ToQuoteJSON(q)
 			}
 		}
 		if len(r.Decomposition.Parts) > 0 {

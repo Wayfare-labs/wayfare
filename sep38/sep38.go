@@ -39,6 +39,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -352,8 +353,17 @@ func (c *Client) do(req *http.Request, out any) error {
 		}
 		return fmt.Errorf("sep38: %s returned HTTP %d", req.URL.Host, resp.StatusCode)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	dec := json.NewDecoder(resp.Body)
+	if err := dec.Decode(out); err != nil {
 		return fmt.Errorf("sep38: decoding response: %w", err)
+	}
+	// A well-formed quote followed by anything else is not the document the
+	// anchor claims to have sent. Decode stops at the end of the first JSON
+	// value and silently ignores the rest, so a truncated write, a
+	// concatenated body or a proxy's error page stub would read as a price.
+	// Anything other than a clean end of input is a malformed response.
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
+		return fmt.Errorf("sep38: decoding response: unexpected trailing data after the JSON document")
 	}
 	return nil
 }

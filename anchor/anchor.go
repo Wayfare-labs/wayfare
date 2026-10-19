@@ -87,6 +87,14 @@ type Profile struct {
 	SEP31 bool
 	SEP6  bool
 
+	// SEP10 reports whether the anchor declares WEB_AUTH_ENDPOINT, i.e.
+	// whether it offers programmatic authentication at all. See
+	// checks.SEP10EndpointResponds for whether a declared endpoint works.
+	SEP10 bool
+
+	// SEP12 reports whether the anchor declares KYC_SERVER.
+	SEP12 bool
+
 	// Mainnet reports whether the TOML declares the public network.
 	Mainnet bool
 
@@ -126,6 +134,58 @@ func (p Profile) LiveCurrencies() []Currency {
 	return out
 }
 
+// sepFields is a fixed inspection order, not a set: the value in a map
+// iterates in an unspecified order, and a capability inventory that printed
+// its SEPs in a different order on every call would be its own small
+// instance of the non-determinism this project refuses in its measurements.
+var sepFields = []struct {
+	number int
+	name   string
+	has    func(Profile) bool
+}{
+	{1, "stellar.toml (this document)", func(Profile) bool { return true }},
+	{6, "programmatic deposit/withdraw", func(p Profile) bool { return p.SEP6 }},
+	{10, "web authentication", func(p Profile) bool { return p.SEP10 }},
+	{12, "KYC", func(p Profile) bool { return p.SEP12 }},
+	{24, "hosted deposit/withdraw", func(p Profile) bool { return p.SEP24 }},
+	{31, "cross-border payment", func(p Profile) bool { return p.SEP31 }},
+	{38, "quotes", func(p Profile) bool { return p.Priceable }},
+}
+
+// SEPs lists the numbers of the SEPs this anchor advertises, ascending.
+//
+// This is the capability inventory issue #184 asks for: everything this
+// package already reads from a stellar.toml — WEB_AUTH_ENDPOINT,
+// TRANSFER_SERVER, TRANSFER_SERVER_SEP0024, DIRECT_PAYMENT_SERVER,
+// KYC_SERVER, ANCHOR_QUOTE_SERVER — mapped to the SEP number each field
+// declares, in one place, so a reader (or another program) gets the
+// counterparty picture without re-deriving it from six separate booleans or
+// re-reading the document by hand.
+//
+// SEP-1 is always present: a Profile exists only because a stellar.toml was
+// fetched (or, for a Malformed one, at least partially recovered), and
+// publishing that document at the well-known path is what SEP-1 defines.
+func (p Profile) SEPs() []int {
+	out := make([]int, 0, len(sepFields))
+	for _, f := range sepFields {
+		if f.has(p) {
+			out = append(out, f.number)
+		}
+	}
+	return out
+}
+
+// SEPCapabilities is SEPs, rendered for a reader: each entry is "SEP-N name".
+func (p Profile) SEPCapabilities() []string {
+	out := make([]string, 0, len(sepFields))
+	for _, f := range sepFields {
+		if f.has(p) {
+			out = append(out, fmt.Sprintf("SEP-%d (%s)", f.number, f.name))
+		}
+	}
+	return out
+}
+
 // Explain states in plain language what the anchor can and cannot do.
 //
 // The wording is deliberately blunt about non-priceable anchors, because the
@@ -148,6 +208,8 @@ func (p Profile) Explain() string {
 	if !p.Mainnet && p.TOML.NetworkPassphrase != "" {
 		fmt.Fprintf(&b, "  network:    %s (NOT mainnet)\n", p.TOML.NetworkPassphrase)
 	}
+
+	fmt.Fprintf(&b, "  SEPs:       %s\n", strings.Join(p.SEPCapabilities(), ", "))
 
 	flows := []string{}
 	if p.SEP24 {
@@ -251,6 +313,8 @@ func profileFrom(domain string, t TOML) *Profile {
 		SEP24:     strings.TrimSpace(t.TransferServer24) != "",
 		SEP31:     strings.TrimSpace(t.DirectPaymentServer) != "",
 		SEP6:      strings.TrimSpace(t.TransferServer) != "",
+		SEP10:     strings.TrimSpace(t.WebAuthEndpoint) != "",
+		SEP12:     strings.TrimSpace(t.KYCServer) != "",
 		Mainnet:   t.NetworkPassphrase == MainnetPassphrase,
 	}
 }

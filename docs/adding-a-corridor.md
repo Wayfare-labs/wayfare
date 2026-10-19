@@ -118,6 +118,45 @@ referenced directly across packages and tests:
 func GHSC() Asset { return Stellar("GHSC", LinkIOIssuer) }
 ```
 
+### The fiat-peg registry and bridge assets
+
+The `Peg` field of a registry entry is what makes a token count as a fiat
+*dependency* in `route.classify` (via `asset.ClassifyHop`, which splits hops
+into fiat / bridge / unknown). A corridor whose every path traverses a
+registered fiat token is classified `DERIVATIVE`; a token that is not in the
+registry is not a dependency, whatever its code looks like. That makes the
+registry the boundary between `DIRECT` and `DERIVATIVE`, so its rules matter:
+
+- **A peg is added only after it is read from the issuer's own published
+  stellar.toml** — same bar as the issuer account, per SEP-1. Never from a
+  block explorer, an aggregator, or a blog post. Record `SourceURL` and
+  `VerificationDate` exactly as the existing entries do.
+- **`status` that is not `live` is a finding, not an invitation to skip the
+  entry.** GHSC and KESC are `pending` and are registered; the status is
+  carried on the entry and reported. A token whose issuer declares it wound
+  down or dead is *not* registered as tradeable.
+- **The identity key is `CODE:ISSUER`.** Asset code alone identifies
+  nothing; anyone can issue a token called `USDC`. The registry lookups that
+  decide classification (`entries`, and therefore `fiatPegs`) are keyed by
+  `Code` + `Issuer`. Two convenience maps are derived differently and must
+  not be mistaken for identity: `known` is keyed by `Code` alone (a
+  pre-verification lookup that is only safe because the registry has one
+  entry per code), and `homeDomains` is keyed by `Issuer`.
+
+**Bridge assets** are tokens a path routes through that are deliberately
+*not* fiat dependencies: native XLM by construction, and any issued token
+registered without a peg. The category is a stated decision — see the
+"Bridge assets" section of `asset/known.go` — not an absence from a map.
+
+**Unknown hops** are the known, bounded false-negative this registry exists to
+shrink: a hop that is neither native nor registered is treated as evidence of
+an independent market, because an unrecognised fiat stablecoin is
+indistinguishable from XLM. The gap is never silent — `route.classify`
+surfaces every unregistered hop it sees as an `Unregistered hop asset(s) …`
+note on the result and the wire. When you record a corridor, check those
+notes: each name is a candidate for the registry, verified by the same bar as
+anything else.
+
 ---
 
 ## Step 3 — Measure it

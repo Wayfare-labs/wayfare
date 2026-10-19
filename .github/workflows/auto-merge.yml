@@ -65,6 +65,11 @@ permissions:
 # <!-- auto-merge-gate --> marker, and the workflow_run re-evaluation
 # after CI finishes must not be cancelled by the earlier pull_request_target
 # run — it is the one that sees the final check-runs state.
+#
+# No job goes without an explicit timeout (#573). GitHub's default ceiling is
+# six hours; this one is bounded by API pagination over a PR's changed files
+# and reviews — measured short (2–8s), never a hanging job by design — plus
+# just enough headroom for a slow runner rather than anything longer.
 
 jobs:
   gate:
@@ -88,6 +93,14 @@ jobs:
           # Resolve which PR we are looking at. check_suite events carry the
           # PR indirectly, so fall back to querying by head SHA.
           # ---------------------------------------------------------------
+          # A CI run triggered by merge_group belongs to a queue entry, not to
+          # a pull request. Resolving it back to a PR would re-run the gate
+          # against a commit the queue already owns, so ignore those outright.
+          if [ "${{ github.event.workflow_run.event }}" = "merge_group" ]; then
+            echo "CI run came from a merge_group entry; nothing to gate"
+            exit 0
+          fi
+
           PR="${EVENT_PR:-}"
 
           # issue_comment fires for issues as well as pull requests, and only
@@ -121,6 +134,11 @@ jobs:
           author=$(jq -r '.user.login' <<<"$meta")
           body=$(jq -r '.body // ""' <<<"$meta")
           head_sha=$(jq -r '.head.sha' <<<"$meta")
+          head_repo=$(jq -r '.head.repo.full_name // ""' <<<"$meta")
+          readonly_review_event=false
+          if [ "${GITHUB_EVENT_NAME:-}" = "pull_request_review" ] && [ "$head_repo" != "$REPO" ]; then
+            readonly_review_event=true
+          fi
 
           if [ "$state" != "open" ] || [ "$draft" = "true" ]; then
             echo "PR is $state, draft=$draft; nothing to do"
@@ -348,9 +366,32 @@ jobs:
           # ---------------------------------------------------------------
           # Decide.
           # ---------------------------------------------------------------
+          if [ "$readonly_review_event" = true ]; then
+            echo "::notice::pull_request_review for a fork PR has a read-only token; skipping merge, label, and comment mutations"
+            if [ ${#reasons[@]} -gt 0 ]; then
+              printf 'not auto-merging:\n'
+              printf '  - %s\n' "${reasons[@]}"
+            fi
+            exit 0
+          fi
+
           if [ ${#reasons[@]} -eq 0 ]; then
-            echo "all gates satisfied; merging"
-            gh pr merge "$PR" --repo "$REPO" --squash --delete-branch
+            echo "all gates satisfied; handing off"
+
+            # With a merge queue required on the base branch, a direct merge is
+            # refused — the queue is the only way in. --auto enqueues instead,
+            # and where no queue is configured it merges as soon as the
+            # requirements are met, which this script has just finished
+            # verifying. One code path for both, and never two merge paths
+            # racing each other for the same pull request.
+            #
+            # --delete-branch is gone: these are fork branches, and the
+            # repository sets delete_branch_on_merge false, so it was asking
+            # for something it could not do.
+            if ! gh pr merge "$PR" --repo "$REPO" --squash --auto; then
+              echo "::error::could not enqueue PR #$PR — confirm auto-merge is enabled on the repository"
+              exit 1
+            fi
             # Describe what landed, then say plainly what was and was not
             # verified. A merge notice that only says "approved" invites a
             # reader to assume more was checked than actually was.

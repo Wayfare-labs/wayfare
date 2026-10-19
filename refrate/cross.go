@@ -2,6 +2,7 @@ package refrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -88,6 +89,49 @@ var (
 // beyond its own refresh cycle.
 var StaleGap = 48 * time.Hour
 
+// errorClass labels a provider error for degradation reporting.
+type errorClass int
+
+const (
+	// errClassUnknown is the fallback for errors that do not match any
+	// typed error in the taxonomy.
+	errClassUnknown errorClass = iota
+
+	// errClassUnavailable means the provider did not answer at all —
+	// network failure, timeout, or HTTP-level error.
+	errClassUnavailable
+
+	// errClassUnparseable means the provider answered with a body that
+	// could not be interpreted as a rate.
+	errClassUnparseable
+)
+
+// classifyError identifies which category of provider failure occurred.
+func classifyError(err error) errorClass {
+	var unavailable *ErrUnavailable
+	if errors.As(err, &unavailable) {
+		return errClassUnavailable
+	}
+	var unparseable *ErrUnparseable
+	if errors.As(err, &unparseable) {
+		return errClassUnparseable
+	}
+	return errClassUnknown
+}
+
+// errorDescription renders an error class as a human-readable phrase for use
+// in degradation notes.
+func errorDescription(err error) string {
+	switch classifyError(err) {
+	case errClassUnavailable:
+		return "unavailable"
+	case errClassUnparseable:
+		return "returned an unparseable response"
+	default:
+		return "unavailable"
+	}
+}
+
 // Cross queries two providers and reports whether they agree.
 //
 // # Why not average them
@@ -130,37 +174,87 @@ func (c *Cross) Rate(ctx context.Context, base, quote string) (Rate, error) {
 	}
 
 	primary, primaryErr := c.Primary.Rate(ctx, base, quote)
+	if err := ctx.Err(); err != nil {
+		return Rate{}, err
+	}
 
 	if c.Secondary == nil {
 		if primaryErr != nil {
 			return Rate{}, primaryErr
 		}
-		primary.Agreement = AgreementSingle
-		return primary, nil
+		return singleSource(primary, "", nil), nil
 	}
 
 	secondary, secondaryErr := c.Secondary.Rate(ctx, base, quote)
+	if err := ctx.Err(); err != nil {
+		return Rate{}, err
+	}
 
 	switch {
 	case primaryErr != nil && secondaryErr != nil:
 		return Rate{}, fmt.Errorf(
-			"refrate: no reference rate for %s/%s: %s failed (%v) and %s failed (%v)",
-			base, quote, c.Primary.Name(), primaryErr, c.Secondary.Name(), secondaryErr)
+			"refrate: no reference rate for %s/%s: %s was %s (%v); %s was %s (%v)",
+			base, quote,
+			c.Primary.Name(), errorDescription(primaryErr), primaryErr,
+			c.Secondary.Name(), errorDescription(secondaryErr), secondaryErr)
 
 	case primaryErr != nil:
-		secondary.Agreement = AgreementSingle
-		secondary.Note = fmt.Sprintf(
-			"uncorroborated: %s was unavailable (%v)", c.Primary.Name(), primaryErr)
-		return secondary, nil
+		return singleSource(secondary, c.Primary.Name(), primaryErr), nil
 
 	case secondaryErr != nil:
-		primary.Agreement = AgreementSingle
-		primary.Note = fmt.Sprintf(
-			"uncorroborated: %s was unavailable (%v)", c.Secondary.Name(), secondaryErr)
-		return primary, nil
+		return singleSource(primary, c.Secondary.Name(), secondaryErr), nil
 	}
 
 	return reconcile(primary, secondary), nil
+}
+
+// singleSource records that only one provider produced the rate being returned.
+//
+// It is the one place the uncorroborated state is assembled, because that
+// state arises three ways — no secondary is configured, the primary failed, or
+// the secondary failed — and each of them must state the same thing: the rate
+// is the survivor's, no cross-check happened, and nothing was filled in for
+// the provider that is absent.
+//
+// Two properties are enforced here rather than left to the callers:
+//
+//   - The cross-check fields are cleared. AgreementSingle claims that no
+//     second observation exists, so carrying a secondary mid or a divergence
+//     alongside it would report a cross-check that never ran. Nothing sets
+//     these on a plain provider today, and a composite that did would still be
+//     rendered honestly.
+//   - A zero mid is refused. reconcile has treated a zero as a broken feed
+//     rather than as a rate, but it only runs when both providers answer, so
+//     every single-source path returned before the guard. That made the
+//     likeliest production path — one provider answering, often all that a free
+//     tier leaves standing — the only way a zero reached a verdict, where it
+//     reads as a benchmark of nothing: every route then scores against zero,
+//     and the corridor's loss becomes a function of the quote alone. A zero is
+//     an absent figure, so it is reported as unscoreable with the same reason
+//     reconcile gives, and never as a usable rate.
+//
+// failedName and failedErr describe the provider that did not answer, and are
+// empty when none was configured; a deployment with one provider has nothing
+// to apologise for, so it carries no note.
+func singleSource(survivor Rate, failedName string, failedErr error) Rate {
+	survivor.SecondaryMid = decimal.Zero
+	survivor.SecondarySource = ""
+	survivor.SecondaryAsOf = time.Time{}
+	survivor.DivergencePct = decimal.Zero
+
+	if survivor.Mid.IsZero() {
+		survivor.Agreement = AgreementMalfunction
+		survivor.Note = fmt.Sprintf(
+			"not scored: %s quoted %s; a zero rate is a broken feed", survivor.Source, survivor.Mid)
+		return survivor
+	}
+
+	survivor.Agreement = AgreementSingle
+	if failedName != "" {
+		survivor.Note = fmt.Sprintf(
+			"uncorroborated: %s was %s (%v)", failedName, errorDescription(failedErr), failedErr)
+	}
+	return survivor
 }
 
 // reconcile applies the three-band rule to two successful answers.
