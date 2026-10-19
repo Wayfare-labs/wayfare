@@ -479,6 +479,54 @@
     color: var(--muted); font-size: .78rem; font-weight: 550;
     text-transform: uppercase; letter-spacing: .04em;
   }
+  /* Cost decomposition disclosure (issue #629) */
+  details.cost-decomp {
+    margin-top: var(--space-1);
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  details.cost-decomp summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-weight: 550;
+    user-select: none;
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+  }
+  details.cost-decomp[open] summary {
+    margin-bottom: var(--space-1);
+  }
+  .cost-list {
+    list-style: none;
+    margin: var(--space-1) 0 0 0;
+    padding: var(--space-1) var(--space-2);
+    background: var(--neutral-soft);
+    border-radius: var(--radius-xs);
+    border-left: 2px solid var(--accent);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .cost-item {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    font-family: var(--mono);
+    font-size: 0.74rem;
+  }
+  .cost-item-name {
+    color: var(--ink);
+  }
+  .cost-undetermined {
+    color: var(--unknown);
+    font-style: italic;
+  }
+  .cost-reconcile {
+    border-top: 1px dashed var(--border);
+    padding-top: var(--space-1);
+    margin-top: var(--space-1);
+    font-weight: 600;
+  }
   /* Without a visible focus ring the link below the chart is reachable but
      cannot be seen, which makes the association depend on the keyboard user
      already knowing it is there. */
@@ -1094,6 +1142,47 @@ function formatReadingAge(recordedAt) {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+// formatLocalDateTime formats a timestamp in the reader's local timezone.
+function formatLocalDateTime(isoString) {
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return isoString;
+    return new Intl.DateTimeFormat(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      timeZoneName: 'short'
+    }).format(d);
+  } catch (e) {
+    return isoString;
+  }
+}
+
+// formatRelativeAge calculates the relative age in the reader's timezone/locale
+// using Intl.RelativeTimeFormat, falling back to formatReadingAge.
+function formatRelativeAge(isoString) {
+  try {
+    const ms = Date.now() - Date.parse(isoString);
+    if (isNaN(ms)) return formatReadingAge(isoString);
+    const seconds = Math.max(0, Math.floor(ms / 1000));
+    if (seconds < 60) return 'just now';
+    if (typeof Intl !== 'undefined' && Intl.RelativeTimeFormat) {
+      const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+      if (seconds < 3600) return rtf.format(-Math.floor(seconds / 60), 'minute');
+      if (seconds < 86400) return rtf.format(-Math.floor(seconds / 3600), 'hour');
+      if (seconds < 30 * 86400) return rtf.format(-Math.floor(seconds / 86400), 'day');
+      if (seconds < 365 * 86400) return rtf.format(-Math.floor(seconds / (30 * 86400)), 'month');
+      return rtf.format(-Math.floor(seconds / (365 * 86400)), 'year');
+    }
+    return formatReadingAge(isoString);
+  } catch (e) {
+    return formatReadingAge(isoString);
+  }
+}
+
 let corridorRequest = 0;
 
 // readSizes returns the trimmed input, or '' when it is empty. Validation is
@@ -1437,13 +1526,17 @@ function render(d, options = {}) {
   const cached = options.cached === true;
   const recordedAt = cached ? options.recordedAt : (d.stale?.recorded_at || d.measured_at);
   const fetchedAt = cached ? options.fetchedAt : '';
-  const ageHuman = cached ? formatReadingAge(recordedAt) : (d.stale?.age_human || 'historical reading');
+  const relAge = formatRelativeAge(recordedAt);
+  const localTime = formatLocalDateTime(recordedAt);
+  const timeDisplay = recordedAt
+    ? `<time datetime="${esc(recordedAt)}" title="UTC: ${esc(recordedAt)}">${esc(localTime)} (${esc(relAge)})</time>`
+    : '';
   const chainHead = (!d.live) ? renderChainHeadBlock(d) : '';
   const provenance = cached
-    ? `<div class="provenance"><p style="margin:0 0 var(--space-2)"><strong>CACHED READING — NOT CURRENT MARKET DATA</strong> · ${esc(ageHuman)} · recorded ${esc(recordedAt)} · browser cached ${esc(fetchedAt)}</p>${chainHead}</div>`
+    ? `<div class="provenance"><p style="margin:0 0 var(--space-2)"><strong>CACHED READING — NOT CURRENT MARKET DATA</strong> · ${esc(ageHuman)} · recorded ${timeDisplay || esc(recordedAt)} · browser cached ${esc(fetchedAt)}</p>${chainHead}</div>`
     : d.live
     ? `<p class="provenance provenance-live"><strong>LIVE MEASUREMENT</strong> · measured ${esc(d.measured_at)}</p>`
-    : `<div class="provenance"><p style="margin:0 0 var(--space-2)"><strong>RECORDED — NOT CURRENT MARKET DATA</strong> · ${esc(d.stale?.age_human || 'historical reading')} · recorded ${esc(d.stale?.recorded_at || d.measured_at)}</p>${chainHead}</div>`;
+    : `<div class="provenance"><p style="margin:0 0 var(--space-2)"><strong>RECORDED — NOT CURRENT MARKET DATA</strong> · ${esc(d.stale?.age_human || 'historical reading')} (${esc(relAge)}) · recorded ${timeDisplay || esc(d.stale?.recorded_at || d.measured_at)}</p>${chainHead}</div>`;
   $('footer-provenance').textContent = cached
     ? `The reading below was originally recorded ${ageHuman} (${recordedAt}) and this browser cached it at ${fetchedAt}; it is not a live market measurement. Wayfare is non-custodial and read-only: it never holds funds, issues tokens, or moves money.`
     : d.live
@@ -1808,9 +1901,12 @@ function curveAlt(rungs) {
        ${ungraded === 1 ? 'is' : 'are'} not counted above; ungraded is not a failure.`
     : '';
 
+  // Rung cost decompositions and marginal costs are listed in the table below.
+  const costNote = 'Detailed cost decompositions (FX loss, fees, slippage, expected failure) and marginal costs for each size are listed in the table below.';
+
   // The rungs are the only source, and every figure above came off one of
   // them, so there is nothing in this caption the engine did not publish.
-  return `${body} ${threshold}${ungradedNote} ${curveStructure(rungs)}`
+  return `${body} ${threshold}${ungradedNote} ${costNote} ${curveStructure(rungs)}`
     .replace(/\s+/g, ' ').trim();
 }
 
@@ -1847,6 +1943,42 @@ function curveStructure(rungs) {
   </svg>`;
 }
 
+function costDecompositionBlock(rung) {
+  if (!rung.cost && !rung.marginal_cost) return '';
+  const parts = [];
+  if (rung.marginal_cost) {
+    const from = rung.marginal_from ? ` from ${esc(rung.marginal_from)}` : '';
+    parts.push(`<li class="cost-item"><span class="cost-item-name">Marginal cost${from}</span><span>${esc(rung.marginal_cost)}</span></li>`);
+  }
+  if (rung.cost) {
+    const c = rung.cost;
+    const names = {
+      fx_loss: 'FX loss',
+      network_fees: 'Network fees',
+      anchor_fee: 'Anchor fee',
+      slippage: 'Slippage',
+      expected_failure: 'Expected failure'
+    };
+    (c.parts || []).forEach(p => {
+      const name = names[p.component] || p.component;
+      if (p.determined) {
+        const pct = p.pct ? `${formatPct(p.pct)}%` : '';
+        const amt = p.amount ? `${esc(p.amount)}` : '';
+        const val = pct && amt ? `${pct} (${amt})` : pct || amt || '0';
+        parts.push(`<li class="cost-item"><span class="cost-item-name">${esc(name)}</span><span>${val}</span></li>`);
+      } else {
+        const reason = p.reason ? `: ${esc(p.reason)}` : '';
+        parts.push(`<li class="cost-item cost-undetermined"><span class="cost-item-name">${esc(name)}</span><span>undetermined${reason}</span></li>`);
+      }
+    });
+    if (c.total_loss_pct) {
+      parts.push(`<li class="cost-item cost-reconcile"><span class="cost-item-name">Total loss (reconciled)</span><span>${formatPct(c.total_loss_pct)}%</span></li>`);
+    }
+  }
+  if (!parts.length) return '';
+  return `<details class="cost-decomp"><summary>Cost breakdown</summary><ul class="cost-list">${parts.join('')}</ul></details>`;
+}
+
 function table(rungs, scored, depends) {
   const rows = rungs.map(r => {
     if (!r.priced) {
@@ -1872,6 +2004,7 @@ function table(rungs, scored, depends) {
       : (q && typeof q.path_count === 'number' && q.path_count > 0)
       ? String(q.path_count)
       : '&mdash;';
+    const decomp = costDecompositionBlock(r);
     if (scored) {
       // The loss figure keeps its colour as a scanning aid, but the grade
       // beside it is what the row asserts — the number is the engine's, the
@@ -1884,7 +2017,7 @@ function table(rungs, scored, depends) {
         <td class="num ${verdictClass(q.verdict)}">${formatPct(q.loss_pct)}%</td>
         <td class="${verdictClass(q.verdict)}"><span class="v-cell">${verdictMark(q.verdict)}${esc(q.verdict)}</span></td>
         <td class="num">${pathCount}</td>
-        <td>${esc(q.description)}</td>
+        <td>${esc(q.description)}${decomp}</td>
       </tr>`;
     }
     // When not scored, show structural facts only: send, receive, rate, paths, path.
@@ -1895,7 +2028,7 @@ function table(rungs, scored, depends) {
       <td class="num">${esc(q.receive_amount)}</td>
       <td class="num">${esc(q.effective_rate)}</td>
       <td class="num">${pathCount}</td>
-      <td>${esc(q.description)}</td>
+      <td>${esc(q.description)}${decomp}</td>
     </tr>`;
   }).join('');
 

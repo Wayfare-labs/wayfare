@@ -98,11 +98,14 @@ recommendation it refused to make.
 **`reference` carries both mids, always,** even when the providers agree. A
 corridor's numbers moving because the benchmark changed is a completely
 different event from the corridor moving, and a history recording only the mid
-it scored against cannot distinguish them afterwards. `scored_against` names
-which mid produced the verdicts in that record. Since Version 3 it also
-carries `fetched_at` — when this project last obtained the rate, which can be
-older than `recorded_at` when a cached rate was reused — so a reader can tell
-how old the benchmark was when the reading was taken.
+it scored against cannot distinguish them afterwards. It records both providers'
+timestamps: `as_of` for the scored mid and `secondary_as_of` for the second mid
+(#368). `scored_against` names which mid produced the verdicts in that record.
+Since Version 3 it also carries `fetched_at` — when this project last obtained
+the benchmark from the provider, which can be older than `recorded_at` when a
+cached rate was reused — so a reader can tell how old the benchmark was when the
+reading was taken. Both providers' as-of and fetch times are thus recorded and
+distinguishable from arrival/fetch times.
 
 On a `DISAGREE` where the optional third provider answered, `reference` also
 carries `diagnostic_source`, `diagnostic_mid`, `diagnostic_as_of`,

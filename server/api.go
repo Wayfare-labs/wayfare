@@ -141,6 +141,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/chain-heads", s.handleChainHeads)
 	mux.HandleFunc("/api/assets", s.handleAssets)
 	mux.HandleFunc("/api/market-structure", s.handleMarketStructure)
+	mux.HandleFunc("/api/thresholds", s.handleThresholds)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.Handle("/", uiHandler())
 	return withCORS(withRequestID(withGzip(s.limit(mux))))
@@ -1179,6 +1180,53 @@ func (s *Server) handleMarketStructure(w http.ResponseWriter, r *http.Request) {
 		CorridorCount:             corridorCount,
 		ConcentratedCorridorCount: concentratedCount,
 		GeneratedAt:               s.clock().Format(time.RFC3339),
+	}
+
+	writeJSON(w, r, http.StatusOK, out)
+}
+
+// ThresholdsJSON publishes the project's code constants for divergence bands
+// and verdict thresholds on the wire (issue #626). Exposing them directly from
+// code constants ensures consumers do not have to hardcode them and makes any
+// change detectable.
+type ThresholdsJSON struct {
+	VerdictThresholds    VerdictThresholdsJSON    `json:"verdict_thresholds"`
+	DivergenceThresholds DivergenceThresholdsJSON `json:"divergence_thresholds"`
+}
+
+type VerdictThresholdsJSON struct {
+	Good string `json:"good"`
+	Fair string `json:"fair"`
+	Poor string `json:"poor"`
+}
+
+type DivergenceThresholdsJSON struct {
+	Agree       string `json:"agree"`
+	Malfunction string `json:"malfunction"`
+}
+
+// handleThresholds serves the verdict and divergence thresholds directly from
+// the constants defined in route and refrate packages.
+func (s *Server) handleThresholds(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET is supported")
+		return
+	}
+	if err := checkParams(r, "pretty"); err != nil {
+		writeError(w, r, http.StatusBadRequest, codeInvalidQuery, err.Error())
+		return
+	}
+
+	out := ThresholdsJSON{
+		VerdictThresholds: VerdictThresholdsJSON{
+			Good: route.ThresholdGood.String(),
+			Fair: route.ThresholdFair.String(),
+			Poor: route.ThresholdPoor.String(),
+		},
+		DivergenceThresholds: DivergenceThresholdsJSON{
+			Agree:       refrate.DivergenceAgree.String(),
+			Malfunction: refrate.DivergenceMalfunction.String(),
+		},
 	}
 
 	writeJSON(w, r, http.StatusOK, out)

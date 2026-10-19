@@ -90,6 +90,8 @@ func TestErrorCodeContract(t *testing.T) {
 		{"health unknown param", http.MethodGet, "/healthz?tp=x", codeInvalidQuery, http.StatusBadRequest},
 		{"chain-heads method", http.MethodPost, "/api/chain-heads", codeMethodNotAllowed, http.StatusMethodNotAllowed},
 		{"chain-heads unknown param", http.MethodGet, "/api/chain-heads?tp=x", codeInvalidQuery, http.StatusBadRequest},
+		{"thresholds method", http.MethodPost, "/api/thresholds", codeMethodNotAllowed, http.StatusMethodNotAllowed},
+		{"thresholds unknown param", http.MethodGet, "/api/thresholds?tp=x", codeInvalidQuery, http.StatusBadRequest},
 	}
 
 	for _, tc := range cases {

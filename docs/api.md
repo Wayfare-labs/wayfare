@@ -14,6 +14,7 @@ All endpoints are read-only. The service does not hold funds, issue tokens, sign
 | `GET` | `/api/chain-heads` | Publish the current hash-chain tip for each stored corridor |
 | `GET` | `/api/assets` | List verified assets configured in the binary |
 | `GET` | `/api/market-structure` | Identify shared issuer dependencies across corridors |
+| `GET` | `/api/thresholds` | Publish verdict and divergence band thresholds from code constants |
 | `GET` | `/healthz` | Return service health |
 | `GET` | `/` | Serve the embedded single-file UI |
 

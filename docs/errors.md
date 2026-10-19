@@ -31,7 +31,7 @@ cause produces the same code on every endpoint. `TestErrorCodeContract` in
 
 | Code | HTTP | Cause | Endpoints |
 |:---|:---|:---|:---|
-| `method_not_allowed` | 405 | A method other than `GET` was used. | `/api/corridor`, `/api/corridor/trend`, `/api/chain-heads`, `/api/market-structure` |
+| `method_not_allowed` | 405 | A method other than `GET` was used. | `/api/corridor`, `/api/corridor/trend`, `/api/chain-heads`, `/api/market-structure`, `/api/thresholds` |
 | `invalid_query` | 400 | An unsupported query parameter was supplied. Parameter handling is strict: a typo like `?tp=NGNC` is an error, not a silent fall-back to the default corridor. | all |
 | `unknown_send_asset` | 400 | The `from` asset code is not in the verified registry. | `/api/corridor`, `/api/corridor/trend` |
 | `unknown_receive_asset` | 400 | The `to` asset code is not in the verified registry. | `/api/corridor`, `/api/corridor/trend` |
@@ -49,7 +49,7 @@ cause produces the same code on every endpoint. `TestErrorCodeContract` in
 
 ### A note on `method_not_allowed`
 
-The four endpoints above reject a non-`GET` method in the handler itself. The
+The five endpoints above reject a non-`GET` method in the handler itself. The
 two remaining endpoints, `/api/assets` and `/healthz`, do **not** yet do so:
 they answer any method with the same body. This document reports the code as it
 is, so the row above names only the endpoints that emit the code today. A
