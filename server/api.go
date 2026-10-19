@@ -741,6 +741,21 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 		},
 	}
 
+	// The diagnostic is served back from storage when the run carried one, so
+	// a history-served DISAGREE keeps the attribution the live document had.
+	// An older record predates the field and honestly carries none.
+	if rec.Reference.DiagnosticSource != "" || rec.Reference.DiagnosticReason != "" {
+		out.ReferenceDiagnostic = &route.ReferenceDiagnosticJSON{
+			Source:             rec.Reference.DiagnosticSource,
+			Mid:                rec.Reference.DiagnosticMid,
+			AsOf:               rec.Reference.DiagnosticAsOf,
+			Outlier:            rec.Reference.DiagnosticOutlier,
+			OutlierDistancePct: rec.Reference.DiagnosticOutlierDistancePct,
+			OtherDistancePct:   rec.Reference.DiagnosticOtherDistancePct,
+			Reason:             rec.Reference.DiagnosticReason,
+		}
+	}
+
 	// DependsOn entries are stored as codes alone, but an asset code
 	// identifies nothing — the issuer is the identity — so each is resolved
 	// back through the verified registry to carry the same identity the

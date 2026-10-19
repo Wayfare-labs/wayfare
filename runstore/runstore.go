@@ -89,6 +89,21 @@ type Reference struct {
 	// same JSON — and therefore the same hash — it did before this field
 	// existed. This is the Version 3 migration; see docs/run-store.md.
 	FetchedAt string `json:"fetched_at,omitempty"`
+
+	// The diagnostic provider's attribution of a DISAGREE (issue #597).
+	//
+	// These are optional, declared omitempty and after every earlier field,
+	// on the same rule as FetchedAt: a record written before the diagnostic
+	// existed encodes to exactly the bytes it always did and still verifies.
+	// A record written when the third provider answered carries what it
+	// observed; a record written when it did not simply omits the block.
+	DiagnosticSource             string `json:"diagnostic_source,omitempty"`
+	DiagnosticMid                string `json:"diagnostic_mid,omitempty"`
+	DiagnosticAsOf               string `json:"diagnostic_as_of,omitempty"`
+	DiagnosticOutlier            string `json:"diagnostic_outlier,omitempty"`
+	DiagnosticOutlierDistancePct string `json:"diagnostic_outlier_distance_pct,omitempty"`
+	DiagnosticOtherDistancePct   string `json:"diagnostic_other_distance_pct,omitempty"`
+	DiagnosticReason             string `json:"diagnostic_reason,omitempty"`
 }
 
 // Rung is one size's stored result.

@@ -30,6 +30,17 @@ func MoneyStrings(c CorridorJSON) []string {
 	if c.ReferenceDivergencePct != "" {
 		add(c.ReferenceDivergencePct)
 	}
+	if c.ReferenceDiagnostic != nil {
+		if c.ReferenceDiagnostic.Mid != "" {
+			add(c.ReferenceDiagnostic.Mid)
+		}
+		if c.ReferenceDiagnostic.OutlierDistancePct != "" {
+			add(c.ReferenceDiagnostic.OutlierDistancePct)
+		}
+		if c.ReferenceDiagnostic.OtherDistancePct != "" {
+			add(c.ReferenceDiagnostic.OtherDistancePct)
+		}
+	}
 	if c.ParallelMid != "" {
 		add(c.ParallelMid)
 	}

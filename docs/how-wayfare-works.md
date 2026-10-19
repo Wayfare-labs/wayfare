@@ -30,7 +30,10 @@ Two details that make this trustworthy rather than decorative:
   the measurement is marked `scored: false` — no loss figures and no verdicts
   are published, because a percentage scored against a disputed benchmark
   would be an artefact of which provider was believed (`refrate/`,
-  `route/route.go`, `route/unscored_test.go`).
+  `route/route.go`, `route/unscored_test.go`). On a genuine disagreement (not a
+  malfunction), a third independent provider is consulted only to attribute
+  which primary is the outlier; it never moves the scored mid
+  ([reference providers](reference-providers.md)).
 - **The mid is never averaged away.** When the two providers agree, the
   primary mid is used; when they diverge, the more conservative mid is
   scored against. Either way the response's `scored_against` field names the

@@ -143,6 +143,12 @@ anyway presents an artefact as a measurement.
 | — | `STALE` | the fresher feed, when the two describe different moments |
 | — | `SINGLE` | the one that answered; uncorroborated, and says so |
 
+On a `DISAGREE`, an optional `reference_diagnostic` object may name a third
+independent provider and which of the two primaries is farther from it. It is
+evidence about the disagreement, not an input: `reference_mid`, `reference_source`
+and `scored` are exactly what they would be without it. See
+[reference providers](reference-providers.md).
+
 ### 3. `recommended: null` means "nothing is worth taking"
 
 Not "the best of a bad set", and not "no data". The engine recommends a quote

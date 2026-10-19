@@ -227,6 +227,7 @@ upstream directly. These are the same hosts the code fetches (`refrate`
 ```bash
 curl -sS -o /dev/null -w '%{http_code}\n' https://open.er-api.com/v6/latest/USD
 curl -sS -o /dev/null -w '%{http_code}\n' https://latest.currency-api.pages.dev/v1/currencies/usd.json
+curl -sS -o /dev/null -w '%{http_code}\n' https://www.floatrates.com/daily/usd.json
 curl -sS -o /dev/null -w '%{http_code}\n' https://horizon.stellar.org/
 ```
 

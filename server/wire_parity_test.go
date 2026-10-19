@@ -452,3 +452,40 @@ func TestLiveAndStaleAgreeOnReferenceCrossCheckValues(t *testing.T) {
 			stale.ReferenceFetchedAt, live.ReferenceFetchedAt)
 	}
 }
+
+// TestLiveAndStaleAgreeOnReferenceDiagnostic is the value-level check for the
+// third-provider attribution: a DISAGREE diagnostic must survive storage and
+// come back on the stale path with the same source, outlier and figures. It is
+// provenance, so dropping it on replay would silently turn an attributed
+// disagreement into an anonymous one.
+func TestLiveAndStaleAgreeOnReferenceDiagnostic(t *testing.T) {
+	lr := wellPopulatedLadderResult()
+	lr.Reference.Agreement = refrate.AgreementDisagree
+	lr.Reference.Diagnostic = &refrate.Diagnostic{
+		Source:             "floatrates",
+		Mid:                decimal.RequireFromString("1340"),
+		AsOf:               time.Date(2026, 10, 19, 7, 55, 4, 0, time.UTC),
+		Outlier:            "exchangerate-api",
+		OutlierDistancePct: decimal.RequireFromString("0.7653"),
+		OtherDistancePct:   decimal.RequireFromString("0.6612"),
+	}
+	pair := "USD/NGN"
+
+	live := route.ToCorridorJSON(lr, pair)
+	rec := runstore.FromCorridorJSON(live)
+	stale := staleJSON(rec, pair, time.Now().UTC())
+
+	if live.ReferenceDiagnostic == nil || stale.ReferenceDiagnostic == nil {
+		t.Fatalf("diagnostic missing: live=%+v stale=%+v", live.ReferenceDiagnostic, stale.ReferenceDiagnostic)
+	}
+	if *stale.ReferenceDiagnostic != *live.ReferenceDiagnostic {
+		t.Errorf("stale diagnostic = %+v, want the live value %+v",
+			*stale.ReferenceDiagnostic, *live.ReferenceDiagnostic)
+	}
+	if rec.Reference.DiagnosticSource != "floatrates" {
+		t.Errorf("stored DiagnosticSource = %q, want floatrates", rec.Reference.DiagnosticSource)
+	}
+	if rec.Reference.DiagnosticOutlier != "exchangerate-api" {
+		t.Errorf("stored DiagnosticOutlier = %q, want exchangerate-api", rec.Reference.DiagnosticOutlier)
+	}
+}

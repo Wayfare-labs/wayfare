@@ -1,6 +1,6 @@
 # ADR: reference mids are never averaged
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-10-19: a third provider may diagnose a `DISAGREE`; it is never a scored input)
 - **Date:** 2026-08-27
 - **Decision:** Wayfare never averages reference-provider mids. It selects a named provider according to the agreement rules and carries the other provider separately.
 
@@ -8,7 +8,9 @@
 
 Wayfare scores an achieved route against an independent reference mid. The reference is part of the measurement's provenance: a reader must be able to identify the source and reproduce or check the benchmark used for the verdict.
 
-Two providers are queried where the configured cross-check permits it. They can return different mids because of aggregation, timing, coverage, or a broken feed. A simple average would produce a number neither provider published. It would also make a stored or API result impossible to trace to one source.
+Two primary providers are queried where the configured cross-check permits it. They can return different mids because of aggregation, timing, coverage, or a broken feed. A simple average would produce a number neither provider published. It would also make a stored or API result impossible to trace to one source.
+
+A third provider may be consulted **only** to diagnose a `DISAGREE` — to report which primary is the outlier ([issue #597](https://github.com/Wayfare-labs/wayfare/issues/597), [`reference-providers.md`](reference-providers.md)). That is a separate observation, not a third input: it is never averaged, never substituted, and never changes the scored mid. ADR 001 forbids averaging, not consulting.
 
 This is not a theoretical concern. The code carries `mid`, `source`, `secondary_mid`, `secondary_source`, `divergence_pct`, and `scored_against` through `refrate.Rate`, the route wire shape, and the run store. Those fields exist specifically to preserve which observation produced the scored result.
 
@@ -19,7 +21,7 @@ Do not calculate `(primary + secondary) / 2` or otherwise blend provider values.
 Instead:
 
 1. **AGREE:** score against the primary provider and retain the secondary mid and source.
-2. **DISAGREE:** score against the more conservative mid—the larger mid for a loss measured as the achieved rate below the benchmark—and name that provider in `scored_against`.
+2. **DISAGREE:** score against the more conservative mid—the larger mid for a loss measured as the achieved rate below the benchmark—and name that provider in `scored_against`. A configured third provider may be consulted to attribute which primary is farther from it; that attribution is reported separately in `reference_diagnostic` and does not change this choice.
 3. **STALE:** when the providers describe materially different timestamps, score against the fresher provider and retain the older observation as secondary.
 4. **SINGLE:** when only one provider answers, use it and explicitly identify the result as uncorroborated.
 5. **MALFUNCTION:** when the divergence exceeds the malfunction threshold, issue no verdict. The system cannot defend either feed as the benchmark.
@@ -45,19 +47,21 @@ Those costs are intentional. A less detailed response would be shorter but would
 
 ## What this decision does not mean
 
-This ADR does not add a third provider, define a parallel-market benchmark, or change verdict thresholds. It also does not claim that the selected reference is ground truth. It records which defensible benchmark the system used and refuses to hide disagreement behind a blended number.
+This ADR does not make a third provider a scored input, define a parallel-market benchmark, or change verdict thresholds. The diagnostic provider added in #597 is consulted only on `DISAGREE` and is never averaged into the benchmark; see [`reference-providers.md`](reference-providers.md). This ADR also does not claim that the selected reference is ground truth. It records which defensible benchmark the system used and refuses to hide disagreement behind a blended number.
 
 ## Implementation evidence
 
 As checked on 2026-08-27:
 
-- `refrate/cross.go` implements reconciliation and explicitly documents why it does not average.
-- `route/wire.go` publishes the selected and secondary reference fields.
+- `refrate/cross.go` implements reconciliation and explicitly documents why it does not average; it also carries the optional third-provider `Diagnostic` without letting it affect the scored mid.
+- `refrate/floatrates.go` is the diagnostic provider, consulted only on `DISAGREE`.
+- `route/wire.go` publishes the selected, secondary and diagnostic reference fields.
 - `runstore/convert.go` and `runstore/runstore.go` preserve the reference provenance in stored runs.
 - `server/trend.go` returns the reference used by each historical run.
 
 ## Related
 
+- [Reference providers](reference-providers.md)
 - [HTTP API reference](api.md)
 - [Run store](run-store.md)
 - [Parallel-rate research](parallel-rate-research.md)
