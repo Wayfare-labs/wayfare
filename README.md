@@ -174,7 +174,7 @@ yet.
               ┌──────────────┴───────────────┐
               ▼                              ▼
      monitor.Scheduler                 server.Server
-     every 6h, headless                /api/corridor, single-file UI
+     every 6h, headless                /api/corridor, embedded UI
               │                              │ on failure: last stored run,
               ▼                              │ labelled live:false
      runstore ── hash-chained NDJSON ◀───────┘
@@ -344,7 +344,7 @@ Full spec: **[docs/run-store.md](docs/run-store.md)**
 | `runstore` | Hash-chained measurement history |
 | `monitor` | Scheduled measurement, independent of HTTP |
 | `snapshot` | Record and replay upstream responses |
-| `server` | HTTP surface and the embedded single-file UI |
+| `server` | HTTP surface and the embedded UI (index.html, app.css, app.js) |
 | `cmd/ladder` | Measurement CLI |
 | `cmd/wayfared` | Server and scheduler |
 
@@ -375,7 +375,10 @@ GET /api/corridor?to=NGNC[&from=USDC][&sizes=1,10,100]
 GET /api/corridor/trend?to=NGNC[&from=USDC][&limit=100]
 GET /api/assets
 GET /healthz
-GET /                            single-file UI, no build step
+GET /                            embedded UI (index.html + app.css + app.js),
+                                 no build step
+GET /app.css                     UI stylesheet
+GET /app.js                      UI script
 ```
 
 Beyond the contracts above, one field to know: **`live`** is on every response.

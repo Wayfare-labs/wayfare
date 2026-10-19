@@ -243,7 +243,7 @@ func TestRungsAreOrderedBySize(t *testing.T) {
 	}
 }
 
-// TestUIIsServed checks the embedded single-file UI reaches the browser and
+// TestUIIsServed checks the embedded UI reaches the browser and
 // carries no external dependencies, since a build step is what it exists to
 // avoid.
 func TestUIIsServed(t *testing.T) {

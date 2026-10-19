@@ -230,11 +230,7 @@ func TestHumanAge(t *testing.T) {
 // discarding, at the last step, the distinction the whole check contract
 // exists to preserve.
 func TestUIRendersAllThreeFindingStates(t *testing.T) {
-	raw, err := uiFS.ReadFile("index.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	page := string(raw)
+	page := uiSource(t)
 
 	for _, want := range []string{"UNKNOWN", "PASS", "FAIL", "f-unknown", "f-pass", "f-fail"} {
 		if !strings.Contains(page, want) {
