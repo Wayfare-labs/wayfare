@@ -332,7 +332,11 @@ func (r *Result) Viable() bool { return r.Recommended != nil }
 
 // Engine prices and ranks routes.
 type Engine struct {
-	DEX     *dex.Client
+	// DEX is the pathfinder the engine prices against. It is an interface so
+	// the Horizon client can be replaced without changing route; nil leaves
+	// the on-chain leg unpriced. See Pathfinder for the full-set and AMM
+	// requirements its implementation must satisfy.
+	DEX     Pathfinder
 	RefRate refrate.Provider
 
 	// Parallel is an optional parallel/street-market rate source, reported as

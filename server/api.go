@@ -475,19 +475,30 @@ type healthFreshnessJSON struct {
 	RecordCount    *int64  `json:"record_count"`
 }
 
+// chainHeadSource is the optional capability /healthz asks the configured
+// pathfinder for: the current ledger sequence. It is deliberately not part of
+// route.Pathfinder, whose surface is exactly the pricing contract. Keeping it
+// optional means a replacement pathfinder is not required to expose Horizon's
+// root endpoint for the route seam to be satisfied.
+type chainHeadSource interface {
+	ChainHead(ctx context.Context) (int64, error)
+}
+
 // healthFreshness assembles the freshness block. The store is small by
 // construction — the run window is capped by rotation — so reading the full
 // history for a count is deliberate rather than something to optimise away.
 func (s *Server) healthFreshness(ctx context.Context) healthFreshnessJSON {
 	f := healthFreshnessJSON{}
 
-	if s.Engine != nil && s.Engine.DEX != nil {
-		headCtx, cancel := context.WithTimeout(ctx, chainHeadBudget)
-		defer cancel()
-		if head, err := s.Engine.DEX.ChainHead(headCtx); err == nil {
-			f.ChainHead = &head
-		} else {
-			log().Debug("healthz: chain head unavailable, reporting unknown", "error", err)
+	if s.Engine != nil {
+		if ch, ok := s.Engine.DEX.(chainHeadSource); ok {
+			headCtx, cancel := context.WithTimeout(ctx, chainHeadBudget)
+			defer cancel()
+			if head, err := ch.ChainHead(headCtx); err == nil {
+				f.ChainHead = &head
+			} else {
+				log().Debug("healthz: chain head unavailable, reporting unknown", "error", err)
+			}
 		}
 	}
 
