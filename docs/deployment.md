@@ -324,6 +324,8 @@ put a secret into the deployment, and this service holds none.
 | `-timeout` | | `90s` | Ceiling on a live measurement. Each request's budget is 10s plus 6s per rung, capped at this value, and is returned in the `X-Measurement-Budget` header. A timeout returns `504` with code `upstream_timeout`, the `budget`, and `rungs_completed`. |
 | `-shutdown-grace` | | `30s` | On SIGTERM, how long in-flight requests (a live ladder) get to finish before the server closes |
 | `-verify-store` | | | Walk every chain and exit |
+| `-export` | | | Export one corridor's verified history to stdout and exit, e.g. `-export USDC-NGNC` |
+| `-format` | | `csv` | Export format for `-export`; `csv` is the only implemented format |
 | `-rotate-store` | | | Trim every chain over the window ceiling and exit |
 | `-rotate-records` | | `366` | Per-corridor record ceiling for `-rotate-store` |
 | `-check-fresh` | | | Report corridors whose newest record is older than `-max-age` (or missing) and exit |

@@ -410,6 +410,83 @@ head's `hash` has changed even though its measurements are byte-identical.
 That is deliberate — a re-sealed window must not masquerade as the original
 chain — and `TestRotateChangesTheWindowHashes` pins it.
 
+### Exporting a chain as CSV
+
+The history is NDJSON with a nested `reference` block and a full `rungs` array
+per record. That is the right shape for provenance and the wrong shape for a
+spreadsheet: a researcher or journalist has to flatten it before a pivot table
+works, and every hand flattening is a chance to drop or reorder a figure. So
+the binary exports a verified chain as CSV — one row per record.
+
+```bash
+wayfared -export USDC-NGNC -format csv -data ./data > usdc-ngnc.csv
+
+# on a deployed instance
+fly ssh console -C "/wayfared -export USDC-NGNC -format csv -data /data" > usdc-ngnc.csv
+```
+
+`-format` defaults to `csv`, the only implemented format. The corridor is
+matched case-insensitively.
+
+#### The columns
+
+One header row, then one row per record in chronological order (oldest first,
+the same order `Store.All` returns):
+
+```
+recorded_at,corridor,seq,integrity,floor_loss_pct,floor_size,worst_loss_pct,worst_size,reference_mid,reference_source,reference_as_of,reference_fetched_at,reference_scored_against,reference_secondary_mid,reference_secondary_source,reference_secondary_as_of,reference_divergence_pct
+```
+
+Every cell is the stored value copied through unchanged. Money and rate fields
+stay **decimal strings** (`25.02`, `1350.2568`), never floats: parsing them into
+a spreadsheet number at export time would reintroduce exactly the
+binary-floating-point loss the rest of the project refuses, and the exported
+figure would stop matching the published one. The only transformations are the
+two a readable export cannot avoid — `recorded_at` is normalised to UTC RFC3339
+(the store's own format) and `seq` is rendered as a decimal integer.
+
+The export is one row per **measurement**, not one row per size. Per-rung detail
+stays in the NDJSON chain; a column per rung would make the shape depend on the
+ladder width and break in every spreadsheet. Fields that are legitimately absent
+(a `SINGLE` cross-check has no secondary mid, an older record has no
+`fetched_at`) are exported as empty cells, not as zeros or placeholders.
+
+#### Verification comes first
+
+`-export` walks the chain with `Verify` **before it writes anything**, and
+refuses if the chain does not reconcile:
+
+```
+refusing to export: chain failed verification  corridor=USDC-NGNC
+  error="runstore: USDC-NGNC: record seq 1 has hash 424b33fcf120… but its
+  contents hash to 46a5ad0726de…; it was modified after it was written"
+```
+
+The CSV carries no hashes of its own, so an export of an unverified chain could
+not be distinguished from a faithful copy — exporting one would launder the
+provenance claim the chain exists to support. A refused export writes **no
+partial file**: a truncated CSV reads as a short history rather than as a failed
+verification, and nothing on the artifact itself would say which.
+
+#### Exit codes
+
+The codes follow `-verify-store`, so a script that already handles one handles
+the other:
+
+| Code | Meaning |
+|:---:|:---|
+| `0` | Chain verified and exported; the CSV is on stdout |
+| `1` | The chain failed verification. Nothing was written to stdout |
+| `2` | The export could not run: no store configured, unknown or empty corridor, or an unsupported `-format` |
+
+Usage errors are kept separate from verification failures on purpose: a corridor
+with no history, or a misspelled format, is not a finding about the corridor, and
+neither may be reported as one.
+
+The command writes the document to stdout and logs to stderr, so
+`> corridor.csv` always produces a clean file. It does not serve, measure, or
+modify the store.
+
 ### Backups
 
 The chain proves nothing was edited. It does **not** survive the volume dying.
@@ -422,5 +499,6 @@ a backup nobody has restored from is a hypothesis. See
 ## Related
 
 - [rollback.md](rollback.md) — returning to an older image, and verifying the chain it serves
+- [verify-store.md](verify-store.md) — what a verification failure looks like, and its exit codes
 - [snapshot-format.md](snapshot-format.md) — recorded upstream bytes
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — project invariants
