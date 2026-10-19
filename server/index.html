@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+<a class="skip-link" href="#out">Skip to the results</a>
 <div class="wrap">
   <header>
     <h1>Wayfare</h1>
@@ -15,25 +16,67 @@
     rate, and states plainly when none are worth taking.</p>
   </header>
 
+  <a class="skip-link" href="#out">Skip to results</a>
   <div class="controls">
     <label for="to">Corridor</label>
-    <select id="to">
-      <option value="NGNC">USDC &rarr; NGNC (naira)</option>
-      <option value="GHSC">USDC &rarr; GHSC (cedi)</option>
-      <option value="KESC">USDC &rarr; KESC (shilling)</option>
+    <select id="to" aria-label="Select a corridor to measure">
+      <option value="" disabled selected>Loading corridors…</option>
     </select>
+    <label for="sizes">Sizes</label>
+    <input id="sizes" name="sizes" type="text" inputmode="decimal"
+      autocomplete="off" spellcheck="false" class="sizes-input"
+      value="0.1,1,5,10,25,50,100,250,500,1000,2500,5000"
+      aria-label="Comma-separated send sizes in USDC; leave unchanged for the default ladder"
+      aria-describedby="sizes-help">
+    <span id="sizes-help" class="case">USDC, comma-separated</span>
+    <span id="cs-detail" class="cs-info"></span>
+    <label for="sizes">Send sizes (USDC, comma-separated)</label>
+    <input id="sizes" name="sizes" inputmode="decimal" autocomplete="off"
+      placeholder="Default: 0.1 to 5000"
+      aria-describedby="sizes-help" spellcheck="false">
+    <span id="sizes-help" class="cs-info" title="The engine sorts the chosen sizes ascending before pricing, and an unpriced size is reported as such — never as a zero.">Leave empty for the default ladder:
+    0.1, 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500 and 5000. Why these sizes:
+    the bottom rung isolates the corridor's spread, the top rung exposes exhaustion.</span>
     <button id="run">Measure live</button>
     <button id="trend">Show trend</button>
-    <span id="status" class="sub"></span>
+    <span id="status" class="sub" role="status"></span>
   </div>
 
-  <div id="out"></div>
+  <details class="compare-controls">
+    <summary>Compare shared measurements</summary>
+    <div class="controls">
+      <label for="compare-to">Compare with</label>
+      <select id="compare-to" aria-label="Select the second corridor to compare" disabled>
+        <option value="">Loading corridors…</option>
+      </select>
+      <button id="compare" type="button" aria-controls="compare-out" disabled>Compare corridors</button>
+      <span id="compare-status" class="sub" role="status" aria-live="polite"></span>
+    </div>
+  </details>
+  <div id="compare-out" aria-live="polite"></div>
+
+  <div id="out">
+    <div class="loading-panel" id="loading">
+      <div class="loading-dots">
+        <span></span><span></span><span></span>
+      </div>
+      <p class="loading-what">
+        Wayfare prices a stablecoin&nbsp;&rarr;&nbsp;fiat-token corridor against
+        an independent reference rate, scores every route against that benchmark,
+        and states plainly when no route is worth taking.
+      </p>
+      <p class="loading-wake">
+        Select a corridor above and press <strong>Measure live</strong> to fetch a fresh
+        reading, or <strong>Show trend</strong> to inspect recorded history. The instance may
+        be waking up from sleep &mdash; Render free-tier pauses after 15&nbsp;minutes of
+        inactivity (this usually takes under a minute).
+      </p>
+    </div>
+  </main>
 
   <footer>
-    Every figure is fetched live from Horizon pathfinding and an independent rate
-    provider at the moment you press Measure. Nothing is cached, estimated, or
-    interpolated. Wayfare is non-custodial and read-only: it never holds funds,
-    issues tokens, or moves money.
+    <span id="footer-provenance">Wayfare is non-custodial and read-only: it never holds funds,
+    issues tokens, or moves money.</span>
   </footer>
 </div>
 

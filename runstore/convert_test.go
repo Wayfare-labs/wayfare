@@ -3,6 +3,7 @@ package runstore
 import (
 	"testing"
 
+	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/route"
 )
 
@@ -40,6 +41,131 @@ func TestFromCorridorJSONCarriesReferenceCrossCheck(t *testing.T) {
 	}
 	if r.Reference.ScoredAgainst != c.ReferenceSource {
 		t.Errorf("Reference.ScoredAgainst = %q, want %q (the corridor was scored)", r.Reference.ScoredAgainst, c.ReferenceSource)
+	}
+}
+
+// TestFromCorridorJSONCarriesReferenceFetchedAt pins that the benchmark's
+// fetch timestamp survives into storage (backlog #7): the wire publishes
+// reference_fetched_at, and a stale replay must be able to reproduce it so a
+// reader can tell how old the benchmark was when the reading was taken. A
+// record that dropped it would serve history that looked current no matter
+// how reused the rate behind it was.
+func TestFromCorridorJSONCarriesReferenceFetchedAt(t *testing.T) {
+	c := route.CorridorJSON{
+		SendAsset:          route.AssetJSON{Code: "USDC"},
+		ReceiveAsset:       route.AssetJSON{Code: "NGNC"},
+		ReferenceMid:       "1350.2568",
+		ReferenceSource:    "exchangerate-api",
+		ReferenceFetchedAt: "2026-08-21T22:31:00Z",
+	}
+
+	r := FromCorridorJSON(c)
+
+	if r.Reference.FetchedAt != c.ReferenceFetchedAt {
+		t.Errorf("Reference.FetchedAt = %q, want %q", r.Reference.FetchedAt, c.ReferenceFetchedAt)
+	}
+}
+
+// TestFromCorridorJSONFetchedAtAbsentStaysAbsent keeps absence honest: a
+// CorridorJSON without reference_fetched_at must produce a record without it,
+// never a fabricated timestamp that would make an old rate look freshly
+// fetched.
+func TestFromCorridorJSONFetchedAtAbsentStaysAbsent(t *testing.T) {
+	c := route.CorridorJSON{
+		SendAsset:    route.AssetJSON{Code: "USDC"},
+		ReceiveAsset: route.AssetJSON{Code: "NGNC"},
+		ReferenceMid: "1350.2568",
+	}
+	r := FromCorridorJSON(c)
+	if r.Reference.FetchedAt != "" {
+		t.Errorf("Reference.FetchedAt = %q, want empty when the wire carried none", r.Reference.FetchedAt)
+	}
+}
+
+// TestFromCorridorJSONCarriesFindings pins that check and metric results
+// ride into storage with the measurement. This is what lets the stale path
+// serve stored findings (issue #93): without it a history-served corridor
+// would silently lose every counterparty fact the live one showed.
+func TestFromCorridorJSONCarriesFindings(t *testing.T) {
+	c := route.CorridorJSON{
+		SendAsset:    route.AssetJSON{Code: "USDC"},
+		ReceiveAsset: route.AssetJSON{Code: "NGNC"},
+		Findings: &checks.FindingsJSON{
+			Checks: []checks.CheckJSON{
+				{
+					ID: "issuer.auth-flags", Scope: "anchor", Subject: "ngnc.online",
+					Severity: "critical", Determined: true, Passed: false,
+					Summary: "issuer enabled AUTH_REVOCABLE",
+					Evidence: []checks.EvidenceJSON{{
+						Source:     "https://horizon.stellar.org/accounts/X",
+						Observed:   "flags: auth_revocable=true",
+						ObservedAt: "2026-08-21T22:28:00Z",
+					}},
+					ObservedAt: "2026-08-21T22:28:00Z",
+				},
+				{
+					ID: "sep24.info-lists-asset", Scope: "anchor", Subject: "ngnc.online",
+					Severity: "warning", Determined: false, Passed: false,
+					Reason:     "no /sep24/info endpoint declared",
+					Summary:    "could not determine: no /sep24/info endpoint declared",
+					ObservedAt: "2026-08-21T22:28:00Z",
+				},
+			},
+			Metrics: []checks.MetricJSON{
+				{
+					ID: "spread.bid-ask", Scope: "asset", Subject: "USDC",
+					Determined: true, Value: "0.0004", Unit: "ratio",
+					Summary:    "bid-ask spread",
+					ObservedAt: "2026-08-21T22:28:00Z",
+				},
+				{
+					ID: "depth.observed-executable", Scope: "asset", Subject: "USDC",
+					Determined: false, Reason: "no executable side",
+					Summary:    "could not determine: no executable side",
+					Unit:       "amount",
+					ObservedAt: "2026-08-21T22:28:00Z",
+				},
+			},
+		},
+	}
+
+	r := FromCorridorJSON(c)
+
+	if len(r.Checks) != 2 {
+		t.Fatalf("record checks = %d, want 2", len(r.Checks))
+	}
+	// An undetermined result must survive with its reason intact — the
+	// tri-state (and its explanation) is the whole point of the block.
+	und := r.Checks[1]
+	if und.Determined != false || und.Reason != "no /sep24/info endpoint declared" {
+		t.Errorf("undetermined check lost its reason: determined=%v reason=%q",
+			und.Determined, und.Reason)
+	}
+	if len(r.Metrics) != 2 {
+		t.Fatalf("record metrics = %d, want 2", len(r.Metrics))
+	}
+	if r.Metrics[0].Value != "0.0004" || r.Metrics[0].Unit != "ratio" {
+		t.Errorf("determined metric = value %q unit %q, want 0.0004 ratio",
+			r.Metrics[0].Value, r.Metrics[0].Unit)
+	}
+	if r.Metrics[1].Determined != false || r.Metrics[1].Reason != "no executable side" {
+		t.Errorf("undetermined metric lost its reason: determined=%v reason=%q",
+			r.Metrics[1].Determined, r.Metrics[1].Reason)
+	}
+}
+
+// TestFromCorridorJSONCarryFindingsAbsentStaysAbsent keeps absence honest:
+// a CorridorJSON with no findings block must produce a record with none,
+// never an empty block that reads as "checked, nothing found".
+func TestFromCorridorJSONFindingsAbsentStaysAbsent(t *testing.T) {
+	c := route.CorridorJSON{
+		SendAsset:    route.AssetJSON{Code: "USDC"},
+		ReceiveAsset: route.AssetJSON{Code: "NGNC"},
+	}
+	r := FromCorridorJSON(c)
+	if len(r.Checks) != 0 || len(r.Metrics) != 0 {
+		t.Errorf("record with no findings has checks=%d metrics=%d, want none",
+			len(r.Checks), len(r.Metrics))
 	}
 }
 

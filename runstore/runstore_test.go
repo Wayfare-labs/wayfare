@@ -2,20 +2,31 @@ package runstore
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Wayfare-labs/wayfare/checks"
 )
 
 func ctx() context.Context { return context.Background() }
 
 // fixedRecord is a record with every field pinned to a constant, used by the
 // hash-pinning test. Nothing here may change without a Version bump.
+//
+// It is a Version 3 record and deliberately carries a checks block, a
+// metrics block and a reference fetch timestamp: those fields are part of the
+// pinned preimage, so a change to either their shape or their order is caught
+// exactly like a change to any other field. (How Version 1 and Version 2
+// records still verify under Version 3 is exercised separately — see
+// TestVersion1RecordStillVerifies and TestVersion2RecordStillVerifies.)
 func fixedRecord() *Record {
 	return &Record{
-		Version:    1,
+		Version:    3,
 		Seq:        1,
 		RecordedAt: time.Date(2026, 8, 21, 22, 30, 40, 0, time.UTC),
 		Corridor:   "USDC-NGNC",
@@ -26,6 +37,7 @@ func fixedRecord() *Record {
 			Source:        "currency-api",
 			AsOf:          "2026-08-21T00:00:00Z",
 			ScoredAgainst: "currency-api",
+			FetchedAt:     "2026-08-21T22:31:00Z",
 		},
 		FloorLossPct:    "25.02",
 		FloorSize:       "0.1",
@@ -39,6 +51,44 @@ func fixedRecord() *Record {
 			ReceiveAmount: "102.78", EffectiveRate: "1027.84",
 			LossPct: "24.65", Verdict: "UNUSABLE", Path: "USDC -> NGNC",
 		}},
+		Checks: []checks.CheckJSON{
+			{
+				ID: "anchor-asset-iso4217", Scope: "anchor", Subject: "ngnc.online",
+				Severity: "notice", Determined: true, Passed: true,
+				Summary: "anchor_asset names the NGNC shilling",
+				Evidence: []checks.EvidenceJSON{{
+					Source:     "ngnc.online/.well-known/stellar.toml",
+					Observed:   "ANCHOR_ASSET=" + "//SHILLING-NGNC:GBUUDI3TKOD3FONOFLGT4WTW6GVJ5YOBH4KUSYY3YOKCH3Z7VHQPB6XG",
+					ObservedAt: "2026-08-21T22:28:00Z",
+				}},
+				ObservedAt: "2026-08-21T22:28:00Z",
+			},
+			{
+				ID: "sep10.endpoint-responds", Scope: "anchor", Subject: "ngnc.online",
+				Severity: "warning", Determined: false, Passed: false,
+				Reason:  "no sep10 web-auth endpoint declared",
+				Summary: "could not determine: no sep10 web-auth endpoint declared",
+				Evidence: []checks.EvidenceJSON{{
+					Source:     "ngnc.online/.well-known/stellar.toml",
+					Observed:   "NO WEB_AUTH_ENDPOINT",
+					ObservedAt: "2026-08-21T22:28:00Z",
+				}},
+				ObservedAt: "2026-08-21T22:28:00Z",
+			},
+		},
+		Metrics: []checks.MetricJSON{
+			{
+				ID: "spread.bid-ask", Scope: "asset", Subject: "USDC",
+				Determined: true, Value: "0.0004", Unit: "ratio",
+				Summary: "bid-ask spread on the USDC/NGNC book",
+				Evidence: []checks.EvidenceJSON{{
+					Source:     "https://horizon.stellar.org/order_book",
+					Observed:   "bid=1350.1000 ask=1350.6400",
+					ObservedAt: "2026-08-21T22:28:00Z",
+				}},
+				ObservedAt: "2026-08-21T22:28:00Z",
+			},
+		},
 		PrevHash: GenesisPrevHash,
 	}
 }
@@ -54,9 +104,12 @@ func fixedRecord() *Record {
 // is a Version bump and a migration, and updating the constant below is the
 // last step of that work rather than the fix for a red build.
 func TestRecordHashIsPinned(t *testing.T) {
-	// Established 2026-08-21 when the format was defined, by computing it
-	// from fixedRecord above. Every value in that fixture is part of it.
-	const want = "sha256:1872c8f154123508633ecb2ffdc0c6918539b744f2d1be0c7edc61173d4edca2"
+	// Re-established 2026-08-26 when Version 3 added reference.fetched_at,
+	// by computing it from fixedRecord above. Every value in that fixture is
+	// part of it, including the checks block, the metrics block and the
+	// fetched_at stamp: they are fields like any other, and a change to
+	// their shape or order must fail here rather than pass review.
+	const want = "sha256:1be7a5513495a4cafd349e7ee67eca8297701425c95ab176c6aac5b072910f60"
 
 	got, err := fixedRecord().ComputeHash()
 	if err != nil {
@@ -69,6 +122,179 @@ func TestRecordHashIsPinned(t *testing.T) {
 			"previously stored chain now fails verification against this build.\n"+
 			"That is a Version bump plus a migration, not a constant to update.",
 			got, want)
+	}
+}
+
+// TestVersion1RecordStillVerifies is the migration's proof.
+//
+// A Version 1 record — no checks block, no metrics block — must load and
+// verify under this (Version 3) build, because history is evidence and a
+// schema change must not invalidate it. This works because every later
+// migration added its fields with omitempty after every earlier field, so a
+// record without them encodes to byte-for-byte the same JSON — and therefore
+// the same hash — it did under the old struct. The hash pinned here is exactly
+// the one the original TestRecordHashIsPinned froze when the format was
+// Version 1, and it must never change.
+func TestVersion1RecordStillVerifies(t *testing.T) {
+	const legacyV1Hash = "sha256:1872c8f154123508633ecb2ffdc0c6918539b744f2d1be0c7edc61173d4edca2"
+
+	r := fixedRecord()
+	// Shape it back into the Version 1 record the legacy constant was
+	// computed from: version 1, no findings, no fetched_at.
+	r.Version = 1
+	r.Checks = nil
+	r.Metrics = nil
+	r.Reference.FetchedAt = ""
+
+	if h, err := r.ComputeHash(); err != nil {
+		t.Fatal(err)
+	} else if h != legacyV1Hash {
+		t.Errorf("Version 1 record hash = %s, want %s; a stored Version 1 "+
+			"chain would no longer verify against this build", h, legacyV1Hash)
+	}
+
+	// And the full write/open/verify path: a chain whose records were
+	// written as Version 1 must load and verify, and new appends continue
+	// it as the current version.
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1 := fixedRecord()
+	v1.Version = 1
+	v1.Checks = nil
+	v1.Metrics = nil
+	v1.Reference.FetchedAt = ""
+	if err := s.Append(ctx(), v1); err != nil {
+		t.Fatalf("append v1-shaped record: %v", err)
+	}
+	if v1.Version != Version {
+		t.Errorf("Append wrote a v1-shaped record as version %d, want the current "+
+			"version %d; legacy records must not be relabelled", v1.Version, Version)
+	}
+	if err := s.Verify(ctx(), "USDC-NGNC"); err != nil {
+		t.Errorf("chain with a freshly-written v1-shaped record: %v", err)
+	}
+}
+
+// TestVersion2RecordStillVerifies is the Version 3 migration's proof, the
+// mirror of TestVersion1RecordStillVerifies for the immediately-previous
+// schema.
+//
+// A Version 2 record — checks and metrics blocks, but no fetched_at — must
+// load and verify under this (Version 3) build. It works because FetchedAt is
+// omitempty and declared after every Version 2 field, so a Version 2 record
+// encodes to byte-for-byte the same JSON — and therefore the same hash — it
+// did under Version 2. The hash pinned here is exactly the one
+// TestRecordHashIsPinned froze when the format was Version 2, and it must
+// never change.
+func TestVersion2RecordStillVerifies(t *testing.T) {
+	const legacyV2Hash = "sha256:ebc429fff786de9cb43abbc16b6859efa62a6be06ca25692dc91c233d05e5fb0"
+
+	r := fixedRecord()
+	// Shape it back into the Version 2 record the legacy constant was
+	// computed from: version 2, no fetched_at.
+	r.Version = 2
+	r.Reference.FetchedAt = ""
+
+	if h, err := r.ComputeHash(); err != nil {
+		t.Fatal(err)
+	} else if h != legacyV2Hash {
+		t.Errorf("Version 2 record hash = %s, want %s; a stored Version 2 "+
+			"chain would no longer verify against this build", h, legacyV2Hash)
+	}
+
+	// The on-disk path: a Version 2 line must load and verify unchanged,
+	// and its JSON must not carry the Version 3 field — the migration is
+	// byte-for-byte invisible to existing chains.
+	dir := t.TempDir()
+	line := mustMarshalV2Line(t, r)
+	if strings.Contains(line, "fetched_at") {
+		t.Error("a Version 2 record must encode without fetched_at; adding it would " +
+			"change the preimage of every existing chain")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "USDC-NGNC"+FileExt), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open with a Version 2 chain: %v", err)
+	}
+	if err := s.Verify(ctx(), "USDC-NGNC"); err != nil {
+		t.Errorf("Verify on a Version 2 chain: %v", err)
+	}
+	latest, err := s.Latest(ctx(), "USDC-NGNC")
+	if err != nil || latest == nil {
+		t.Fatalf("Latest on a Version 2 chain = %v, %v", latest, err)
+	}
+	if latest.Version != 2 {
+		t.Errorf("loaded record version = %d, want 2 (kept as written)", latest.Version)
+	}
+}
+
+// mustMarshalV2Line seals and encodes a record the way the Version 2 build
+// wrote it: hash stamped, one JSON line, trailing newline.
+func mustMarshalV2Line(t *testing.T, r *Record) string {
+	t.Helper()
+	if err := r.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	line, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(line) + "\n"
+}
+
+// TestVersion1ChainOnDiskStillLoads proves the on-disk path, not just the
+// in-memory one: a real Version 1 line as produced by the old build must load
+// and verify unchanged.
+func TestVersion1ChainOnDiskStillLoads(t *testing.T) {
+	dir := t.TempDir()
+	// First record exactly as Version 1 wrote it (the legacy pinned hash).
+	line := `{"version":1,"seq":1,"recorded_at":"2026-08-21T22:30:40Z","corridor":"USDC-NGNC",` +
+		`"integrity":"DIRECT","depends_on":[],"reference":{"mid":"1350.2568",` +
+		`"source":"currency-api","as_of":"2026-08-21T00:00:00Z",` +
+		`"scored_against":"currency-api"},"floor_loss_pct":"25.02",` +
+		`"floor_size":"0.1","worst_loss_pct":"97.68","worst_size":"5000",` +
+		`"recommended":null,"finding":"No usable size.","rungs":[{"send_amount":"0.1",` +
+		`"priced":true,"integrity":"DIRECT","receive_amount":"102.78",` +
+		`"effective_rate":"1027.84","loss_pct":"24.65","verdict":"UNUSABLE",` +
+		`"path":"USDC -> NGNC"}],"prev_hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000",` +
+		`"hash":"sha256:1872c8f154123508633ecb2ffdc0c6918539b744f2d1be0c7edc61173d4edca2"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "USDC-NGNC"+FileExt), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open with a mixed/legacy chain: %v", err)
+	}
+	if err := s.Verify(ctx(), "USDC-NGNC"); err != nil {
+		t.Errorf("Verify on a Version 1 chain: %v", err)
+	}
+	latest, err := s.Latest(ctx(), "USDC-NGNC")
+	if err != nil || latest == nil {
+		t.Fatalf("Latest on a Version 1 chain = %v, %v", latest, err)
+	}
+	if latest.Version != 1 {
+		t.Errorf("loaded record version = %d, want 1 (kept as written)", latest.Version)
+	}
+
+	// Appending a new (Version 3) record to that Version 1 chain must
+	// produce a single verifying chain covering both versions.
+	next := fixedRecord()
+	if err := s.Append(ctx(), next); err != nil {
+		t.Fatalf("append to v1 chain: %v", err)
+	}
+	if next.Seq != 2 || next.PrevHash != latest.Hash {
+		t.Errorf("appended seq %d prev %s, want seq 2 chained to the v1 tip %s",
+			next.Seq, short(next.PrevHash), short(latest.Hash))
+	}
+	if err := s.Verify(ctx(), "USDC-NGNC"); err != nil {
+		t.Errorf("mixed v1+v3 chain failed to verify: %v", err)
 	}
 }
 
@@ -273,22 +499,80 @@ func TestReopenResumesTheChain(t *testing.T) {
 	}
 }
 
-// TestUnknownVersionIsRefused mirrors the snapshot format's rule: a schema
-// this build does not understand is an error, never a best-effort parse.
-func TestUnknownVersionIsRefused(t *testing.T) {
-	dir := t.TempDir()
-	line := `{"version":99,"seq":1,"corridor":"USDC-NGNC","prev_hash":"` +
-		GenesisPrevHash + `","hash":"sha256:x"}` + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "USDC-NGNC"+FileExt), []byte(line), 0o644); err != nil {
+// writeVersionNRecord builds a record with the given version and a valid
+// hash, then writes it as the sole corridor line. The record is otherwise
+// well-formed: correct prev_hash, sealed hash, and all required fields.
+// This ensures the only reason Open fails is the version check, not a
+// coincidental hash or chain failure.
+func writeVersionNRecord(t *testing.T, dir string, version int) {
+	dir = filepath.Join(dir, "USDC-NGNC")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	r := fixedRecord()
+	r.Version = version
+	if err := r.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	line, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, FileExt), append(line, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
 
-	_, err := Open(dir)
+// TestUnknownVersionIsRefused mirrors the snapshot format's rule: a schema
+// this build does not understand is an error, never a best-effort parse.
+//
+// The record is sealed with a valid hash so the test specifically asserts
+// the version check: if the version check were removed, Open would succeed
+// and the test would fail for the right reason.
+func TestUnknownVersionIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	writeVersionNRecord(t, dir, 99)
+
+	_, err := Open(filepath.Join(dir, "USDC-NGNC"))
 	if err == nil {
 		t.Fatal("Open accepted a record with an unknown version")
 	}
 	if !strings.Contains(err.Error(), "version 99") {
 		t.Errorf("error should name the version found, got: %v", err)
+	}
+}
+
+// TestVersion0IsRefused guards against treating a zero-value version as a
+// default to be filled in. An absent or zero version is unknown, never a
+// fallback — the correct output is an error.
+func TestVersion0IsRefused(t *testing.T) {
+	dir := t.TempDir()
+	writeVersionNRecord(t, dir, 0)
+
+	_, err := Open(filepath.Join(dir, "USDC-NGNC"))
+	if err == nil {
+		t.Fatal("Open accepted a record with version 0")
+	}
+	if !strings.Contains(err.Error(), "version 0") {
+		t.Errorf("error should name the version found, got: %v", err)
+	}
+}
+
+// TestFutureVersionJustAboveCurrentIsRefused covers the boundary: a version
+// that is exactly one above the current schema is still unknown and must be
+// refused. This catches a future build bumping Version without updating the
+// acceptance list.
+func TestFutureVersionJustAboveCurrentIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	writeVersionNRecord(t, dir, Version+1)
+
+	_, err := Open(filepath.Join(dir, "USDC-NGNC"))
+	if err == nil {
+		t.Fatalf("Open accepted a record with version %d (current is %d)", Version+1, Version)
+	}
+	want := fmt.Sprintf("version %d", Version+1)
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error should name version %d, got: %v", Version+1, err)
 	}
 }
 
@@ -305,5 +589,53 @@ func TestNopStoreIsSafe(t *testing.T) {
 	}
 	if err := s.Verify(ctx(), "USDC-NGNC"); err != nil {
 		t.Errorf("Nop.Verify: %v", err)
+	}
+}
+
+// TestReadOnlyOpenFSRefusesUnknownVersion is the OpenFS mirror of
+// TestUnknownVersionIsRefused: the read-only store must refuse the same way.
+func TestReadOnlyOpenFSRefusesUnknownVersion(t *testing.T) {
+	dir := t.TempDir()
+	writeVersionNRecord(t, dir, 99)
+
+	// writeVersionNRecord creates dir/USDC-NGNC/<FileExt>, so we pass
+	// "USDC-NGNC" as the subdirectory to OpenFS.
+	_, err := OpenFS(os.DirFS(dir), "USDC-NGNC")
+	if err == nil {
+		t.Fatal("OpenFS accepted a record with an unknown version")
+	}
+	if !strings.Contains(err.Error(), "version 99") {
+		t.Errorf("error should name the version found, got: %v", err)
+	}
+}
+
+// TestReadOnlyOpenFSRefusesVersion0 guards the same zero-value edge case for
+// the read-only store.
+func TestReadOnlyOpenFSRefusesVersion0(t *testing.T) {
+	dir := t.TempDir()
+	writeVersionNRecord(t, dir, 0)
+
+	_, err := OpenFS(os.DirFS(dir), "USDC-NGNC")
+	if err == nil {
+		t.Fatal("OpenFS accepted a record with version 0")
+	}
+	if !strings.Contains(err.Error(), "version 0") {
+		t.Errorf("error should name the version found, got: %v", err)
+	}
+}
+
+// TestReadOnlyOpenFSRefusesFutureVersion covers the boundary for the read-only
+// store: a version exactly one above the current schema must be refused.
+func TestReadOnlyOpenFSRefusesFutureVersion(t *testing.T) {
+	dir := t.TempDir()
+	writeVersionNRecord(t, dir, Version+1)
+
+	_, err := OpenFS(os.DirFS(dir), "USDC-NGNC")
+	if err == nil {
+		t.Fatalf("OpenFS accepted a record with version %d", Version+1)
+	}
+	want := fmt.Sprintf("version %d", Version+1)
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error should name version %d, got: %v", Version+1, err)
 	}
 }

@@ -1,15 +1,51 @@
 // CostDecomposition breaks the effective transfer cost into separately-reported
-// components: FX loss, fees, slippage, and expected failure cost.
+// components: FX loss, network fees, anchor fee, slippage, and expected
+// failure cost.
 //
 // Currently, the verdict reports a single loss percentage against fair value.
 // That number is useful but opaque. Showing the decomposition turns a single
 // verdict into actionable information.
 //
-// Each component is computed and reported independently. Expected failure cost
-// stays explicitly unknown until failure history exists.
+// Each component is computed and reported independently. Network fees and
+// anchor fees are reported separately because they have different sources:
+// network fees are Stellar base-fee charges per operation, while anchor fees
+// are the anchor's own charge for a conversion, obtainable via SEP-38 when
+// the anchor publishes an ANCHOR_QUOTE_SERVER. Expected failure cost stays
+// explicitly unknown until failure history exists.
+// CostDecomposition breaks the effective transfer cost into separately-reported
+// components: FX loss, network fees, anchor fee, slippage, and expected
+// failure cost.
+//
+// Currently, the verdict reports a single loss percentage against fair value.
+// That number is useful but opaque. Showing the decomposition turns a single
+// verdict into actionable information.
+//
+// Each component is computed and reported independently. Network fees and
+// anchor fees are reported separately because they have different sources:
+// network fees are Stellar base-fee charges per operation, while anchor fees
+// are the anchor's own charge for a conversion, obtainable via SEP-38 when
+// the anchor publishes an ANCHOR_QUOTE_SERVER. Expected failure cost stays
+// explicitly unknown until failure history exists.
+// CostDecomposition breaks the effective transfer cost into separately-reported
+// components: FX loss, network fees, anchor fee, slippage, and expected
+// failure cost.
+//
+// Currently, the verdict reports a single loss percentage against fair value.
+// That number is useful but opaque. Showing the decomposition turns a single
+// verdict into actionable information.
+//
+// Each component is computed and reported independently. Network fees and
+// anchor fees are reported separately because they have different sources:
+// network fees are Stellar base-fee charges per operation, while anchor fees
+// are the anchor's own charge for a conversion, obtainable via SEP-38 when
+// the anchor publishes an ANCHOR_QUOTE_SERVER. Expected failure cost stays
+// explicitly unknown until failure history exists.
 package route
 
 import (
+	"errors"
+
+	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/shopspring/decimal"
 )
 
@@ -18,7 +54,8 @@ type CostComponent string
 
 const (
 	CostFXLoss          CostComponent = "fx_loss"
-	CostFees            CostComponent = "fees"
+	CostNetworkFees     CostComponent = "network_fees"
+	CostAnchorFee       CostComponent = "anchor_fee"
 	CostSlippage        CostComponent = "slippage"
 	CostExpectedFailure CostComponent = "expected_failure"
 )
@@ -40,7 +77,8 @@ type CostDecomposition struct {
 
 // Decompose splits a priced route's effective transfer cost into components.
 func Decompose(q Quote, mid decimal.Decimal) CostDecomposition {
-	parts := make([]CostPart, 0, 4)
+	_ = mid // reserved: will carry the independent mid-market rate for future FX-loss-from-mid calculation
+	parts := make([]CostPart, 0, 5)
 
 	// FX loss: difference between effective rate and mid, as a percentage.
 	fxLossPct := q.LossPct
@@ -52,12 +90,41 @@ func Decompose(q Quote, mid decimal.Decimal) CostDecomposition {
 		Determined: true,
 	})
 
-	// Fees: negligible for DEX routes (Stellar network fee ~0.00001 XLM).
+	// Network fees: undetermined. A Stellar path payment charges a base fee per
+	// operation, and a multi-hop path is more operations than a direct one,
+	// but Decompose sees only a Quote and has neither the path's operation
+	// count nor a currently-effective base fee. Naming the gap keeps the
+	// units honest: unavailable is unknown, not a default, and small is not
+	// zero.
 	parts = append(parts, CostPart{
-		Component:  CostFees,
+		Component:  CostNetworkFees,
 		Amount:     decimal.Zero,
 		Pct:        decimal.Zero,
-		Determined: true,
+		Determined: false,
+		Reason:     "network fee not measured; determining it requires the path's operation count and the current Stellar base fee",
+	})
+
+	// Anchor fee: the anchor's own charge for a conversion, obtainable via
+	// SEP-38 when the anchor publishes an ANCHOR_QUOTE_SERVER in its
+	// stellar.toml. A DEX-only route has no anchor involved, and an anchor
+	// that does not publish a quote server has no machine-readable rate — the
+	// absence is a fact about the anchor rather than a zero fee.
+	//
+	// When a KindAnchorSEP38 quote is available, its FeeInBuyAsset (already
+	// normalised for denomination by sep38.Quote) can be wired here.
+	anchorFeeReason := "anchor fee not available; the anchor does not publish an ANCHOR_QUOTE_SERVER, so its fee cannot be obtained programmatically"
+	if q.Kind == KindAnchorSEP38 {
+		// anchor fee available via SEP-38 but corridor not yet wired in
+		// SEP-38 support is wired in. The sep38.Quote.FeeInBuyAsset field
+		// already carries the converted fee.
+		anchorFeeReason = "anchor fee available via SEP-38 but corridor not yet wired in"
+	}
+	parts = append(parts, CostPart{
+		Component:  CostAnchorFee,
+		Amount:     decimal.Zero,
+		Pct:        decimal.Zero,
+		Determined: false,
+		Reason:     anchorFeeReason,
 	})
 
 	// Slippage: undetermined without a comparison across sizes.
@@ -82,4 +149,32 @@ func Decompose(q Quote, mid decimal.Decimal) CostDecomposition {
 		Parts:        parts,
 		TotalLossPct: q.LossPct,
 	}
+}
+
+// SweepCostClass classifies the upstream request cost of a metric sweep
+// across sizes, distinguishing CostOneRequest from CostExpensive in accordance
+// with checks.Descriptor.Cost.
+func SweepCostClass(sizeCount int) checks.Cost {
+	if sizeCount <= 1 {
+		return checks.CostOneRequest
+	}
+	return checks.CostExpensive
+}
+
+// ErrComponentSumMismatch is returned when the sum of determined and undetermined
+// cost components does not match the published total loss within the stated tolerance.
+var ErrComponentSumMismatch = errors.New("component sum does not match total loss within tolerance")
+
+// ReconcileComponents asserts that the sum of components and undetermined amount
+// equals the total loss within the stated tolerance.
+func ReconcileComponents(total decimal.Decimal, comps map[string]decimal.Decimal, undetermined decimal.Decimal, tolerance decimal.Decimal) error {
+	sum := undetermined
+	for _, val := range comps {
+		sum = sum.Add(val)
+	}
+	diff := sum.Sub(total).Abs()
+	if diff.GreaterThan(tolerance) {
+		return ErrComponentSumMismatch
+	}
+	return nil
 }

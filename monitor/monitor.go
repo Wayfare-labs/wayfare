@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
 )
@@ -41,16 +42,24 @@ func (c Corridor) Key() string {
 	return runstore.CorridorKey(c.Send.Code, c.Receive.Code)
 }
 
-// DefaultCorridors are the three corridors of case study #1.
+// DefaultCorridors are every registered corridor destination.
 //
-// Each is included because it exhibits a different integrity state, so a
-// deployment measuring all three exercises the whole taxonomy continuously
-// rather than only the state that happens to be interesting today.
+// The sweep covers the whole registry so that no verified corridor is
+// measured in one place and served in another: a destination registered in
+// asset is a destination the monitor prices. The case-study trio (USDC-NGNC
+// DIRECT, USDC-GHSC DERIVATIVE, USDC-KESC NO-MARKET) still exercises each
+// integrity state, and the remaining registered corridors extend the same
+// coverage to every verified destination token.
 func DefaultCorridors() []Corridor {
 	return []Corridor{
 		{Send: asset.USDC(), Receive: asset.NGNC(), ReferenceBase: "USD", ReferenceQuote: "NGN"},
 		{Send: asset.USDC(), Receive: asset.GHSC(), ReferenceBase: "USD", ReferenceQuote: "GHS"},
 		{Send: asset.USDC(), Receive: asset.KESC(), ReferenceBase: "USD", ReferenceQuote: "KES"},
+		{Send: asset.USDC(), Receive: asset.NGNT(), ReferenceBase: "USD", ReferenceQuote: "NGN"},
+		{Send: asset.USDC(), Receive: asset.USDZ(), ReferenceBase: "USD", ReferenceQuote: "USD"},
+		{Send: asset.USDC(), Receive: asset.ZARZ(), ReferenceBase: "USD", ReferenceQuote: "ZAR"},
+		{Send: asset.USDC(), Receive: asset.EURMTL(), ReferenceBase: "USD", ReferenceQuote: "EUR"},
+		{Send: asset.USDC(), Receive: asset.PYUSD(), ReferenceBase: "USD", ReferenceQuote: "USD"},
 	}
 }
 
@@ -69,6 +78,12 @@ type Scheduler struct {
 	Engine    *route.Engine
 	Store     runstore.Store
 	Corridors []Corridor
+
+	// Checks runs counterparty checks alongside each measurement, exactly
+	// as the HTTP server does, so a scheduled history records the same
+	// findings a live response serves. Nil disables checks, and stored
+	// records then carry none.
+	Checks *checks.Runner
 
 	// Interval is the gap between sweeps. Zero means DefaultInterval.
 	Interval time.Duration
@@ -199,13 +214,27 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 	}
 
 	pair := c.ReferenceBase + "/" + c.ReferenceQuote
-	record := runstore.FromCorridorJSON(route.ToCorridorJSON(result, pair))
+
+	// The scheduled depth of the measurement mirrors the server: checks may
+	// run after the ladder and can never change it, and the findings they
+	// produce ride into storage with the record so a history read matches a
+	// live read. With no checks configured, this is a no-op and the record
+	// carries none — the same "not checked" the server serves.
+	live := route.ToCorridorJSON(result, pair)
+	if s.Checks != nil {
+		live = route.WithFindings(live, s.Checks.ForAsset(ctx, c.Receive))
+	}
+	record := runstore.FromCorridorJSON(live)
 	record.RecordedAt = started
 
 	// Carry the second provider's mid and the divergence, so a later reader
 	// can tell a corridor change from a benchmark change.
 	ref := result.Reference
 	record.Reference.AsOf = formatTime(ref.AsOf)
+	// FetchedAt is when we last obtained the rate, which can be older than
+	// the run when a cached rate was reused; a later reader needs it to
+	// judge how current the benchmark was when this reading was taken.
+	record.Reference.FetchedAt = formatTime(ref.FetchedAt)
 	if !ref.SecondaryMid.IsZero() {
 		record.Reference.SecondaryMid = ref.SecondaryMid.String()
 		record.Reference.SecondarySource = ref.SecondarySource

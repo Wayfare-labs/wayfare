@@ -5,6 +5,8 @@
 //	wayfared -schedule=0              # server only, no scheduled measurement
 //	wayfared -once                    # one sweep, record, exit (CI schedules this)
 //	wayfared -verify-store            # walk the hash chains and exit
+//	wayfared -rotate-store            # trim chains over the window ceiling and exit
+//	wayfared -check-fresh             # exit non-zero if any record is stale
 //
 // The two halves are independent on purpose. A monitor that only measures
 // while somebody has a page open would leave holes in its history exactly when
@@ -40,32 +42,40 @@ import (
 
 func main() {
 	var (
-		addr      = flag.String("addr", ":8080", "listen address")
-		horizon   = flag.String("horizon", "", "Horizon base URL (default: mainnet)")
-		timeout   = flag.Duration("timeout", 90*time.Second, "per-corridor measurement timeout")
+		addr    = flag.String("addr", defaultAddr(), "listen address (default follows $PORT when set)")
+		horizon = flag.String("horizon", "", "Horizon base URL (default: mainnet)")
+		timeout = flag.Duration("timeout", 90*time.Second,
+			"ceiling on a live measurement; the budget per request scales with rung count up to this")
+		shutdownGrace = flag.Duration("shutdown-grace", 30*time.Second,
+			"how long SIGTERM waits for in-flight requests before closing")
 		dataDir   = flag.String("data", envOr("WAYFARE_DATA_DIR", ""), "directory for the run store; empty disables history")
 		schedule  = flag.Duration("schedule", monitor.DefaultInterval, "measurement interval; 0 disables the scheduler")
 		serve     = flag.Bool("serve", true, "serve HTTP")
 		verify    = flag.Bool("verify-store", false, "verify every corridor chain and exit")
-		once      = flag.Bool("once", false, "measure every corridor once, record, and exit")
+		rotate    = flag.Bool("rotate-store", false, "trim every chain over the window ceiling and exit")
+		rotateRec = flag.Int("rotate-records", runstore.MaxWindow,
+			"per-corridor record ceiling for -rotate-store")
+		once       = flag.Bool("once", false, "measure every corridor once, record, and exit")
+		checkFresh = flag.Bool("check-fresh", false,
+			"report corridors whose newest record is older than -max-age (or missing) and exit; 1 stale, 2 check unavailable")
+		maxAge = flag.Duration("max-age", 2*monitor.DefaultInterval,
+			"staleness ceiling for -check-fresh; default is two missed sweeps")
 		histFirst = flag.Bool("history-first", false,
 			"serve the stored run instead of measuring, unless a request asks for ?live=1")
+		// Per-client request bounds (issue #320). A live measurement is a
+		// dozen Horizon round trips and the free deployment has nothing in
+		// front of it, so a default is set rather than left open. Zero
+		// disables limiting for an operator who has their own proxy in front.
+		rateLimit = flag.Float64("rate-limit", defaultRateLimit,
+			"per-client requests per second; 0 disables rate limiting")
+		rateBurst = flag.Int("rate-burst", defaultRateBurst,
+			"per-client instantaneous request allowance")
 		logLevel = flag.String("log-level", envOr("WAYFARE_LOG_LEVEL", "info"), "debug, info, warn or error")
 	)
 	flag.Parse()
 
 	logger := newLogger(*logLevel)
 	slog.SetDefault(logger)
-
-	// Most managed hosts assign a port at runtime and expect the process to
-	// bind whatever they put in $PORT. Honouring it only when -addr was left
-	// at its default keeps an explicit flag authoritative, which matters
-	// because a platform that quietly overrode an operator's choice would be
-	// the harder failure to diagnose.
-	if p := os.Getenv("PORT"); p != "" && *addr == ":8080" {
-		*addr = "0.0.0.0:" + p
-		logger.Info("binding the port assigned by the platform", "port", p)
-	}
 
 	store, err := openStore(*dataDir, logger)
 	if err != nil {
@@ -84,6 +94,24 @@ func main() {
 
 	if *verify {
 		os.Exit(verifyStore(store, logger))
+	}
+
+	if *rotate {
+		os.Exit(rotateStore(store, *rotateRec, logger))
+	}
+
+	// The alerting hook for scheduled measurement (issue #310): a CI or cron
+	// wrapper runs -once and then -check-fresh, so a sweep that silently
+	// stopped recording — or recorded but dropped a corridor — exits
+	// non-zero and makes the job fail loudly. Needs no network: it only
+	// reads the store, so it also catches the case where the schedule never
+	// ran at all, which no in-process failure could report.
+	if *checkFresh {
+		os.Exit(checkFreshness(store, monitor.DefaultCorridors(), *maxAge, time.Now().UTC(), logger))
+	}
+
+	if *checkFresh {
+		os.Exit(checkFreshness(store, monitor.DefaultCorridors(), *maxAge, time.Now().UTC(), logger))
 	}
 
 	if !*once && !*serve && *schedule == 0 {
@@ -114,7 +142,15 @@ func main() {
 	// and the chain it appends to is the same one a hosted instance would
 	// write. Nothing about the measurement differs.
 	if *once {
-		sched := &monitor.Scheduler{Engine: engine, Store: store, Logger: logger}
+		sched := &monitor.Scheduler{
+			Engine: engine,
+			Store:  store,
+			Logger: logger,
+			// The same sweep the server runs: checks run alongside the
+			// measurement and are recorded with it, so scheduled history
+			// and live responses describe the same thing.
+			Checks: &checks.Runner{HorizonURL: *horizon},
+		}
 		if err := sched.RunOnce(ctx); err != nil {
 			logger.Error("sweep failed", "error", err)
 			os.Exit(1)
@@ -130,6 +166,9 @@ func main() {
 			Store:    store,
 			Interval: *schedule,
 			Logger:   logger,
+			// Same sweep as the server (and as -once), so the horizon the
+			// shared checks runner targets matches the engine's.
+			Checks: &checks.Runner{HorizonURL: *horizon},
 		}
 		wg.Add(1)
 		go func() {
@@ -149,6 +188,10 @@ func main() {
 			Timeout:      *timeout,
 			HistoryFirst: *histFirst,
 			Checks:       &checks.Runner{HorizonURL: *horizon},
+			// Nil when limiting is disabled (rate 0 or burst 0): the field is
+			// optional on Server, and a disabled limiter should be absent
+			// rather than present and inert.
+			Limiter: server.NewRateLimiter(*rateLimit, *rateBurst),
 		}
 		httpSrv := &http.Server{
 			Addr:              *addr,
@@ -165,11 +208,7 @@ func main() {
 		go func() {
 			defer wg.Done()
 			<-ctx.Done()
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-				logger.Error("shutdown", "error", err)
-			}
+			shutdownServer(httpSrv, *shutdownGrace, logger)
 		}()
 
 		logger.Info("listening", "addr", *addr, "schedule", schedule.String(),
@@ -183,6 +222,27 @@ func main() {
 	}
 
 	wg.Wait()
+}
+
+// defaultAddr is the listen address when -addr is not given: the platform's
+// $PORT if set (Render, Fly and Heroku all assign one), else :8080. Being the
+// flag default rather than a post-parse override means an explicit -addr,
+// even -addr=:8080, always wins.
+func defaultAddr() string {
+	if p := os.Getenv("PORT"); p != "" {
+		return "0.0.0.0:" + p
+	}
+	return ":8080"
+}
+
+// shutdownServer stops accepting connections and waits up to grace for
+// in-flight requests, such as a live ladder, to finish.
+func shutdownServer(srv *http.Server, grace time.Duration, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("shutdown did not complete within the grace period", "grace", grace.String(), "error", err)
+	}
 }
 
 // openStore opens the run store, or returns a no-op store when history is off.
@@ -226,14 +286,13 @@ func openStore(dir string, logger *slog.Logger) (runstore.Store, error) {
 // verifyStore walks every chain and reports. Intended for use after a deploy
 // and after any restore from backup.
 func verifyStore(store runstore.Store, logger *slog.Logger) int {
-	fs, ok := store.(*runstore.FileStore)
-	if !ok {
-		logger.Error("-verify-store needs a data directory; none is configured")
+	if store == nil {
+		logger.Error("-verify-store requires a store; none is configured")
 		return 2
 	}
 
 	ctx := context.Background()
-	corridors, err := fs.Corridors(ctx)
+	corridors, err := store.Corridors(ctx)
 	if err != nil {
 		logger.Error("listing corridors", "error", err)
 		return 1
@@ -245,18 +304,60 @@ func verifyStore(store runstore.Store, logger *slog.Logger) int {
 
 	failed := 0
 	for _, c := range corridors {
-		if err := fs.Verify(ctx, c); err != nil {
+		if err := store.Verify(ctx, c); err != nil {
 			fmt.Printf("FAIL %s: %v\n", c, err)
 			failed++
 			continue
 		}
-		latest, _ := fs.Latest(ctx, c)
+		latest, err := store.Latest(ctx, c)
+		if err != nil {
+			fmt.Printf("FAIL %s: latest read error: %v\n", c, err)
+			failed++
+			continue
+		}
+		if latest == nil {
+			fmt.Printf("FAIL %s: no latest record available\n", c)
+			failed++
+			continue
+		}
 		fmt.Printf("ok   %s: %d records, latest %s\n",
 			c, latest.Seq, latest.RecordedAt.UTC().Format(time.RFC3339))
 	}
 	if failed > 0 {
 		fmt.Printf("\n%d of %d chains failed verification\n", failed, len(corridors))
 		return 1
+	}
+	return 0
+}
+
+// rotateStore trims every corridor chain over the record ceiling to its newest
+// ceiling records, re-sealing the surviving window so it still verifies.
+//
+// This is the mechanism behind the decision recorded in ADR 007 and enforced
+// by the measure workflow: the committed `data/` is a bounded window, and a
+// chain that has outgrown it is rotated rather than left to grow forever.
+// Chains under the ceiling are untouched; the ceiling is the default
+// runstore.MaxWindow unless an operator overrides it with -rotate-records.
+func rotateStore(store runstore.Store, ceiling int, logger *slog.Logger) int {
+	fs, ok := store.(*runstore.FileStore)
+	if !ok {
+		logger.Error("-rotate-store needs a data directory; none is configured")
+		return 2
+	}
+
+	ctx := context.Background()
+	rotations, err := fs.Rotate(ctx, ceiling)
+	if err != nil {
+		logger.Error("rotating store", "error", err)
+		return 1
+	}
+	if len(rotations) == 0 {
+		fmt.Println("no corridor exceeds the window ceiling")
+		return 0
+	}
+	for _, r := range rotations {
+		fmt.Printf("rotated %s: %d -> %d records (dropped seq %d..%d), new head seq %d\n",
+			r.Corridor, r.RecordsBefore, r.RecordsAfter, r.DroppedSeqStart, r.DroppedSeqEnd, r.NewHeadSeq)
 	}
 	return 0
 }

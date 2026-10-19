@@ -6,7 +6,9 @@
 //
 //	go run ./cmd/ladder                  # USDC -> NGNC
 //	go run ./cmd/ladder -to GHSC         # USDC -> GHSC, benchmarked against GHS
+//	go run ./cmd/ladder -to NGNT         # USDC -> NGNT, benchmarked against NGN
 //	go run ./cmd/ladder -to GHSC -json   # same, as JSON on stdout
+//	go run ./cmd/ladder -checks=false    # same, without counterparty checks
 //
 //	go run ./cmd/ladder -record testdata/snapshots   # also keep the bytes
 //
@@ -31,6 +33,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
@@ -49,26 +52,30 @@ var corridors = map[string]corridor{
 	"NGNC": {asset.NGNC(), "NGN"},
 	"GHSC": {asset.GHSC(), "GHS"},
 	"KESC": {asset.KESC(), "KES"},
+	"NGNT": {asset.NGNT(), "NGN"},
 }
 
 func main() {
 	var (
-		to        = flag.String("to", "NGNC", "destination asset code (NGNC, GHSC, KESC)")
+		to        = flag.String("to", "NGNC", "destination asset code (NGNC, GHSC, KESC, NGNT)")
 		sizesFlag = flag.String("sizes", "0.1,1,5,10,25,50,100,250,500,1000,2500,5000",
 			"comma-separated send amounts in USDC")
 		jsonOut = flag.Bool("json", false, "emit JSON on stdout instead of the text table")
 		record  = flag.String("record", "",
 			"record upstream responses as a snapshot in a new directory under this parent")
-		refName = flag.String("ref", "exchangerate-api",
-			"reference rate provider: exchangerate-api or currency-api")
+		refName    = flag.String("ref", defaultRefProvider, refHelp())
 		allowDirty = flag.Bool("allow-dirty", false,
 			"record even though the working tree is modified, marking the manifest dirty")
+		checksFlag = flag.Bool("checks", true,
+			"run counterparty checks (anchor toml, SEP-10/SEP-24, issuer flags) and "+
+				"attach the findings; set false to skip them (the JSON document then "+
+				"carries no findings block)")
 	)
 	flag.Parse()
 
 	c, ok := corridors[strings.ToUpper(*to)]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "unknown destination %q; known: NGNC, GHSC, KESC\n", *to)
+		fmt.Fprintf(os.Stderr, "unknown destination %q; known: NGNC, GHSC, KESC, NGNT\n", *to)
 		os.Exit(2)
 	}
 
@@ -93,7 +100,7 @@ func main() {
 	dexClient := &dex.Client{}
 
 	if *record != "" {
-		dirty, err := requireCleanTree(*allowDirty)
+		dirty, err := requireCleanTree(".", *allowDirty)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
@@ -122,6 +129,24 @@ func main() {
 		RefRate: &refrate.Checked{Inner: refProvider},
 	}
 
+	// The same counterparty checks the server runs, so -json and
+	// /api/corridor describe the same corridor with the same facts. Nil
+	// disables them and the document then carries no findings block at all
+	// — absent and empty must not look the same, which mirrors the server's
+	// own Checks field. -checks=false is how an operator opts out of the
+	// extra latency; the difference is then the flag they chose, not the
+	// binary they ran.
+	var checkRunner *checks.Runner
+	if *checksFlag {
+		checkRunner = &checks.Runner{HorizonURL: dex.DefaultHorizonURL}
+		if httpClient != nil {
+			// One transport covers the sweep, so a recording captures the
+			// checks' traffic alongside the ladder's (see the Runner's own
+			// HTTPClient doc for why this is the supported shape).
+			checkRunner.HTTPClient = httpClient
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -137,10 +162,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Checks run after the measurement and cannot alter it: route.WithFindings
+	// is the only composition point and branches on nothing, exactly as in
+	// the server. With checks skipped this stays nil and the document says
+	// "not checked", never "checked, nothing found".
+	var findings *checks.Findings
+	if checkRunner != nil {
+		findings = checkRunner.ForAsset(ctx, c.dest)
+	}
+
 	if *jsonOut {
-		printJSON(result, "USD/"+c.refPair)
+		printJSON(result, "USD/"+c.refPair, findings)
 	} else {
-		printTable(ctx, result, c, refProvider)
+		printTable(ctx, result, c, refProvider, findings)
 	}
 
 	// Saved after the run so a snapshot only ever exists for a measurement
@@ -216,6 +250,8 @@ func erroredRungs(l *route.LadderResult) []string {
 	return out
 }
 
+const defaultRefProvider = "exchangerate-api"
+
 // refSource bundles a reference provider with the two things a caller needs
 // that the Provider interface deliberately does not expose: where it fetches
 // from, for a snapshot manifest, and how to give it a recording HTTP client.
@@ -225,22 +261,64 @@ type refSource struct {
 	setClient func(*http.Client)
 }
 
+func newExchangeRateAPI() refSource {
+	p := &refrate.ExchangeRateAPI{}
+	return refSource{
+		provider:  p,
+		baseURL:   refrate.DefaultExchangeRateAPI,
+		setClient: func(c *http.Client) { p.Client = c },
+	}
+}
+
+func newCurrencyAPI() refSource {
+	p := &refrate.CurrencyAPI{}
+	return refSource{
+		provider:  p,
+		baseURL:   refrate.DefaultCurrencyAPI,
+		setClient: func(c *http.Client) { p.Client = c },
+	}
+}
+
+// refConstructors registers the constructor for each supported reference provider.
+// Valid provider names in the flag help and unknown-provider errors are generated
+// directly from this list via Provider.Name().
+var refConstructors = []func() refSource{
+	newExchangeRateAPI,
+	newCurrencyAPI,
+}
+
+// refProviderNames returns the valid provider names derived from the provider constructors.
+func refProviderNames() []string {
+	names := make([]string, 0, len(refConstructors))
+	for _, c := range refConstructors {
+		names = append(names, c().provider.Name())
+	}
+	return names
+}
+
+// refHelp returns the help text for the -ref flag, listing all available providers.
+func refHelp() string {
+	return fmt.Sprintf("reference rate provider: %s", strings.Join(refProviderNames(), ", "))
+}
+
 // referenceProvider resolves the -ref flag.
 //
 // An unknown name is an error rather than a fallback to the default. Silently
 // substituting a different benchmark than the one asked for would mislabel
 // every figure the run produces.
 func referenceProvider(name string) (refSource, error) {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "exchangerate-api", "":
-		p := &refrate.ExchangeRateAPI{}
-		return refSource{p, refrate.DefaultExchangeRateAPI, func(c *http.Client) { p.Client = c }}, nil
-	case "currency-api":
-		p := &refrate.CurrencyAPI{}
-		return refSource{p, refrate.DefaultCurrencyAPI, func(c *http.Client) { p.Client = c }}, nil
+	clean := strings.ToLower(strings.TrimSpace(name))
+	if clean == "" {
+		clean = defaultRefProvider
+	}
+	for _, constructor := range refConstructors {
+		src := constructor()
+		if strings.EqualFold(src.provider.Name(), clean) {
+			return src, nil
+		}
 	}
 	return refSource{}, fmt.Errorf(
-		"unknown reference provider %q; known: exchangerate-api, currency-api", name)
+		"unknown reference provider %q; known: %s", name, strings.Join(refProviderNames(), ", "))
 }
 
 // sizeStrings renders ladder sizes for a snapshot manifest. They are decimal
@@ -265,13 +343,19 @@ func gitRevision() string {
 	return strings.TrimSpace(string(out))
 }
 
-// dirtyFiles lists tracked files modified relative to HEAD.
+// dirtyFiles lists files whose working-tree state differs from HEAD:
+// modified tracked files and untracked files alike.
+//
+// An untracked file is included because it is part of the working tree the
+// recorded bytes were produced from even though HEAD does not contain it, so
+// git_revision would not pin the code that generated them. Porcelain lines
+// are returned verbatim, status code and all (` M f.go`, `?? scratch.txt`).
 //
 // An empty result with a nil error means a clean tree; a nil result with an
 // error means git could not answer, which is not the same thing and must not
 // be reported as clean.
-func dirtyFiles() ([]string, error) {
-	out, err := exec.Command("git", "status", "--porcelain", "--untracked-files=no").Output()
+func dirtyFiles(dir string) ([]string, error) {
+	out, err := exec.Command("git", "-C", dir, "status", "--porcelain").Output()
 	if err != nil {
 		return nil, fmt.Errorf("could not determine whether the tree is clean: %w", err)
 	}
@@ -291,6 +375,10 @@ func dirtyFiles() ([]string, error) {
 // generate the bytes — which is worse than recording nothing, because the
 // field looks like provenance and is consulted as though it were.
 //
+// Dirty means anything `git status` reports: a modified tracked file or an
+// untracked file. Either way HEAD does not describe the working tree the
+// bytes came from.
+//
 // This repository already contains the failure: the GHSC and KESC snapshots
 // recorded revision e2be414, a commit predating the snapshot package that
 // wrote them. Both were re-captured once this check existed.
@@ -298,8 +386,8 @@ func dirtyFiles() ([]string, error) {
 // -allow-dirty exists for local experiments and marks the manifest, so a
 // snapshot whose provenance is approximate says so in the artifact rather
 // than only in the shell that made it.
-func requireCleanTree(allowDirty bool) (dirty bool, err error) {
-	files, err := dirtyFiles()
+func requireCleanTree(dir string, allowDirty bool) (dirty bool, err error) {
+	files, err := dirtyFiles(dir)
 	if err != nil {
 		// Not in a git checkout, or git is unavailable. Recording is still
 		// possible; the revision is simply absent, which the manifest
@@ -326,8 +414,8 @@ func requireCleanTree(allowDirty bool) (dirty bool, err error) {
 
 // printJSON writes the shared wire shape and nothing else to stdout, so
 // `go run ./cmd/ladder -to GHSC -json | jq` works.
-func printJSON(result *route.LadderResult, pair string) {
-	if err := encodeCorridorJSON(os.Stdout, result, pair); err != nil {
+func printJSON(result *route.LadderResult, pair string, findings *checks.Findings) {
+	if err := encodeCorridorJSON(os.Stdout, result, pair, findings); err != nil {
 		// Encoding a well-formed struct to stdout should not fail; if it
 		// does, say so on stderr rather than emitting partial JSON.
 		fmt.Fprintf(os.Stderr, "encoding result: %v\n", err)
@@ -335,26 +423,34 @@ func printJSON(result *route.LadderResult, pair string) {
 	}
 }
 
-// encodeCorridorJSON is the entire body of -json mode: it delegates to
-// route.ToCorridorJSON and encodes exactly what that returns, nothing more.
+// encodeCorridorJSON is the entire body of -json mode: it renders the shared
+// wire shape and encodes exactly what the shared composition point returns,
+// nothing more.
 //
 // Split out from printJSON so a test can capture the bytes without a pipe on
 // os.Stdout. That is also the point of the split: this function has no room
 // left in it to grow a second, independently-maintained JSON shape, which is
 // the drift TestLadderJSONMatchesToCorridorJSON exists to catch — see
-// docs/backlog.md #5 / GitHub issue #113.
-func encodeCorridorJSON(w io.Writer, result *route.LadderResult, pair string) error {
+// docs/backlog.md #5 / GitHub issue #113. Findings are attached the same way
+// the server attaches them, through route.WithFindings — the one composition
+// point — so a corridor measured by either binary carries the same facts.
+func encodeCorridorJSON(w io.Writer, result *route.LadderResult, pair string, findings *checks.Findings) error {
+	out := route.ToCorridorJSON(result, pair)
+	out = route.WithFindings(out, findings)
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(route.ToCorridorJSON(result, pair))
+	return enc.Encode(out)
 }
 
 // printTable renders the human-readable text table. This is the default
-// output and its format is unchanged from before -json existed.
-// The reference provider is passed in rather than constructed here: a second
-// construction is a second HTTP client, which would bypass a recorder and
-// leave the snapshot missing the very rate the table prints.
-func printTable(ctx context.Context, result *route.LadderResult, c corridor, ref refrate.Provider) {
+// output and its format is unchanged from before -json existed, apart from
+// one line: when checks ran, a summary of their findings is printed after
+// the reference mid, so the default-on checks are visible in the output they
+// paid for the latency of. The reference provider is passed in rather than
+// constructed here: a second construction is a second HTTP client, which
+// would bypass a recorder and leave the snapshot missing the very rate the
+// table prints.
+func printTable(ctx context.Context, result *route.LadderResult, c corridor, ref refrate.Provider, findings *checks.Findings) {
 	fmt.Printf("corridor USDC -> %s, benchmarked against USD/%s\n", c.dest.Code, c.refPair)
 	fmt.Printf("run at %s\n\n", time.Now().UTC().Format(time.RFC3339))
 	fmt.Printf("%-8s %14s %12s %9s %-10s %-11s %s\n",
@@ -401,6 +497,36 @@ func printTable(ctx context.Context, result *route.LadderResult, c corridor, ref
 	if r, err := ref.Rate(ctx, "USD", c.refPair); err == nil {
 		fmt.Printf("\nreference mid: %s USD/%s via %s, as of %s\n",
 			r.Mid.StringFixed(4), c.refPair, r.Source, r.AsOf.UTC().Format(time.RFC3339))
+	}
+	if findings != nil {
+		passed, failed, undetermined := findings.Counts()
+		fmt.Printf("checks: %d passed, %d failed, %d undetermined",
+			passed, failed, undetermined)
+		if worst, any := findings.Worst(); any {
+			fmt.Printf(" (worst: %s)", worst)
+		}
+		fmt.Println(" — pass -checks=false to skip")
+
+		if len(findings.Metrics) > 0 {
+			measured := 0
+			for _, m := range findings.Metrics {
+				if m.Determined {
+					measured++
+				}
+			}
+			fmt.Printf("metrics: %d measured, %d undetermined\n", measured, len(findings.Metrics)-measured)
+			for _, m := range findings.Metrics {
+				if m.Determined {
+					fmt.Printf("  %-25s %s %s\n", m.ID, m.Value.String(), m.Unit)
+				} else {
+					reason := m.Reason
+					if reason == "" {
+						reason = m.Summary
+					}
+					fmt.Printf("  %-25s undetermined (%s)\n", m.ID, reason)
+				}
+			}
+		}
 	}
 	if priced == 0 {
 		fmt.Printf("no size could be priced for USDC -> %s\n", c.dest.Code)

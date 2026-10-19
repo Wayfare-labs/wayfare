@@ -36,13 +36,21 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/Wayfare-labs/wayfare/checks"
 )
 
 // Version is the record schema version.
 //
 // It is part of the hashed preimage, so a bump invalidates existing chains by
-// construction. See the preimage rules on Record.
-const Version = 1
+// construction — unless the new fields are added with omitempty, in which case
+// a record written by an older build (whose new fields are empty) still
+// encodes to exactly the bytes that were hashed when it was written, and
+// still verifies. Version 3 adds reference.fetched_at this way: a Version 2
+// record has no fetched_at, encodes byte-for-byte as it always did, and so
+// still verifies under this build. See the preimage rules on Record and the
+// migration note in docs/run-store.md.
+const Version = 3
 
 // GenesisPrevHash is the prev_hash of the first record in a chain.
 const GenesisPrevHash = "sha256:" + "0000000000000000000000000000000000000000000000000000000000000000"
@@ -69,6 +77,18 @@ type Reference struct {
 	// ScoredAgainst names which source produced the verdicts in this
 	// record, so a reader can always tell which mid they are looking at.
 	ScoredAgainst string `json:"scored_against,omitempty"`
+
+	// FetchedAt is when this project last obtained the rate from the
+	// provider, which differs from AsOf: AsOf is the upstream's own stamp,
+	// FetchedAt is when we asked. A cached rate has an older FetchedAt and
+	// an unchanged AsOf, and a reader needs both to judge how current the
+	// benchmark was when a stored reading was taken.
+	//
+	// Declared omitempty and AFTER every Version 2 field, so a Version 2
+	// record (which has no fetched_at) still encodes to byte-for-byte the
+	// same JSON — and therefore the same hash — it did before this field
+	// existed. This is the Version 3 migration; see docs/run-store.md.
+	FetchedAt string `json:"fetched_at,omitempty"`
 }
 
 // Rung is one size's stored result.
@@ -123,6 +143,22 @@ type Record struct {
 
 	Finding string `json:"finding"`
 	Rungs   []Rung `json:"rungs"`
+
+	// Checks and Metrics are the findings taken with this measurement:
+	// facts about the counterparties a corridor depends on, and measured
+	// quantities. They ride on the wire as checks.FindingsJSON and are
+	// stored word-for-word so a history-served reading shows the same
+	// findings the live one did — the stale path has nowhere else to get
+	// them. Absent when no checks ran: a Version 1 record has neither.
+	//
+	// These two fields are declared with omitempty and sit AFTER every
+	// Version 1 field. A record with no findings therefore encodes to
+	// byte-for-byte the same JSON — same field order, same contents — as it
+	// did before they existed, so a Version 1 chain's hashes are
+	// unchanged and still verify under this (Version 3) build. See
+	// docs/run-store.md for the migration.
+	Checks  []checks.CheckJSON  `json:"checks,omitempty"`
+	Metrics []checks.MetricJSON `json:"metrics,omitempty"`
 
 	PrevHash string `json:"prev_hash"`
 	Hash     string `json:"hash"`

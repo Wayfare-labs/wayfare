@@ -1,0 +1,35 @@
+# Redeploy the hosted instance when a measurement commit lands on main.
+#
+# Freshness advances by redeploy, not by the scheduler
+# (docs/embedded-history.md): the Render deployment serves the history embedded
+# at build time with `-schedule=0 -history-first`, so a new sweep only reaches
+# the served data when a new image is deployed. This workflow calls Render's
+# deploy hook whenever data/ changes on main, so served history advances with
+# the chain instead of going stale until the next code push.
+#
+# The deploy hook is a repository secret (RENDER_DEPLOY_HOOK) and is never
+# echoed to the log: curl posts to it without printing the URL, and GitHub
+# Actions redacts any secret that leaks into job output.
+
+name: redeploy on measurement data
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'data/**'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: trigger Render deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: trigger render deploy
+        # RENDER_DEPLOY_HOOK is a secret; do not log it. curl's default
+        # behaviour does not echo the request URL, and Actions redacts secrets.
+        run: |
+          curl --fail --silent --show-error --request POST "${{ secrets.RENDER_DEPLOY_HOOK }}"

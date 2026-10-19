@@ -1,0 +1,484 @@
+{
+  "issue": "#269 — Cross-browser QA matrix",
+  "ranAt": "2026-09-23T17:34:47.615Z",
+  "harness": "docs/qa/browser/run-cross-browser.mjs",
+  "base": "http://127.0.0.1:8099",
+  "scope": {
+    "requestedByIssue": "Chrome, Firefox, Safari, Edge — current and one prior major",
+    "actuallyAvailable": [
+      "chromium",
+      "firefox",
+      "webkit"
+    ],
+    "substitution": {
+      "chromium": {
+        "standsInFor": [
+          "Google Chrome",
+          "Microsoft Edge"
+        ],
+        "caveat": "Chromium is Chrome's and Edge's engine. Edge adds its own UI chrome (title bar, menu, font defaults) but renders this page with the same engine, so no Edge-specific rendering difference is expected — and none was tested."
+      },
+      "firefox": {
+        "standsInFor": [
+          "Mozilla Firefox"
+        ],
+        "caveat": null
+      },
+      "webkit": {
+        "standsInFor": [
+          "Apple Safari"
+        ],
+        "caveat": "WebKit is Safari's engine on Apple platforms, but Playwright's WebKit build is not Safari and does not run on macOS. Safari-specific behaviour (font rendering, scrollbars, system-link handling) cannot be concluded from these results."
+      }
+    },
+    "notTested": [
+      "Microsoft Edge (Chromium shells only; no Edge binary in this environment)",
+      "Apple Safari (WebKit shells only; no Safari and no macOS in this environment)",
+      "Renderer versions older than the ones below (no prior-major builds installed)"
+    ]
+  },
+  "engines": [
+    {
+      "engine": "chromium",
+      "browserVersion": "153.0.8010.12",
+      "standsInFor": [
+        "Google Chrome",
+        "Microsoft Edge"
+      ],
+      "caveat": "Chromium is Chrome's and Edge's engine. Edge adds its own UI chrome (title bar, menu, font defaults) but renders this page with the same engine, so no Edge-specific rendering difference is expected — and none was tested.",
+      "checks": [
+        {
+          "id": "renders_corridor",
+          "description": "Initial load renders a corridor document (provenance banner present)",
+          "expected": true,
+          "observed": true,
+          "pass": true
+        },
+        {
+          "id": "selector_populated",
+          "description": "Corridor selector lists the measured corridors",
+          "expected": "a list of corridors, no placeholder",
+          "observed": {
+            "options": [
+              "Loading corridors…"
+            ],
+            "value": "",
+            "disabled": false,
+            "assetCalls": 0
+          },
+          "pass": false
+        },
+        {
+          "id": "integrity_badge",
+          "description": "Integrity badge renders with a state and a distinct colour",
+          "expected": "a badge with text",
+          "observed": {
+            "text": "DIRECT",
+            "className": "badge b-direct",
+            "color": "rgb(47, 111, 94)",
+            "background": "rgb(233, 244, 239)"
+          },
+          "pass": true
+        },
+        {
+          "id": "measurements_table",
+          "description": "Measurements table renders with rows and headers",
+          "expected": "header row + >=1 data row",
+          "observed": {
+            "table": true,
+            "scroll": true,
+            "rows": 12,
+            "headers": [
+              "Send",
+              "Receive",
+              "Rate",
+              "Loss",
+              "Verdict",
+              "Path"
+            ],
+            "scrollClientWidth": 818,
+            "scrollWidth": 818
+          },
+          "pass": true
+        },
+        {
+          "id": "no_page_horizontal_overflow",
+          "description": "The page itself does not scroll horizontally (any wide table is contained)",
+          "expected": "doc scrollWidth <= viewport width + 1",
+          "observed": {
+            "docScrollWidth": 1280,
+            "innerWidth": 1280
+          },
+          "pass": true
+        },
+        {
+          "id": "findings_panel_matches_contract",
+          "description": "Findings panel is rendered exactly when the response carried a findings block",
+          "expected": "findings in body: false -> panel rendered: false",
+          "observed": {
+            "hasFindingsInBody": false,
+            "panelRendered": false,
+            "detail": null
+          },
+          "pass": true
+        },
+        {
+          "id": "trend_view",
+          "description": "Trend view renders a chart and a stored-runs table",
+          "expected": "svg + headings",
+          "observed": {
+            "svg": true,
+            "headings": [
+              "Trend — USDC-NGNC",
+              "Loss against mid over time",
+              "Stored runs"
+            ],
+            "rows": 1
+          },
+          "pass": true
+        }
+      ],
+      "errorRendering": {
+        "unknown_asset": {
+          "classes": "panel err",
+          "text": "Could not measure: unknown receive asset \"SCAMC\"; verified assets are EURMTL, GHSC, KESC, NGNC, NGNT, PYUSD, USDC, USDZ, ZARZ"
+        },
+        "network": {
+          "classes": "panel err",
+          "text": "Could not measure: Failed to fetch"
+        }
+      },
+      "darkScheme": {
+        "prefersDark": true,
+        "bodyBackground": "rgb(22, 24, 21)",
+        "bodyColor": "rgb(236, 234, 228)",
+        "badgeColor": "rgb(127, 184, 164)",
+        "panelBackground": "rgb(30, 33, 29)"
+      },
+      "renderedState": {
+        "url": "/",
+        "outText": "RECORDED — NOT CURRENT MARKET DATA · 32d ago · recorded 2026-08-22T12:09:59Z DIRECT Independent market found At least one path reaches the destination without another fiat token in between. No usable size. Loss against the exchangerate-api mid is 27.15% at 0.1 USDC — where price impact is negligible, so that is the corridor's structural floor, not a depth effect — rising to 97.52% at 5000 USDC. Every size tested is graded Unusable, so nothing is recommended. No recommendation. Every size tested is graded Unusable, so presenting a “best” route here would imply one is worth taking. Reference USD/NGN mid 1349.669672 via exchangerate-api · measured 2026-08-22T12:09:59Z Loss against mid, by size 0% 20% 50% 100% unusable above 0.1 100 5000 send amount (log scale) Measurements SEND RECEIVE RATE LOSS VERDICT PATH 0.1 98.3276835 983.276835 27.15% UNUSABLE USDC -> BLND -> XLM -> NGNC 1 971.8335306 971.8335306 27.99% UNUSABLE USDC -> BLND -> XLM -> NGNC 5 4620.1917505 924.0383501 31.54% UNUSABLE USDC -> BLND -> XLM -> NGNC 10 8998.9968369 899.89968369 33.32% UNUSABLE USDC -> XLM -> NGNC 25 20875.5913396 835.023653584 38.13% UNUSABLE USDC -> XLM -> NGNC 50 37271.4499663 745.428999326 44.77% UNUSABLE USDC -> XLM -> NGNC 100 61367.606495 613.67606495 54.53% UNUSABLE USDC -> XLM -> NGNC 250 100279.9698008 401.1198792032 70.28% UNUSABLE USDC -> XLM -> NGNC 500 127161.8274319 254.3236548638 81.16% UNUSABLE USDC -> XLM -> NGNC 1000 146845.3877014 146.8453877014 89.12% UNUSABLE USDC -> XLM -> NGNC 2500 161880.5410739 64.75221642956 95.20% UNUSABLE USDC -> XLM -> NGNC 5000 167600.7210814 33.52014421628 97.52% UNUSABLE USDC -> XLM -> NGNC Verdict thresholds Loss is how far the achieved rate falls below the reference mid. GOOD ≤ 3% · FAIR ≤ 8% · POOR ≤ 20% · UNUSABLE > 20% PASS Observed and clear FAIL Observed concern UNKNOWN Could not determine When no size produces a verdict of POOR or better, nothing is recommended. Case study #1 — one issuer’s African-fiat set NGNC, GHSC and KESC are issued from a single Stellar account. Their issuer declares NGNC status=\"live\" and the other two status=\"pending\". The corridor its issuer declares live still loses about 25% at dust size, where price impact is negligible — so that figure is the corridor’s structural floor rather than a depth effect. These are measurements of on-chain DEX liquidity, taken live. They describe what the ledger and the issuer’s own published SEP-1 document say, and nothing about intent. The anchor publishes no ANCHOR_QUOTE_SERVER, so its own rails cannot be priced programmatically and are not measured here. Wayfare works on any stablecoin → fiat-token corridor; this set is simply the first one measured.",
+        "errorPanels": [],
+        "hasProvenance": true,
+        "provenanceText": "RECORDED — NOT CURRENT MARKET DATA · 32d ago · recorded 2026-08-22T12:09:59Z",
+        "selectorOptions": [
+          "Loading corridors…"
+        ],
+        "selectorValue": "",
+        "selectorDisabled": false,
+        "corridorDetail": "",
+        "status": "",
+        "footerProvenance": "The reading below was recorded 32d ago at 2026-08-22T12:09:59Z; it is not a live market measurement. Wayfare is non-custodial and read-only: it never holds funds, issues tokens, or moves money."
+      },
+      "findingsInBody": false,
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Refused to execute script from 'http://127.0.0.1:8099/cdn-cgi/challenge-platform/scripts/jsd/main.js' because its MIME type ('text/plain') is not executable, and strict MIME type checking is enabled.",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Refused to execute script from 'http://127.0.0.1:8099/cdn-cgi/challenge-platform/scripts/jsd/main.js' because its MIME type ('text/plain') is not executable, and strict MIME type checking is enabled.",
+        "Failed to load resource: the server responded with a status of 400 (Bad Request)",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Refused to execute script from 'http://127.0.0.1:8099/cdn-cgi/challenge-platform/scripts/jsd/main.js' because its MIME type ('text/plain') is not executable, and strict MIME type checking is enabled.",
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "pageErrors": [],
+      "screenshot": "results/screenshots/chromium-cross-browser.png",
+      "summary": {
+        "passed": 6,
+        "failed": 1
+      }
+    },
+    {
+      "engine": "firefox",
+      "browserVersion": "155.0",
+      "standsInFor": [
+        "Mozilla Firefox"
+      ],
+      "caveat": null,
+      "checks": [
+        {
+          "id": "renders_corridor",
+          "description": "Initial load renders a corridor document (provenance banner present)",
+          "expected": true,
+          "observed": true,
+          "pass": true
+        },
+        {
+          "id": "selector_populated",
+          "description": "Corridor selector lists the measured corridors",
+          "expected": "a list of corridors, no placeholder",
+          "observed": {
+            "options": [
+              "Loading corridors…"
+            ],
+            "value": "",
+            "disabled": false,
+            "assetCalls": 0
+          },
+          "pass": false
+        },
+        {
+          "id": "integrity_badge",
+          "description": "Integrity badge renders with a state and a distinct colour",
+          "expected": "a badge with text",
+          "observed": {
+            "text": "DIRECT",
+            "className": "badge b-direct",
+            "color": "rgb(47, 111, 94)",
+            "background": "rgb(233, 244, 239)"
+          },
+          "pass": true
+        },
+        {
+          "id": "measurements_table",
+          "description": "Measurements table renders with rows and headers",
+          "expected": "header row + >=1 data row",
+          "observed": {
+            "table": true,
+            "scroll": true,
+            "rows": 12,
+            "headers": [
+              "Send",
+              "Receive",
+              "Rate",
+              "Loss",
+              "Verdict",
+              "Path"
+            ],
+            "scrollClientWidth": 818,
+            "scrollWidth": 818
+          },
+          "pass": true
+        },
+        {
+          "id": "no_page_horizontal_overflow",
+          "description": "The page itself does not scroll horizontally (any wide table is contained)",
+          "expected": "doc scrollWidth <= viewport width + 1",
+          "observed": {
+            "docScrollWidth": 1280,
+            "innerWidth": 1280
+          },
+          "pass": true
+        },
+        {
+          "id": "findings_panel_matches_contract",
+          "description": "Findings panel is rendered exactly when the response carried a findings block",
+          "expected": "findings in body: false -> panel rendered: false",
+          "observed": {
+            "hasFindingsInBody": false,
+            "panelRendered": false,
+            "detail": null
+          },
+          "pass": true
+        },
+        {
+          "id": "trend_view",
+          "description": "Trend view renders a chart and a stored-runs table",
+          "expected": "svg + headings",
+          "observed": {
+            "svg": true,
+            "headings": [
+              "Trend — USDC-NGNC",
+              "Loss against mid over time",
+              "Stored runs"
+            ],
+            "rows": 1
+          },
+          "pass": true
+        }
+      ],
+      "errorRendering": {
+        "unknown_asset": {
+          "classes": "panel err",
+          "text": "Could not measure: unknown receive asset \"SCAMC\"; verified assets are EURMTL, GHSC, KESC, NGNC, NGNT, PYUSD, USDC, USDZ, ZARZ"
+        },
+        "network": {
+          "classes": "panel err",
+          "text": "Could not measure: NetworkError when attempting to fetch resource."
+        }
+      },
+      "darkScheme": {
+        "prefersDark": true,
+        "bodyBackground": "rgb(22, 24, 21)",
+        "bodyColor": "rgb(236, 234, 228)",
+        "badgeColor": "rgb(127, 184, 164)",
+        "panelBackground": "rgb(30, 33, 29)"
+      },
+      "renderedState": {
+        "url": "/",
+        "outText": "RECORDED — NOT CURRENT MARKET DATA · 32d ago · recorded 2026-08-22T12:09:59Z DIRECT Independent market found At least one path reaches the destination without another fiat token in between. No usable size. Loss against the exchangerate-api mid is 27.15% at 0.1 USDC — where price impact is negligible, so that is the corridor's structural floor, not a depth effect — rising to 97.52% at 5000 USDC. Every size tested is graded Unusable, so nothing is recommended. No recommendation. Every size tested is graded Unusable, so presenting a “best” route here would imply one is worth taking. Reference USD/NGN mid 1349.669672 via exchangerate-api · measured 2026-08-22T12:09:59Z Loss against mid, by size 0%20%50%100%unusable above0.11005000send amount (log scale) Measurements SEND RECEIVE RATE LOSS VERDICT PATH 0.1 98.3276835 983.276835 27.15% UNUSABLE USDC -> BLND -> XLM -> NGNC 1 971.8335306 971.8335306 27.99% UNUSABLE USDC -> BLND -> XLM -> NGNC 5 4620.1917505 924.0383501 31.54% UNUSABLE USDC -> BLND -> XLM -> NGNC 10 8998.9968369 899.89968369 33.32% UNUSABLE USDC -> XLM -> NGNC 25 20875.5913396 835.023653584 38.13% UNUSABLE USDC -> XLM -> NGNC 50 37271.4499663 745.428999326 44.77% UNUSABLE USDC -> XLM -> NGNC 100 61367.606495 613.67606495 54.53% UNUSABLE USDC -> XLM -> NGNC 250 100279.9698008 401.1198792032 70.28% UNUSABLE USDC -> XLM -> NGNC 500 127161.8274319 254.3236548638 81.16% UNUSABLE USDC -> XLM -> NGNC 1000 146845.3877014 146.8453877014 89.12% UNUSABLE USDC -> XLM -> NGNC 2500 161880.5410739 64.75221642956 95.20% UNUSABLE USDC -> XLM -> NGNC 5000 167600.7210814 33.52014421628 97.52% UNUSABLE USDC -> XLM -> NGNC Verdict thresholds Loss is how far the achieved rate falls below the reference mid. GOOD ≤ 3% · FAIR ≤ 8% · POOR ≤ 20% · UNUSABLE > 20% PASS Observed and clear FAIL Observed concern UNKNOWN Could not determine When no size produces a verdict of POOR or better, nothing is recommended. Case study #1 — one issuer’s African-fiat set NGNC, GHSC and KESC are issued from a single Stellar account. Their issuer declares NGNC status=\"live\" and the other two status=\"pending\". The corridor its issuer declares live still loses about 25% at dust size, where price impact is negligible — so that figure is the corridor’s structural floor rather than a depth effect. These are measurements of on-chain DEX liquidity, taken live. They describe what the ledger and the issuer’s own published SEP-1 document say, and nothing about intent. The anchor publishes no ANCHOR_QUOTE_SERVER, so its own rails cannot be priced programmatically and are not measured here. Wayfare works on any stablecoin → fiat-token corridor; this set is simply the first one measured.",
+        "errorPanels": [],
+        "hasProvenance": true,
+        "provenanceText": "RECORDED — NOT CURRENT MARKET DATA · 32d ago · recorded 2026-08-22T12:09:59Z",
+        "selectorOptions": [
+          "Loading corridors…"
+        ],
+        "selectorValue": "",
+        "selectorDisabled": false,
+        "corridorDetail": "",
+        "status": "",
+        "footerProvenance": "The reading below was recorded 32d ago at 2026-08-22T12:09:59Z; it is not a live market measurement. Wayfare is non-custodial and read-only: it never holds funds, issues tokens, or moves money."
+      },
+      "findingsInBody": false,
+      "consoleErrors": [
+        "[JavaScript Error: \"The resource from “http://127.0.0.1:8099/cdn-cgi/challenge-platform/scripts/jsd/main.js” was blocked due to MIME type (“text/plain”) mismatch (X-Content-Type-Options: nosniff).\" {file: \"about:blank\" line: 0}]",
+        "[JavaScript Error: \"The resource from “http://127.0.0.1:8099/cdn-cgi/challenge-platform/scripts/jsd/main.js” was blocked due to MIME type (“text/plain”) mismatch (X-Content-Type-Options: nosniff).\" {file: \"about:blank\" line: 0}]",
+        "[JavaScript Error: \"The resource from “http://127.0.0.1:8099/cdn-cgi/challenge-platform/scripts/jsd/main.js” was blocked due to MIME type (“text/plain”) mismatch (X-Content-Type-Options: nosniff).\" {file: \"about:blank\" line: 0}]"
+      ],
+      "pageErrors": [],
+      "screenshot": "results/screenshots/firefox-cross-browser.png",
+      "summary": {
+        "passed": 6,
+        "failed": 1
+      }
+    },
+    {
+      "engine": "webkit",
+      "browserVersion": "26.6",
+      "standsInFor": [
+        "Apple Safari"
+      ],
+      "caveat": "WebKit is Safari's engine on Apple platforms, but Playwright's WebKit build is not Safari and does not run on macOS. Safari-specific behaviour (font rendering, scrollbars, system-link handling) cannot be concluded from these results.",
+      "checks": [
+        {
+          "id": "renders_corridor",
+          "description": "Initial load renders a corridor document (provenance banner present)",
+          "expected": true,
+          "observed": true,
+          "pass": true
+        },
+        {
+          "id": "selector_populated",
+          "description": "Corridor selector lists the measured corridors",
+          "expected": "a list of corridors, no placeholder",
+          "observed": {
+            "options": [
+              "Loading corridors…"
+            ],
+            "value": "",
+            "disabled": false,
+            "assetCalls": 0
+          },
+          "pass": false
+        },
+        {
+          "id": "integrity_badge",
+          "description": "Integrity badge renders with a state and a distinct colour",
+          "expected": "a badge with text",
+          "observed": {
+            "text": "DIRECT",
+            "className": "badge b-direct",
+            "color": "rgb(47, 111, 94)",
+            "background": "rgb(233, 244, 239)"
+          },
+          "pass": true
+        },
+        {
+          "id": "measurements_table",
+          "description": "Measurements table renders with rows and headers",
+          "expected": "header row + >=1 data row",
+          "observed": {
+            "table": true,
+            "scroll": true,
+            "rows": 12,
+            "headers": [
+              "Send",
+              "Receive",
+              "Rate",
+              "Loss",
+              "Verdict",
+              "Path"
+            ],
+            "scrollClientWidth": 818,
+            "scrollWidth": 818
+          },
+          "pass": true
+        },
+        {
+          "id": "no_page_horizontal_overflow",
+          "description": "The page itself does not scroll horizontally (any wide table is contained)",
+          "expected": "doc scrollWidth <= viewport width + 1",
+          "observed": {
+            "docScrollWidth": 1280,
+            "innerWidth": 1280
+          },
+          "pass": true
+        },
+        {
+          "id": "findings_panel_matches_contract",
+          "description": "Findings panel is rendered exactly when the response carried a findings block",
+          "expected": "findings in body: false -> panel rendered: false",
+          "observed": {
+            "hasFindingsInBody": false,
+            "panelRendered": false,
+            "detail": null
+          },
+          "pass": true
+        },
+        {
+          "id": "trend_view",
+          "description": "Trend view renders a chart and a stored-runs table",
+          "expected": "svg + headings",
+          "observed": {
+            "svg": true,
+            "headings": [
+              "Trend — USDC-NGNC",
+              "Loss against mid over time",
+              "Stored runs"
+            ],
+            "rows": 1
+          },
+          "pass": true
+        }
+      ],
+      "errorRendering": {
+        "unknown_asset": {
+          "classes": "panel err",
+          "text": "Could not measure: unknown receive asset \"SCAMC\"; verified assets are EURMTL, GHSC, KESC, NGNC, NGNT, PYUSD, USDC, USDZ, ZARZ"
+        },
+        "network": {
+          "classes": "panel err",
+          "text": "Could not measure: Load failed"
+        }
+      },
+      "darkScheme": {
+        "prefersDark": true,
+        "bodyBackground": "rgb(22, 24, 21)",
+        "bodyColor": "rgb(236, 234, 228)",
+        "badgeColor": "rgb(127, 184, 164)",
+        "panelBackground": "rgb(30, 33, 29)"
+      },
+      "renderedState": {
+        "url": "/",
+        "outText": "RECORDED — NOT CURRENT MARKET DATA · 32d ago · recorded 2026-08-22T12:09:59Z DIRECT Independent market found At least one path reaches the destination without another fiat token in between. No usable size. Loss against the exchangerate-api mid is 27.15% at 0.1 USDC — where price impact is negligible, so that is the corridor's structural floor, not a depth effect — rising to 97.52% at 5000 USDC. Every size tested is graded Unusable, so nothing is recommended. No recommendation. Every size tested is graded Unusable, so presenting a “best” route here would imply one is worth taking. Reference USD/NGN mid 1349.669672 via exchangerate-api · measured 2026-08-22T12:09:59Z Loss against mid, by size 0% 20% 50% 100% unusable above 0.1 100 5000 send amount (log scale) Measurements SEND RECEIVE RATE LOSS VERDICT PATH 0.1 98.3276835 983.276835 27.15% UNUSABLE USDC -> BLND -> XLM -> NGNC 1 971.8335306 971.8335306 27.99% UNUSABLE USDC -> BLND -> XLM -> NGNC 5 4620.1917505 924.0383501 31.54% UNUSABLE USDC -> BLND -> XLM -> NGNC 10 8998.9968369 899.89968369 33.32% UNUSABLE USDC -> XLM -> NGNC 25 20875.5913396 835.023653584 38.13% UNUSABLE USDC -> XLM -> NGNC 50 37271.4499663 745.428999326 44.77% UNUSABLE USDC -> XLM -> NGNC 100 61367.606495 613.67606495 54.53% UNUSABLE USDC -> XLM -> NGNC 250 100279.9698008 401.1198792032 70.28% UNUSABLE USDC -> XLM -> NGNC 500 127161.8274319 254.3236548638 81.16% UNUSABLE USDC -> XLM -> NGNC 1000 146845.3877014 146.8453877014 89.12% UNUSABLE USDC -> XLM -> NGNC 2500 161880.5410739 64.75221642956 95.20% UNUSABLE USDC -> XLM -> NGNC 5000 167600.7210814 33.52014421628 97.52% UNUSABLE USDC -> XLM -> NGNC Verdict thresholds Loss is how far the achieved rate falls below the reference mid. GOOD ≤ 3% · FAIR ≤ 8% · POOR ≤ 20% · UNUSABLE > 20% PASS Observed and clear FAIL Observed concern UNKNOWN Could not determine When no size produces a verdict of POOR or better, nothing is recommended. Case study #1 — one issuer’s African-fiat set NGNC, GHSC and KESC are issued from a single Stellar account. Their issuer declares NGNC status=\"live\" and the other two status=\"pending\". The corridor its issuer declares live still loses about 25% at dust size, where price impact is negligible — so that figure is the corridor’s structural floor rather than a depth effect. These are measurements of on-chain DEX liquidity, taken live. They describe what the ledger and the issuer’s own published SEP-1 document say, and nothing about intent. The anchor publishes no ANCHOR_QUOTE_SERVER, so its own rails cannot be priced programmatically and are not measured here. Wayfare works on any stablecoin → fiat-token corridor; this set is simply the first one measured.",
+        "errorPanels": [],
+        "hasProvenance": true,
+        "provenanceText": "RECORDED — NOT CURRENT MARKET DATA · 32d ago · recorded 2026-08-22T12:09:59Z",
+        "selectorOptions": [
+          "Loading corridors…"
+        ],
+        "selectorValue": "",
+        "selectorDisabled": false,
+        "corridorDetail": "",
+        "status": "",
+        "footerProvenance": "The reading below was recorded 32d ago at 2026-08-22T12:09:59Z; it is not a live market measurement. Wayfare is non-custodial and read-only: it never holds funds, issues tokens, or moves money."
+      },
+      "findingsInBody": false,
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Refused to execute http://127.0.0.1:8099/cdn-cgi/challenge-platform/scripts/jsd/main.js as script because \"X-Content-Type-Options: nosniff\" was given and its Content-Type is not a script MIME type.",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Refused to execute http://127.0.0.1:8099/cdn-cgi/challenge-platform/scripts/jsd/main.js as script because \"X-Content-Type-Options: nosniff\" was given and its Content-Type is not a script MIME type.",
+        "Failed to load resource: the server responded with a status of 400 (Bad Request)",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Refused to execute http://127.0.0.1:8099/cdn-cgi/challenge-platform/scripts/jsd/main.js as script because \"X-Content-Type-Options: nosniff\" was given and its Content-Type is not a script MIME type."
+      ],
+      "pageErrors": [],
+      "screenshot": "results/screenshots/webkit-cross-browser.png",
+      "summary": {
+        "passed": 6,
+        "failed": 1
+      }
+    }
+  ]
+}

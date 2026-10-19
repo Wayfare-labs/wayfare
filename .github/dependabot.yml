@@ -1,0 +1,42 @@
+# Dependabot surfaces movement on the three surfaces that pin third-party
+# code: the GitHub Actions the workflows run, the two Go modules the binary
+# imports, and the container base images it is built from.
+#
+# It opens pull requests; it does not decide them. Every update lands as a
+# normal PR and passes the same checks as any other change — in particular,
+# the guard tests in deps_test.go, which keep go.mod, go.sum and deps.go in
+# step, and the auto-merge gate, which routes any go.mod or go.sum change to
+# a maintainer. See docs/dependency-policy.md ("Automated updates").
+#
+# Weekly and grouped: the surfaces move on the scale of weeks, and one PR
+# per ecosystem is a reviewable unit rather than a stream of noise.
+
+version: 2
+updates:
+  # Actions pinned to full commit SHAs need a version comment for Dependabot
+  # to recognise which release to move to; the workflows carry one.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      go-modules:
+        patterns: ["*"]
+
+  # Base images are pinned by tag and digest, so a digest bump keeps the
+  # tag's identity while moving the immutable bytes.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      docker-images:
+        patterns: ["*"]
