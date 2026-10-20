@@ -113,8 +113,9 @@ func TestReferenceAnchorIsPriceable(t *testing.T) {
 	if !p.Priceable {
 		t.Fatal("expected testanchor to be priceable")
 	}
-	if !p.SEP31 || !p.SEP6 || !p.SEP24 {
-		t.Errorf("expected all transfer flows: sep24=%v sep31=%v sep6=%v", p.SEP24, p.SEP31, p.SEP6)
+	if !p.SEP12 || !p.SEP31 || !p.SEP6 || !p.SEP24 {
+		t.Errorf("expected SEP-12 and all transfer flows: sep12=%v sep24=%v sep31=%v sep6=%v",
+			p.SEP12, p.SEP24, p.SEP31, p.SEP6)
 	}
 	if p.Mainnet {
 		t.Error("testanchor declares the test network, must not be reported as mainnet")

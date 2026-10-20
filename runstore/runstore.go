@@ -40,17 +40,18 @@ import (
 	"github.com/Wayfare-labs/wayfare/checks"
 )
 
-// Version is the record schema version.
+// Version is the current record schema version.
 //
 // It is part of the hashed preimage, so a bump invalidates existing chains by
 // construction — unless the new fields are added with omitempty, in which case
 // a record written by an older build (whose new fields are empty) still
 // encodes to exactly the bytes that were hashed when it was written, and
-// still verifies. Version 3 adds reference.fetched_at this way: a Version 2
-// record has no fetched_at, encodes byte-for-byte as it always did, and so
-// still verifies under this build. See the preimage rules on Record and the
-// migration note in docs/run-store.md.
-const Version = 3
+// still verifies. Version 4 adds snapshot this way after every Version 3
+// field, so older records still verify unchanged. See docs/run-store.md.
+const Version = 4
+
+// LegacyVersion is the prior record schema, retained for existing chains.
+const LegacyVersion = 1
 
 // GenesisPrevHash is the prev_hash of the first record in a chain.
 const GenesisPrevHash = "sha256:" + "0000000000000000000000000000000000000000000000000000000000000000"
@@ -174,6 +175,10 @@ type Record struct {
 	// docs/run-store.md for the migration.
 	Checks  []checks.CheckJSON  `json:"checks,omitempty"`
 	Metrics []checks.MetricJSON `json:"metrics,omitempty"`
+
+	// Snapshot is the content hash of the exact upstream snapshot artifact.
+	// It is optional and follows every Version 3 field to preserve old hashes.
+	Snapshot string `json:"snapshot,omitempty"`
 
 	PrevHash string `json:"prev_hash"`
 	Hash     string `json:"hash"`

@@ -23,6 +23,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
+	"github.com/Wayfare-labs/wayfare/snapshot"
 )
 
 // Corridor is one measurement target.
@@ -84,6 +85,14 @@ type Scheduler struct {
 	// findings a live response serves. Nil disables checks, and stored
 	// records then carry none.
 	Checks *checks.Runner
+
+	// SnapshotDir enables scheduled capture. SnapshotEngineFactory must
+	// configure every upstream client to use the supplied recorder.
+	SnapshotDir           string
+	SnapshotSources       snapshot.Sources
+	SnapshotNotes         []string
+	SnapshotEngineFactory func(*snapshot.Recorder) *route.Engine
+	SnapshotChecksFactory func(*snapshot.Recorder) *checks.Runner
 
 	// Interval is the gap between sweeps. Zero means DefaultInterval.
 	Interval time.Duration
@@ -201,8 +210,32 @@ func (s *Scheduler) RunOnce(ctx context.Context) error {
 // measure runs one corridor's ladder and appends the result.
 func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 	started := s.now()
+	engine := s.Engine
+	var recorder *snapshot.Recorder
+	if s.SnapshotDir != "" {
+		if s.SnapshotEngineFactory == nil {
+			return fmt.Errorf("monitor: snapshot directory configured without a snapshot engine factory")
+		}
+		recorder = &snapshot.Recorder{
+			Corridor: snapshot.Corridor{
+				Send:          snapshot.AssetRef{Code: c.Send.Code, Issuer: c.Send.Issuer},
+				Receive:       snapshot.AssetRef{Code: c.Receive.Code, Issuer: c.Receive.Issuer},
+				ReferencePair: c.ReferenceBase + "/" + c.ReferenceQuote,
+			},
+			Sizes:   make([]string, len(route.DefaultSizes)),
+			Sources: s.SnapshotSources,
+			Notes:   s.SnapshotNotes,
+		}
+		for i, size := range route.DefaultSizes {
+			recorder.Sizes[i] = size.String()
+		}
+		engine = s.SnapshotEngineFactory(recorder)
+		if engine == nil {
+			return fmt.Errorf("monitor: snapshot engine factory returned nil for %s", c.Key())
+		}
+	}
 
-	result, err := s.Engine.Ladder(ctx, route.LadderRequest{
+	result, err := engine.Ladder(ctx, route.LadderRequest{
 		SendAsset:      c.Send,
 		ReceiveAsset:   c.Receive,
 		Sizes:          route.DefaultSizes,
@@ -221,11 +254,30 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 	// live read. With no checks configured, this is a no-op and the record
 	// carries none — the same "not checked" the server serves.
 	live := route.ToCorridorJSON(result, pair)
-	if s.Checks != nil {
-		live = route.WithFindings(live, s.Checks.ForAsset(ctx, c.Receive))
+	checkRunner := s.Checks
+	if recorder != nil && s.SnapshotChecksFactory != nil {
+		checkRunner = s.SnapshotChecksFactory(recorder)
+	} else if recorder != nil && checkRunner != nil {
+		return fmt.Errorf("monitor: snapshot checks require a recorder-backed checks factory")
+	}
+	if checkRunner != nil {
+		live = route.WithFindings(live, checkRunner.ForAsset(ctx, c.Receive))
 	}
 	record := runstore.FromCorridorJSON(live)
 	record.RecordedAt = started
+	if recorder != nil {
+		for _, rung := range result.Rungs {
+			if rung.Err != nil || rung.Result == nil || rung.Result.Integrity == route.IntegrityUnknown {
+				return fmt.Errorf("monitor: refusing to record incomplete snapshot for %s at size %s",
+					c.Key(), rung.SendAmount)
+			}
+		}
+		hash, err := snapshot.SaveContentAddressed(s.SnapshotDir, recorder)
+		if err != nil {
+			return fmt.Errorf("monitor: recording snapshot artifact for %s: %w", c.Key(), err)
+		}
+		record.Snapshot = hash
+	}
 
 	// Carry the second provider's mid and the divergence, so a later reader
 	// can tell a corridor change from a benchmark change.

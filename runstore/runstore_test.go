@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Wayfare-labs/wayfare/checks"
+	"github.com/Wayfare-labs/wayfare/snapshot"
 )
 
 func ctx() context.Context { return context.Background() }
@@ -298,6 +302,20 @@ func TestVersion1ChainOnDiskStillLoads(t *testing.T) {
 	}
 }
 
+func TestVersion4RecordHashIncludesSnapshot(t *testing.T) {
+	r := fixedRecord()
+	r.Version = Version
+	r.Snapshot = "sha256:" + strings.Repeat("a", 64)
+	got, err := r.ComputeHash()
+	if err != nil {
+		t.Fatalf("ComputeHash: %v", err)
+	}
+	const want = "sha256:21dc93d0a8c64295c122a0af74c9b9a34eaabd6c2ab6a3387aae9134bae7f753"
+	if got != want {
+		t.Errorf("v4 record hash = %s, want %s", got, want)
+	}
+}
+
 // TestPrevHashIsInsideThePreimage is what makes the structure a chain rather
 // than a list of independently-hashed records. If prev_hash were outside the
 // hashed bytes, an editor could rewrite history and re-link it freely.
@@ -572,6 +590,83 @@ func writeVersionNRecord(t *testing.T, dir string, version int) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, FileExt), append(line, '\n'), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestVersion3ChainContinuesWithVersion4(t *testing.T) {
+	dir := t.TempDir()
+	legacy := fixedRecord()
+	legacy.Version = 3
+	if err := legacy.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	line, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "USDC-NGNC"+FileExt), append(line, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open v3 chain: %v", err)
+	}
+	next := fixedRecord()
+	if err := s.Append(ctx(), next); err != nil {
+		t.Fatalf("Append v4 record: %v", err)
+	}
+	if next.Version != Version || next.Seq != 2 || next.PrevHash != legacy.Hash {
+		t.Errorf("appended record = version %d seq %d prev %s; want v%d seq 2 prev %s",
+			next.Version, next.Seq, next.PrevHash, Version, legacy.Hash)
+	}
+	if err := s.Verify(ctx(), "USDC-NGNC"); err != nil {
+		t.Errorf("mixed v3/v4 chain does not verify: %v", err)
+	}
+}
+
+func TestVerifySnapshotsChecksPresentArtifact(t *testing.T) {
+	parent := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"receive":{"NGNC":{"enabled":true}}}`)
+	}))
+	defer server.Close()
+	recorder := &snapshot.Recorder{
+		Corridor: snapshot.Corridor{
+			Send: snapshot.AssetRef{Code: "USDC"}, Receive: snapshot.AssetRef{Code: "NGNC"},
+			ReferencePair: "USD/NGN",
+		},
+		Sizes: []string{"0.1"},
+	}
+	resp, err := (&http.Client{Transport: recorder}).Get(server.URL + "/info")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	snapshotHash, err := snapshot.SaveContentAddressed(parent, recorder)
+	if err != nil {
+		t.Fatalf("SaveContentAddressed: %v", err)
+	}
+
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := fixedRecord()
+	r.Snapshot = snapshotHash
+	if err := store.Append(ctx(), r); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.VerifySnapshots(ctx(), "USDC-NGNC", parent); err != nil {
+		t.Fatalf("valid snapshot failed verification: %v", err)
+	}
+
+	bodyPath := filepath.Join(parent, strings.TrimPrefix(snapshotHash, "sha256:"), "responses", "001-info.json")
+	if err := os.WriteFile(bodyPath, []byte(`{"tampered":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.VerifySnapshots(ctx(), "USDC-NGNC", parent); err == nil {
+		t.Fatal("verify accepted a present but modified snapshot artifact")
 	}
 }
 

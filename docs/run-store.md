@@ -2,9 +2,9 @@
 
 A tamper-evident history of corridor measurements.
 
-**Schema version 3.** Implemented by `runstore/`. Version 1 and Version 2
-chains still load and still verify — see [Migration to version 2](#migration-to-version-2)
-and [Migration to version 3](#migration-to-version-3).
+**Schema version 4.** Implemented by `runstore/`. Version 1 through 3 chains
+still load and verify; each migration adds optional fields after the previous
+record shape so old preimages remain unchanged.
 
 ---
 
@@ -37,7 +37,7 @@ This is not a blockchain and makes no distributed-consensus claim.
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "seq": 42,
   "recorded_at": "2026-08-21T22:30:40Z",
   "corridor": "USDC-NGNC",
@@ -79,6 +79,7 @@ This is not a blockchain and makes no distributed-consensus claim.
                     "observed": "bid=1350.1000 ask=1350.6400"}],
      "observed_at": "2026-08-21T22:28:00Z"}
   ],
+  "snapshot": "sha256:8a4e…",
   "prev_hash": "sha256:0000…0000",
   "hash": "sha256:6b1f…"
 }
@@ -233,7 +234,10 @@ ever written**. A reader verifying last month's history against the new build
 would be told it had been tampered with.
 
 So a shape change is a `Version` bump plus a migration — never a compatible
-change, and never a tidy-up.
+change, and never a tidy-up. Version 4 adds the optional `snapshot` field
+after the Version 3 fields. Earlier records omit it, preserving their original
+JSON preimage and hash; new writes use version 4. This lets existing chains
+continue from their current tip without rewriting or invalidating history.
 
 This is enforced, not merely agreed. `TestRecordHashIsPinned` freezes the hash
 of a fixed record; a purely cosmetic field reorder fails it. The test's own
@@ -314,14 +318,36 @@ Verification, not rewriting, is what makes a mixed chain safe: the new build
 tell a genuine legacy record from a tampered one — and it refuses any other
 version (see [the version-mismatch rule](#the-version-mismatch-rule)).
 
+### Migration to version 4
+
+Version 3 records have no snapshot link. Version 4 adds the optional
+`snapshot` field after every prior record field. When absent, it is omitted
+from JSON, so Version 1 through Version 3 hashes remain unchanged. New records
+written by the monitor carry the content hash of their snapshot artifact.
+
 ### The version-mismatch rule
 
 A record version this build does not recognise is an error, never a best-effort
-parse: `runstore` accepts exactly `1`, `2` and `3`. Relabelling a record to
+parse: `runstore` accepts versions `1` through `4`. Relabelling a record to
 make it parse is falsification, not migration — a record that says `version: 9`
 is a schema the build cannot speak, and guessing at it would hide the mismatch.
 
 ---
+
+## Snapshot artifacts
+
+Scheduled sweeps with a configured data directory store each complete run's
+snapshot beneath `<data>/snapshots/<hex-digest>`. The run record contains the
+`sha256:` digest; the large response bodies stay outside the NDJSON chain.
+The digest covers the exact manifest bytes and each response path and body,
+sorted by path and length-framed before hashing. Snapshot loading also verifies
+each response against its manifest `body_sha256`.
+
+This is content-addressed storage: an artifact's directory name is derived
+from its content, and a record never depends on a timestamp-based lookup.
+`-verify-store` checks each referenced artifact when it is present. A missing
+artifact does not invalidate the hash chain, but the original inputs are no
+longer available for reproducing that run.
 
 ## Storage
 
@@ -503,8 +529,9 @@ modify the store.
 ### Backups
 
 The chain proves nothing was edited. It does **not** survive the volume dying.
-Copy the NDJSON files off-box on a schedule, and verify after restoring —
-a backup nobody has restored from is a hypothesis. See
+Copy both the NDJSON files and the `snapshots/` artifact directory off-box on a
+schedule, and verify after restoring — a backup nobody has restored from is a
+hypothesis. See
 [deployment.md](deployment.md).
 
 ---

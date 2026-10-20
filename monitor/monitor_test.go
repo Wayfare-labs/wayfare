@@ -4,7 +4,9 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,6 +90,54 @@ func TestRunOnceWritesOneRecordPerCorridor(t *testing.T) {
 	}
 	if rec.Reference.ScoredAgainst == "" {
 		t.Error("the record must name which mid produced its verdicts")
+	}
+}
+
+func TestRunOnceStoresSnapshotAndLinksItsHash(t *testing.T) {
+	store, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(filepath.Join("../testdata/snapshots", "usdc-ngnc-*"))
+	if err != nil || len(matches) == 0 {
+		t.Skip("no USDC-NGNC snapshot fixture")
+	}
+	snap, err := snapshot.Load(matches[0])
+	if err != nil {
+		t.Fatalf("loading snapshot: %v", err)
+	}
+	artifactDir := t.TempDir()
+	s := schedulerOver(t, "usdc-ngnc", asset.NGNC(), "NGN", "1350.2568", store)
+	s.SnapshotDir = artifactDir
+	s.SnapshotEngineFactory = func(recorder *snapshot.Recorder) *route.Engine {
+		recorder.Transport = snap.Replay()
+		client := &http.Client{Transport: recorder}
+		return &route.Engine{
+			DEX: &dex.Client{
+				HorizonURL: "https://horizon.stellar.org",
+				HTTPClient: client,
+			},
+			RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+				"USD/NGN": decimal.RequireFromString("1350.2568"),
+			}),
+		}
+	}
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	rec, err := store.Latest(context.Background(), "USDC-NGNC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec == nil || !strings.HasPrefix(rec.Snapshot, "sha256:") {
+		t.Fatalf("run record snapshot = %q, want a content hash", rec.Snapshot)
+	}
+	path := filepath.Join(artifactDir, strings.TrimPrefix(rec.Snapshot, "sha256:"))
+	if got, err := snapshot.ContentHash(path); err != nil || got != rec.Snapshot {
+		t.Errorf("stored artifact hash = %q, %v; want %q", got, err, rec.Snapshot)
+	}
+	if err := store.VerifySnapshots(context.Background(), "USDC-NGNC", artifactDir); err != nil {
+		t.Errorf("VerifySnapshots: %v", err)
 	}
 }
 
