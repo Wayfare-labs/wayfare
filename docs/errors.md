@@ -40,6 +40,7 @@ cause produces the same code on every endpoint. `TestErrorCodeContract` in
 | `invalid_limit` | 400 | The `limit` parameter is not a positive whole number. | `/api/corridor/trend` |
 | `measurement_failed` | 502 | A live measurement failed at every size and there is no stored run to serve instead. | `/api/corridor` |
 | `upstream_timeout` | 504 | A live measurement exceeded the server's measurement timeout and there is no stored run to serve instead. | `/api/corridor` |
+| `no_history` | 404 | A history-first instance was asked for a corridor it has no stored measurement for, and was not asked to measure one. Nothing was attempted and nothing failed. | `/api/corridor` |
 | `internal_error` | 500 | The request could not be completed because of a server-side failure (for example, the run store could not be listed or read for `/api/assets`). | `/api/assets` |
 | `store_read_error` | 500 | The run store could not be listed or read while serving history. | `/api/corridor/trend`, `/api/chain-heads` |
 | `divergence_history_error` | 500 | A stored `divergence_pct` could not be parsed while summarising reference-divergence history. This is a corrupt record, not an absent observation, so it is reported as an error rather than silently omitted. | `/api/corridor/trend` |
@@ -62,6 +63,35 @@ on. When the store holds a prior run, `/api/corridor` serves that run instead,
 with `live: false` and a `stale` envelope — a `200`, not one of the codes
 above. The error codes are what a client sees when even the recorded history
 cannot answer. Nothing is ever synthesised to fill the gap.
+
+### A note on `no_history`
+
+`no_history` is the code a history-first instance returns when the corridor has
+never been swept. Three absences meet at this endpoint and only one of them is
+an error about the corridor, which is why the code exists at all:
+
+- `no_history` (404) says this deployment holds no measurement. It is a fact
+  about the server's history, made before any upstream was contacted.
+- `measurement_failed` (502) says a measurement was attempted and every size
+  failed to reach an upstream. It is a fact about the service right now.
+- `NO-MARKET` is not an error at all. It is a `200` measurement-shaped response
+  whose finding is that the corridor has no path — a fact about the market
+  ([#189](https://github.com/Wayfare-labs/wayfare/issues/189) draws the same
+  line inside the run store: an absent record and an unmeasurable corridor are
+  different findings).
+
+A cold corridor used to fall through to a live measurement, and when that
+measurement failed the response was `measurement_failed`: an outage report for
+a server that was working, on the deployment configuration the monitor runs in.
+The request now answers `no_history` without measuring, and the prose names
+`live=1` as the way to ask for a reading that does not exist yet.
+
+`no_history` is never returned when the store exists but could not be read, and
+never when no store is configured. Neither is a statement that history is
+absent — one is a server that cannot tell, and the other is a deployment that
+never promised history — so both fall through to a live measurement and report
+whatever that produces. `TestUnreadableStoreIsNotReportedAsNoHistory` in
+`server/no_history_test.go` pins the distinction.
 
 ### A note on `unknown_send_asset` and `unknown_receive_asset`
 

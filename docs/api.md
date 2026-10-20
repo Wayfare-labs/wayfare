@@ -26,7 +26,7 @@ Query parameters:
 - `from` — send asset code; defaults to `USDC`.
 - `to` — receive asset code; defaults to `NGNC`.
 - `sizes` — optional comma-separated positive decimal send amounts. The server accepts at most 24 values. When omitted, the route ladder's default sizes are used.
-- `live=1` — when history-first mode is enabled, bypass stored history and request a live measurement.
+- `live=1` — when history-first mode is enabled, bypass stored history and request a live measurement. Without it, a history-first instance answers from the chain alone, and a corridor the scheduler has not swept yet returns `404` with `code: "no_history"` rather than a measurement the mode did not promise.
 
 The destination must be a configured asset with a verified fiat peg. Amounts, rates, percentages, and sizes are decimal strings, not JSON numbers.
 
@@ -58,6 +58,17 @@ Each rung includes `send_amount`, `priced`, `integrity`, optional `quote`, notes
 The first valid priced rung has no marginal cost. Missing rungs are skipped, never treated as zero. The current marginal classification is available on the internal ladder result as `improving`, `flat`, `worsening`, or `undetermined`; fewer than two valid priced points are undetermined.
 
 A live measurement failure is served from the latest stored run when one exists, labelled `live: false`. If no stored run exists, the request returns an error rather than fabricating a reading.
+
+On a history-first instance, a corridor with no stored run is answered before anything is measured:
+
+```http
+HTTP/1.1 404 Not Found
+Content-Type: application/json; charset=utf-8
+
+{"error":"no stored measurement for corridor USDC-NGNT on this history-first instance; request with live=1 to measure it now","code":"no_history","request_id":"…"}
+```
+
+The status is `404`, the code is `no_history`, and the body carries neither `integrity` nor `rungs` nor any figure — an error is never measurement-shaped ([the note in errors.md](errors.md#a-note-on-no_history)). This is the response a first deployment gives, and a corridor newly added to the registry gives until the scheduler's next sweep records it. Asking with `live=1` opts out: an explicit live request measures, and a failed explicit live request reports `measurement_failed` rather than `no_history`, because in that case something was attempted and did fail. `NO-MARKET` remains a third thing again — a `200` finding that the corridor has no path.
 
 **cURL:**
 
@@ -201,6 +212,88 @@ curl -s "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC&sizes=
 ```
 
 Every quote — `recommended` and each rung's `quote` — carries `hops`: the path as structured data, in execution order with both endpoints, each entry an asset with its `issuer` where one was established and its `peg` where known. `description` stays exactly as it was, for display and compatibility; `hops` is the field to consume, because an asset code identifies nothing without its issuer and a client must not parse prose or guess an issuer from a code. A hop whose issuing account could not be established says so with `issuer_unknown: true` instead of omitting the field silently; native and fiat assets have no issuer by nature and are identified in full by `asset`. A stored (stale) reading serves `hops: null` — the run store records the description string only, and “not recorded” is not the same claim as “no intermediate assets”.
+
+### Money fields: scale and rounding
+
+Money crosses the wire as decimal strings (ADR 006). Those strings are not all at the same scale, and a consumer that compares two of them without knowing each one's scale gets a wrong answer: `floor_loss_pct: "4.31"` beside a rung's `loss_pct: "4.31390625"` is the same measurement at two scales, not a movement. The tables below give the scale and rounding rule for every money field, field by field.
+
+Two renderings exist and which one a field uses is a property of the field, not of the value:
+
+- **Full precision** — `decimal.Decimal.String()`. Nothing is rounded when the value is written. Every digit the engine holds is published and trailing zeros are removed, so one field can arrive as `"4.31"` at one measurement and `"4.31390625"` at the next. A quotient (`effective_rate`, `loss_pct`, `marginal_cost`) is capped at 16 decimals by `decimal.DivisionPrecision`, and that cap is applied where the number is *computed*, not at the wire; products and sums (amounts derived by multiplying a size by a rate) keep the full scale of their inputs and can exceed 16 decimals. Amounts that come straight from Horizon carry its 7-decimal scale.
+- **Fixed scale** — `decimal.Decimal.StringFixed(n)`. Exactly `n` decimals, always, including on zero: a zero renders `"0.00"`, never `"0"`. Rounding is half away from zero, so `2.675` writes `2.68` and a negative `-2.675` writes `-2.68` (reachable on `parallel_gap_pct`, which is signed). These are display figures — reconcile against a full-precision field only after allowing for the rounding the fixed field already absorbed.
+
+An absent money field means the quantity was not determined, never that it is zero. The field is missing from the document rather than published as `"0"` — the same rule ADR 006 and `docs/metrics.md` state for the values themselves.
+
+Corridor document, headline fields:
+
+| Field | Decimals on the wire | Rounding |
+|---|---|---|
+| `reference_mid` | full precision | none at the wire |
+| `reference_secondary_mid` | full precision | none at the wire |
+| `reference_divergence_pct` | exactly 4 | half away from zero |
+| `reference_diagnostic.mid` | full precision | none at the wire |
+| `reference_diagnostic.outlier_distance_pct` | exactly 4 | half away from zero |
+| `reference_diagnostic.other_distance_pct` | exactly 4 | half away from zero |
+| `parallel_mid` | full precision | none at the wire |
+| `parallel_gap_pct` | exactly 4 | half away from zero, signed |
+| `floor_loss_pct` | exactly 2 | half away from zero |
+| `worst_loss_pct` | exactly 2 | half away from zero |
+| `floor_size` | full precision | none at the wire |
+| `worst_size` | full precision | none at the wire |
+| `recommended_size` | full precision | none at the wire |
+
+Quote objects — `recommended` and each `rungs[].quote`, one shape used in both places:
+
+| Field | Decimals on the wire | Rounding |
+|---|---|---|
+| `receive_amount` | full precision | none at the wire; a Horizon amount keeps its 7 decimals |
+| `effective_rate` | full precision | quotient: 16-decimal cap applied at computation |
+| `loss_pct` | full precision | quotient: 16-decimal cap applied at computation, then multiplied by 100; never negative — a route better than mid is reported as `0`, not as a negative cost |
+| `loss_amount` | exactly 2 | half away from zero; never negative, for the same reason as `loss_pct` |
+
+Rungs:
+
+| Field | Decimals on the wire | Rounding |
+|---|---|---|
+| `rungs[].send_amount` | full precision | none at the wire; a requested ladder size, so it reads as entered (`"0.1"`, `"5000"`) |
+| `rungs[].marginal_cost` | full precision | difference of two rates: no new rounding beyond what each rate already carries |
+| `rungs[].marginal_from` | full precision | none at the wire; a size |
+| `rungs[].marginal_to` | full precision | none at the wire; a size |
+
+Cost block, `rungs[].cost`:
+
+| Field | Decimals on the wire | Rounding |
+|---|---|---|
+| `total_loss_pct` | full precision | none at the wire; equals the rung's `loss_pct`, so the two always reconcile digit for digit |
+| `parts[].amount` | full precision | none at the wire |
+| `parts[].pct` | full precision | none at the wire |
+
+Undetermined cost parts publish neither field — they carry `determined: false` and a `reason`, which is the absence rule above applied inside the block.
+
+Execution-rate curve, `curve.points[]`:
+
+| Field | Decimals on the wire | Rounding |
+|---|---|---|
+| `size` | full precision | none at the wire |
+| `rate` | full precision | quotient: 16-decimal cap applied at computation |
+
+An unpriced point publishes `size` and no `rate` at all, with its `reason` beside it.
+
+The tables above cover the corridor document that `route/wire.go` renders. `route/wire_scale_test.go` prices one corridor in which every money field is the same probe value, reads the scale this section declares for each field straight out of this file, and fails if a renderer's output no longer matches what is written here — or if a money field reaches the wire that this section never names.
+
+`route/money.go`'s `MoneyStrings` walks the corridor document's money fields and the boundary tests feed every string it returns to `decimal.NewFromString`, so a producer cannot emit a malformed figure. Its list is the headline money — the quote, cost-block and corridor scalars. `rungs[].marginal_cost`, `rungs[].marginal_from`, `rungs[].marginal_to` and `curve.points[].size`/`rate` are money on the wire that the walker does not yet collect, so a malformed one of those is caught by the scale guard above and by the wire tests, not by the boundary walk. A field added to the wire shape must be added to that walker and to the tables above.
+
+### Trend money fields
+
+`GET /api/corridor/trend` money fields are stored verbatim: `runstore` records the string the corridor document already rendered (`runstore/convert.go` derives a record from `route.CorridorJSON`, not from the engine's numbers), and the trend endpoint copies those stored strings into its response without re-formatting them. So every `runs[]` figure — `reference.mid`, `reference.secondary_mid`, `reference.divergence_pct`, `floor_loss_pct`, `floor_size`, `worst_loss_pct`, `worst_size`, `recommended_size`, `rungs[].send_amount`, `rungs[].loss_pct` — has exactly the scale listed above for the same field on `/api/corridor`, and reading a trend series compares like with like across runs.
+
+The trend endpoint's own derived statistics are the exception, and they are all fixed scale:
+
+| Field | Decimals on the wire | Rounding |
+|---|---|---|
+| `divergence_stats.mean_pct` | exactly 4 | half away from zero |
+| `divergence_stats.stddev_pct` | exactly 4 | half away from zero |
+| `divergence_stats.trend_magnitude_pct` | exactly 4 | half away from zero |
 
 ## `GET /api/corridor/trend`
 

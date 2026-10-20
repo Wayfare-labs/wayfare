@@ -41,15 +41,16 @@ type Server struct {
 	// the other means "checked, nothing found".
 	Checks *checks.Runner
 
-	// HistoryFirst serves the most recent stored run instead of measuring,
+	// History-first serves the most recent stored run instead of measuring,
 	// unless the caller asks for a live reading with ?live=1.
 	//
 	// This is for deployments that cannot hold a request open long enough to
 	// price a twelve-rung ladder — a serverless function, typically. The
 	// honesty properties are unchanged either way: a stored reading is
 	// labelled live:false and carries its age, and with no stored run the
-	// request errors rather than inventing one. What changes is only which
-	// is tried first.
+	// request answers 404 no_history rather than inventing one or silently
+	// becoming the measurement this mode exists to avoid. What changes is
+	// only which is tried first.
 	HistoryFirst bool
 
 	// Timeout bounds a single corridor measurement. A full ladder is a
@@ -283,8 +284,11 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	// for. The stored document is the same shape, so a client needs no
 	// special casing — see staleJSON.
 	if s.HistoryFirst && r.URL.Query().Get("live") == "" {
-		if stale, ok := s.staleFor(r.Context(), sendAsset.Code, recvAsset.Code,
-			pegBase+"/"+pegQuote); ok {
+		rec, found, err := s.latestRun(r.Context(), sendAsset.Code, recvAsset.Code)
+		pair := pegBase + "/" + pegQuote
+		switch {
+		case err == nil && found:
+			stale := staleJSON(rec, pair, time.Now().UTC())
 			writeJSON(w, r, http.StatusOK, stale)
 			log().Info("corridor measured",
 				"request_id", requestID(r.Context()),
@@ -297,9 +301,21 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 				"integrity", stale.Integrity,
 				"duration", time.Since(started).Round(time.Millisecond).String())
 			return
+		case err == nil && !found && s.Store != nil:
+			// A history-first instance with no run for this corridor. This is
+			// neither an outage nor a finding about the market: nothing has
+			// been swept yet, so there is nothing to report. Say exactly
+			// that, and name how to ask for a reading that does not exist
+			// (live=1) instead of spending a live measurement on a request
+			// the deployment mode says should be served from history.
+			writeError(w, r, http.StatusNotFound, codeNoHistory, fmt.Sprintf(
+				"no stored measurement for corridor %s on this history-first instance; request with live=1 to measure it now",
+				runstore.CorridorKey(sendAsset.Code, recvAsset.Code)))
+			return
 		}
-		// No history yet. Fall through and measure rather than erroring:
-		// a first deploy with an empty chain should still answer.
+		// The store could not be read, or none is configured. Neither is a
+		// statement that history is absent, so measure as an instance without
+		// history does.
 	}
 
 	rungs := len(sizes)
@@ -636,6 +652,7 @@ const (
 	codeStoreRead           = "store_read_error"
 	codeDivergenceHistory   = "divergence_history_error"
 	codeRateLimited         = "rate_limited"
+	codeNoHistory           = "no_history"
 )
 
 // checkParams rejects any query parameter outside the endpoint's allow-list.
@@ -762,14 +779,33 @@ func writeError(w http.ResponseWriter, r *http.Request, status int, code, msg st
 // the one that forgot would be the one that rendered a six-hour-old reading as
 // current.
 func (s *Server) staleFor(ctx context.Context, send, recv, pair string) (route.CorridorJSON, bool) {
-	if s.Store == nil {
-		return route.CorridorJSON{}, false
-	}
-	rec, err := s.Store.Latest(ctx, runstore.CorridorKey(send, recv))
-	if err != nil || rec == nil {
+	rec, found, err := s.latestRun(ctx, send, recv)
+	if err != nil || !found {
 		return route.CorridorJSON{}, false
 	}
 	return staleJSON(rec, pair, time.Now().UTC()), true
+}
+
+// latestRun reads a corridor's most recent record and separates the three
+// answers a store can give, which staleFor deliberately collapses: a reading
+// to serve, no reading, and no answer.
+//
+// found is true only when a record exists. An unreadable store is an error
+// rather than an absence — "I could not tell" is not "there is nothing" — and
+// a caller that reports no history from a read failure would turn its own
+// outage into a finding about the corridor.
+func (s *Server) latestRun(ctx context.Context, send, recv string) (*runstore.Record, bool, error) {
+	if s.Store == nil {
+		return nil, false, nil
+	}
+	rec, err := s.Store.Latest(ctx, runstore.CorridorKey(send, recv))
+	if err != nil {
+		return nil, false, err
+	}
+	if rec == nil {
+		return nil, false, nil
+	}
+	return rec, true, nil
 }
 
 // staleJSON renders a stored record in the wire shape, marked not live.

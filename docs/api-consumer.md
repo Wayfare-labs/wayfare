@@ -188,11 +188,18 @@ Two current limits worth knowing before reading `findings`:
 ### 6. An error body is not a measurement
 
 Errors have the shape `{"error": "...", "code": "..."}`. The code is what a
-program branches on (`measurement_failed`, `upstream_timeout`,
+program branches on (`measurement_failed`, `upstream_timeout`, `no_history`,
 `unknown_receive_asset`, `no_fiat_peg`, `invalid_query`, …); the message is what
 a human reads. Nothing is ever synthesised to fill a gap: when a live
 measurement fails and no stored run exists, the request errors rather than
 returning a plausible number.
+
+`no_history` deserves its own branch. A history-first instance returns it for a
+corridor it has never recorded, before contacting any upstream, so it is neither
+an outage (`measurement_failed`) nor a finding about the market (`NO-MARKET`,
+which arrives as a `200`). A consumer that retries on it is retrying a server
+that is working exactly as configured; the response names `live=1` as the
+request that does produce a reading.
 
 ---
 

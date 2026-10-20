@@ -714,9 +714,10 @@ const formatPct = (s) => {
   return isNaN(n) ? s : n.toFixed(2);
 };
 
-// emptyState renders a labelled absence of data (issue #300). Six distinct
+// emptyState renders a labelled absence of data (issue #300). Seven distinct
 // causes route through this one component so "empty" is never ambiguous: the
-// caller names the cause in the title and explains it in the body. It is
+// six #300 established, plus the no-history state #614 added. The
+// cause is named in the title and explained in the body. It is
 // deliberately neutral — an absence of data is not a verdict — so it uses the
 // availability-undetermined role, never a severity colour. The glyph is
 // aria-hidden because the words already say everything: it is decoration, and
@@ -2237,6 +2238,20 @@ async function loadCorridor(to) {
       });
       showErrorBanner(`Could not load corridor data: ${esc(e.message)}. Showing cached data (${formatReadingAge(cached.recorded_at)}).`);
       announce(`Could not load corridor data: ${e.message}. Showing cached reading from ${formatReadingAge(cached.recorded_at)}.`);
+    } else if (e.code === 'no_history') {
+      // A history-first instance with nothing recorded for this corridor is
+      // neither an outage nor a corridor that measured empty: it is an
+      // absence the reader can act on, so it gets its own empty state rather
+      // than the "could not load" banner (issue #614).
+      setOut(`<div class="panel">${emptyState({
+        glyph: '⏳',
+        title: 'No measurement recorded yet',
+        body: 'This instance answers from recorded history, and the scheduler ' +
+          'has not recorded a run for this corridor yet. Nothing is measured ' +
+          'on request and nothing is borrowed from another corridor. Choose ' +
+          'Measure live to take a reading now, or wait for the next sweep.',
+      })}</div>`);
+      announce('No measurement recorded yet for this corridor. Choose Measure live to take a reading now.');
     } else {
       showErrorBanner(
         `Could not load corridor data: ${esc(e.message)}. If the instance is still waking up, wait a moment and <a href="" style="color:inherit">reload</a>.`);
