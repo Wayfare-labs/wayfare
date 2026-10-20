@@ -552,6 +552,23 @@
    * that role's glyph but stays neutral — the distinction (structural absence,
    * not a bad price) is carried by the copy, per docs/state-vocabulary.md. */
   .empty-state.es-structural .es-glyph { border-color: var(--muted); color: var(--muted); }
+  .chain-head-block {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+    margin: var(--space-2) 0 0; font-size: var(--text-sm);
+  }
+  .chain-head-hash {
+    font-family: var(--mono); font-size: .8rem;
+    background: var(--neutral-soft); padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-xs); border: 1px solid var(--border);
+  }
+  .btn-copy, .btn-download {
+    font-size: .78rem; padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-xs); border: 1px solid var(--border);
+    background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  .panel-actions {
+    display: flex; gap: var(--space-2); margin-bottom: var(--space-3);
+  }
   .print-report { display: none; }
   @page { size: A4 landscape; margin: 8mm; }
   @media print {
@@ -644,6 +661,7 @@
     the bottom rung isolates the corridor's spread, the top rung exposes exhaustion.</span>
     <button id="run">Measure live</button>
     <button id="trend">Show trend</button>
+    <button id="market-structure">Market structure</button>
     <button id="print-report-button" type="button" disabled>Print report</button>
     <span id="status" class="sub" role="status"></span>
   </div>
@@ -1192,8 +1210,226 @@ function errorPanel(prefix, e) {
 // ladder. Purely a display label: the rendered figures are always the rungs
 // the API actually returned, whatever was requested.
 let lastRequestedSizes = '';
+let currentCorridorReading = null;
+let currentChainHeads = null;
 let printProvenancePromise = Promise.resolve();
 let printProvenanceRequest = 0;
+
+function copyText(text, btn) {
+  if (!text) return;
+  const original = btn ? btn.textContent : '';
+  const announceCopy = (msg) => {
+    announce(msg);
+    if (btn) {
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = original; }, 2000);
+    }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => announceCopy('Hash copied to clipboard.')).catch(() => announceCopy('Copy failed.'));
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      announceCopy('Hash copied to clipboard.');
+    } catch (e) {
+      announceCopy('Copy failed.');
+    }
+    document.body.removeChild(ta);
+  }
+}
+
+function csvCell(val) {
+  if (val === null || val === undefined) return '';
+  const s = String(val);
+  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function downloadLadderCSV() {
+  if (!currentCorridorReading || !Array.isArray(currentCorridorReading.rungs)) return;
+  const d = currentCorridorReading;
+  const corridor = (d.send_asset && d.receive_asset)
+    ? `${d.send_asset.code}-${d.receive_asset.code}`
+    : ($('to').value ? `USDC-${$('to').value}` : 'corridor');
+  const headers = ['send_amount', 'receive_amount', 'effective_rate', 'loss_pct', 'verdict', 'path_count', 'path', 'integrity', 'priced', 'error'];
+  const lines = [headers.join(',')];
+  for (const r of d.rungs) {
+    const q = r.quote || {};
+    const pathCount = (typeof r.path_count === 'number' && r.path_count > 0)
+      ? String(r.path_count)
+      : (typeof q.path_count === 'number' && q.path_count > 0 ? String(q.path_count) : '');
+    const row = [
+      csvCell(r.send_amount),
+      csvCell(q.receive_amount),
+      csvCell(q.effective_rate),
+      csvCell(q.loss_pct),
+      csvCell(q.verdict),
+      csvCell(pathCount),
+      csvCell(q.description),
+      csvCell(r.integrity),
+      csvCell(r.priced),
+      csvCell(r.error)
+    ];
+    lines.push(row.join(','));
+  }
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${corridor.toLowerCase()}-ladder.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  announce(`Downloaded ${corridor} ladder CSV.`);
+}
+
+function downloadLadderJSON() {
+  if (!currentCorridorReading) return;
+  const d = currentCorridorReading;
+  const corridor = (d.send_asset && d.receive_asset)
+    ? `${d.send_asset.code}-${d.receive_asset.code}`
+    : ($('to').value ? `USDC-${$('to').value}` : 'corridor');
+  const jsonStr = JSON.stringify(d, null, 2);
+  const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${corridor.toLowerCase()}-ladder.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  announce(`Downloaded ${corridor} ladder JSON.`);
+}
+
+async function fetchChainHeads() {
+  try {
+    const r = await fetch('/api/chain-heads');
+    if (!r.ok) return null;
+    const data = await r.json();
+    currentChainHeads = data.heads || [];
+    return currentChainHeads;
+  } catch (e) {
+    return null;
+  }
+}
+
+function renderChainHeadBlock(d) {
+  const corridor = (d.send_asset && d.receive_asset)
+    ? `${d.send_asset.code}-${d.receive_asset.code}`
+    : ($('to').value ? `USDC-${$('to').value}` : '');
+  let head = null;
+  if (currentChainHeads && corridor) {
+    head = currentChainHeads.find(h => h.corridor === corridor);
+  }
+  if (!head || !head.hash) {
+    return `<div class="chain-head-block" aria-label="Chain head verification">
+      <span class="m-state">UNDETERMINED</span>
+      <span class="sub">Chain head unknown for this corridor.</span>
+      <a href="docs/verify-store.md" target="_blank" rel="noopener">How to verify</a>
+    </div>`;
+  }
+  const fullHash = head.hash;
+  const shortHash = fullHash.length > 23 ? fullHash.slice(0, 20) + '…' : fullHash;
+  return `<div class="chain-head-block" aria-label="Chain head verification">
+    <span>Chain head:</span>
+    <code class="chain-head-hash" title="${esc(fullHash)}">${esc(shortHash)}</code>
+    <button type="button" class="btn-copy" onclick="copyText('${esc(fullHash)}', this)">Copy hash</button>
+    <a href="docs/verify-store.md" target="_blank" rel="noopener">How to verify</a>
+  </div>`;
+}
+
+function renderMarketStructure(d) {
+  const parts = [];
+  const corridorCount = typeof d.corridor_count === 'number'
+    ? String(d.corridor_count)
+    : '<span class="m-state">UNDETERMINED</span>';
+  const concentratedCount = typeof d.concentrated_corridor_count === 'number'
+    ? String(d.concentrated_corridor_count)
+    : '<span class="m-state">UNDETERMINED</span>';
+  const generatedAt = d.generated_at ? esc(d.generated_at) : '<span class="m-state">UNDETERMINED</span>';
+
+  parts.push(`<section class="panel" aria-label="Market structure overview">
+    <h2>Market structure</h2>
+    <p class="meta">Analysis of shared counterparty dependencies across corridors from the verified asset registry.</p>
+    <div style="display:flex; gap:var(--space-6); flex-wrap:wrap; margin:var(--space-3) 0">
+      <div><span class="sub">Corridors</span><div class="m-value">${corridorCount}</div></div>
+      <div><span class="sub">Concentrated corridors</span><div class="m-value">${concentratedCount}</div></div>
+      <div><span class="sub">Generated at</span><div class="m-value" style="font-size:1rem">${generatedAt}</div></div>
+    </div>
+  </section>`);
+
+  const concentrations = d.issuer_concentrations || {};
+  const issuers = Object.keys(concentrations);
+
+  if (issuers.length === 0) {
+    parts.push(`<section class="panel" aria-label="Concentrated issuers">
+      <h2>Issuer concentrations</h2>
+      ${emptyState({
+        glyph: '∅',
+        structural: true,
+        title: 'No concentrated issuers',
+        body: 'All registered corridors have distinct issuers. No single issuer backs multiple destinations.'
+      })}
+    </section>`);
+  } else {
+    const rows = issuers.map(issuer => {
+      const corridors = concentrations[issuer] || [];
+      const corridorBadges = corridors.map(c => `<code>${esc(c)}</code>`).join(' ');
+      return `<tr>
+        <td><code>${esc(issuer)}</code></td>
+        <td class="num">${corridors.length}</td>
+        <td>${corridorBadges}</td>
+      </tr>`;
+    }).join('');
+
+    parts.push(`<section class="panel" aria-label="Concentrated issuers">
+      <h2>Issuer concentrations</h2>
+      <div class="scroll">
+        <table aria-label="Issuers backing multiple corridor destinations">
+          <thead><tr>
+            <th scope="col">Issuer Account</th>
+            <th scope="col" class="num">Corridor count</th>
+            <th scope="col">Concentrated Corridors</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </section>`);
+  }
+
+  setOut(parts.join(''));
+  announce('Market structure view loaded.');
+}
+
+async function loadMarketStructure() {
+  const btn = $('market-structure');
+  if (btn) btn.disabled = true;
+  if ($('print-report-button')) $('print-report-button').disabled = true;
+  $('status').textContent = 'loading market structure…';
+  try {
+    const r = await fetch('/api/market-structure');
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    renderMarketStructure(data);
+    $('status').textContent = '';
+  } catch (e) {
+    showErrorBanner(`Could not load market structure: ${esc(e.message)}`);
+    announce(`Could not load market structure: ${e.message}`);
+    $('status').textContent = '';
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
 
 function render(d, options = {}) {
   currentCorridorReading = d;
