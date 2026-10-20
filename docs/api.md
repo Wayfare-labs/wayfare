@@ -302,8 +302,12 @@ Query parameters:
 - `from` — send asset code; defaults to `USDC`.
 - `to` — receive asset code; defaults to `NGNC`.
 - `limit` — positive whole number; defaults to 100 and is capped at 500.
+- `before` — positive whole number sequence cursor (`seq`); returns runs strictly before this sequence number (`seq < before`). Used with `limit` for backwards cursor pagination across history.
+- `pretty` — optional boolean (`pretty=1`); indents the JSON response.
 
 This endpoint reads stored history only; it never measures. It returns `200` with `count: 0` and `runs: []` for an empty history. Runs are returned oldest first. Each run carries its sequence, timestamp, integrity, dependencies, reference details, ladder summary, finding, and rung loss/verdict values.
+
+When older runs exist before the oldest run returned in the current page, the response includes a `next` field containing the sequence cursor to pass to `?before=` to fetch the next older page. When the earliest stored run has been reached, `next` is omitted.
 
 `integrity_transitions` is an always-present array of structural changes
 between consecutive runs in that returned window, in chronological order. A

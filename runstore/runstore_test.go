@@ -463,6 +463,58 @@ func TestLatestAndRecent(t *testing.T) {
 		t.Errorf("Recent = [%s %s], want [NO-MARKET DERIVATIVE] (newest first)",
 			recent[0].Integrity, recent[1].Integrity)
 	}
+
+	// RecentBefore with before=3 should return records before seq 3 (seq 2, 1), newest first.
+	before3, err := s.RecentBefore(ctx(), "USDC-NGNC", 5, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before3) != 2 {
+		t.Fatalf("RecentBefore(3) returned %d records, want 2", len(before3))
+	}
+	if before3[0].Seq != 2 || before3[1].Seq != 1 {
+		t.Errorf("RecentBefore(3) returned seqs [%d %d], want [2 1]", before3[0].Seq, before3[1].Seq)
+	}
+
+	// RecentBefore with limit: n=1, before=3 -> returns [2].
+	before3Limit1, err := s.RecentBefore(ctx(), "USDC-NGNC", 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before3Limit1) != 1 || before3Limit1[0].Seq != 2 {
+		t.Errorf("RecentBefore(limit=1, before=3) returned %v, want seq 2", before3Limit1)
+	}
+
+	// RecentBefore with before <= 0 matches Recent.
+	beforeZero, err := s.RecentBefore(ctx(), "USDC-NGNC", 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(beforeZero) != 2 || beforeZero[0].Seq != 4 || beforeZero[1].Seq != 3 {
+		t.Errorf("RecentBefore(before=0) = %v, want seq [4 3]", beforeZero)
+	}
+
+	// RecentBefore with before=1 (at genesis) -> empty.
+	beforeGenesis, err := s.RecentBefore(ctx(), "USDC-NGNC", 5, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(beforeGenesis) != 0 {
+		t.Errorf("RecentBefore(before=1) returned %d records, want 0", len(beforeGenesis))
+	}
+
+	// ReadOnly (OpenFS) parity.
+	ro, err := OpenFS(os.DirFS(dir), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	roBefore3, err := ro.RecentBefore(ctx(), "USDC-NGNC", 5, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roBefore3) != 2 || roBefore3[0].Seq != 2 || roBefore3[1].Seq != 1 {
+		t.Errorf("ReadOnly.RecentBefore(3) returned %v, want seq [2 1]", roBefore3)
+	}
 }
 
 // TestReopenResumesTheChain covers the restart path: a redeployed monitor must

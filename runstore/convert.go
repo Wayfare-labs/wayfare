@@ -138,9 +138,10 @@ func scoredAgainst(c route.CorridorJSON) string {
 // existed, and the scheduler runs without one.
 type Nop struct{}
 
-func (Nop) Append(context.Context, *Record) error                  { return nil }
-func (Nop) Latest(context.Context, string) (*Record, error)        { return nil, nil }
-func (Nop) Recent(context.Context, string, int) ([]*Record, error) { return nil, nil }
-func (Nop) All(context.Context, string) ([]*Record, error)         { return nil, nil }
-func (Nop) Verify(context.Context, string) error                   { return nil }
-func (Nop) Corridors(context.Context) ([]string, error)            { return nil, nil }
+func (Nop) Append(context.Context, *Record) error                               { return nil }
+func (Nop) Latest(context.Context, string) (*Record, error)                     { return nil, nil }
+func (Nop) Recent(context.Context, string, int) ([]*Record, error)              { return nil, nil }
+func (Nop) RecentBefore(context.Context, string, int, int64) ([]*Record, error) { return nil, nil }
+func (Nop) All(context.Context, string) ([]*Record, error)                      { return nil, nil }
+func (Nop) Verify(context.Context, string) error                                { return nil }
+func (Nop) Corridors(context.Context) ([]string, error)                         { return nil, nil }

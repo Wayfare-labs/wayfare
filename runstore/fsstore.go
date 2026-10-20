@@ -116,12 +116,23 @@ func (s *ReadOnly) Latest(_ context.Context, corridor string) (*Record, error) {
 	return rs[len(rs)-1], nil
 }
 
-// Recent returns up to n records, newest first.
-func (s *ReadOnly) Recent(_ context.Context, corridor string, n int) ([]*Record, error) {
+// RecentBefore returns up to n records strictly before sequence number
+// 'before' (i.e. Seq < before), newest first. When before <= 0, it returns
+// up to n most recent records.
+func (s *ReadOnly) RecentBefore(_ context.Context, corridor string, n int, before int64) ([]*Record, error) {
 	if n <= 0 {
 		return nil, nil
 	}
 	rs := s.records[strings.ToUpper(corridor)]
+	if before > 0 {
+		filtered := make([]*Record, 0, len(rs))
+		for _, r := range rs {
+			if r.Seq < before {
+				filtered = append(filtered, r)
+			}
+		}
+		rs = filtered
+	}
 	if len(rs) > n {
 		rs = rs[len(rs)-n:]
 	}
@@ -130,6 +141,11 @@ func (s *ReadOnly) Recent(_ context.Context, corridor string, n int) ([]*Record,
 		out = append(out, rs[i])
 	}
 	return out, nil
+}
+
+// Recent returns up to n records, newest first.
+func (s *ReadOnly) Recent(ctx context.Context, corridor string, n int) ([]*Record, error) {
+	return s.RecentBefore(ctx, corridor, n, 0)
 }
 
 // All returns the complete corridor history in chronological order

@@ -38,6 +38,7 @@ cause produces the same code on every endpoint. `TestErrorCodeContract` in
 | `no_fiat_peg` | 400 | The destination asset has no verified fiat peg, so there is no independent rate to score the corridor against. | `/api/corridor`, `/api/corridor/trend` |
 | `invalid_sizes` | 400 | The `sizes` parameter is not a comma-separated list of positive decimals, or names more than 24 sizes. | `/api/corridor` |
 | `invalid_limit` | 400 | The `limit` parameter is not a positive whole number. | `/api/corridor/trend` |
+| `invalid_cursor` | 400 | The `before` sequence cursor is not a positive whole number. | `/api/corridor/trend` |
 | `measurement_failed` | 502 | A live measurement failed at every size and there is no stored run to serve instead. | `/api/corridor` |
 | `upstream_timeout` | 504 | A live measurement exceeded the server's measurement timeout and there is no stored run to serve instead. | `/api/corridor` |
 | `no_history` | 404 | A history-first instance was asked for a corridor it has no stored measurement for, and was not asked to measure one. Nothing was attempted and nothing failed. | `/api/corridor` |

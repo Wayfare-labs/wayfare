@@ -649,6 +649,7 @@ const (
 	codeInvalidQuery        = "invalid_query"
 	codeInternalError       = "internal_error"
 	codeInvalidLimit        = "invalid_limit"
+	codeInvalidCursor       = "invalid_cursor"
 	codeStoreRead           = "store_read_error"
 	codeDivergenceHistory   = "divergence_history_error"
 	codeRateLimited         = "rate_limited"

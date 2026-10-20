@@ -247,8 +247,10 @@ func (s *FileStore) Latest(ctx context.Context, corridor string) (*Record, error
 	return s.tips[strings.ToUpper(corridor)], nil
 }
 
-// Recent returns up to n records, newest first.
-func (s *FileStore) Recent(ctx context.Context, corridor string, n int) ([]*Record, error) {
+// RecentBefore returns up to n records strictly before sequence number
+// 'before' (i.e. Seq < before), newest first. When before <= 0, it returns
+// up to n most recent records.
+func (s *FileStore) RecentBefore(ctx context.Context, corridor string, n int, before int64) ([]*Record, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -262,6 +264,15 @@ func (s *FileStore) Recent(ctx context.Context, corridor string, n int) ([]*Reco
 	if err != nil {
 		return nil, err
 	}
+	if before > 0 {
+		filtered := make([]*Record, 0, len(all))
+		for _, r := range all {
+			if r.Seq < before {
+				filtered = append(filtered, r)
+			}
+		}
+		all = filtered
+	}
 	if len(all) > n {
 		all = all[len(all)-n:]
 	}
@@ -270,6 +281,11 @@ func (s *FileStore) Recent(ctx context.Context, corridor string, n int) ([]*Reco
 		out = append(out, all[i])
 	}
 	return out, nil
+}
+
+// Recent returns up to n records, newest first.
+func (s *FileStore) Recent(ctx context.Context, corridor string, n int) ([]*Record, error) {
+	return s.RecentBefore(ctx, corridor, n, 0)
 }
 
 // All returns the complete corridor history in chronological order

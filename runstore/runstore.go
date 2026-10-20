@@ -262,6 +262,11 @@ type Store interface {
 	// Recent returns up to n most recent records, newest first.
 	Recent(ctx context.Context, corridor string, n int) ([]*Record, error)
 
+	// RecentBefore returns up to n records strictly before sequence number
+	// 'before' (i.e. Seq < before), newest first. When before <= 0, it
+	// returns up to n most recent records without cursor filtering.
+	RecentBefore(ctx context.Context, corridor string, n int, before int64) ([]*Record, error)
+
 	// All returns the complete corridor history in chronological order
 	// (oldest first). Use this when the full history is needed, e.g.
 	// for transition detection across the entire chain.
