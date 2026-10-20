@@ -715,9 +715,10 @@ const formatPct = (s) => {
   return isNaN(n) ? s : n.toFixed(2);
 };
 
-// emptyState renders a labelled absence of data (issue #300). Six distinct
+// emptyState renders a labelled absence of data (issue #300). Seven distinct
 // causes route through this one component so "empty" is never ambiguous: the
-// caller names the cause in the title and explains it in the body. It is
+// six #300 established, plus the no-history state #614 added. The
+// cause is named in the title and explained in the body. It is
 // deliberately neutral — an absence of data is not a verdict — so it uses the
 // availability-undetermined role, never a severity colour. The glyph is
 // aria-hidden because the words already say everything: it is decoration, and
@@ -1904,6 +1905,7 @@ function renderTrend() {
     <span class="case">&nbsp; latest of ${runs.length} stored run(s) &middot;
     ${esc(fmtRunTime(runs[0].recorded_at))} &rarr; ${esc(fmtRunTime(latest.recorded_at))} UTC</span>
     <p class="meta">${referenceSummary(runs)}</p>
+    ${divergenceSummary(d.divergence_stats, runs.length)}
   </div>`);
 
   parts.push(`<section class="panel" aria-label="Loss over time">
@@ -1947,6 +1949,55 @@ function renderTrend() {
     const sendCode = (d.send_asset && d.send_asset.code) || '';
     announce(`Trend chart now shows the ${trendState.size} ${sendCode} size.`.trim());
   });
+}
+
+// The reference-agreement bands from docs/glossary.md, applied to the mean
+// divergence over the trend window: ≤2% AGREE, 2–10% DISAGREE, >10%
+// MALFUNCTION. These are the glossary's band names, not a new corridor
+// grade: divergence describes the benchmark, never the corridor's quality.
+function divergenceBand(meanPct) {
+  if (meanPct <= 2)
+    return { name: 'AGREE', meaning: 'the providers agree within normal range' };
+  if (meanPct <= 10)
+    return { name: 'DISAGREE', meaning: 'the providers genuinely disagree' };
+  return { name: 'MALFUNCTION', meaning: 'the providers are measuring different things' };
+}
+
+// divergenceSummary is the compact benchmark-health line in the trend panel:
+// how far the two reference providers have diverged across the stored runs,
+// and how many of those runs actually had two providers to compare. Runs
+// scored against a single provider carry no divergence and are excluded
+// rather than counted as zero.
+//
+// Older servers predate divergence_stats. An absent object renders nothing:
+// no line, no zero, and no invented sample size.
+function divergenceSummary(stats, runCount) {
+  if (!stats) return '';
+
+  const observed = Number(stats.observation_count) || 0;
+  const sample = `${observed} of ${runCount} stored run(s) carried a divergence figure`;
+  if (!stats.determined || stats.mean_pct === undefined || stats.mean_pct === null)
+    return `<p class="meta trend-divergence">Reference divergence:
+      <strong>not determined</strong> &mdash; ${sample}${
+      stats.reason ? ` (${esc(stats.reason)})` : ''}. No mean is published
+      below the minimum sample size.</p>`;
+
+  const mean = parseFloat(stats.mean_pct);
+  // A malformed figure is not a band. Rather than label it MALFUNCTION by
+  // falling through the comparisons, omit the line.
+  if (isNaN(mean)) return '';
+  const band = divergenceBand(mean);
+  const spread = stats.stddev_pct === undefined || stats.stddev_pct === null
+    ? '' : ` (std dev ${formatPct(stats.stddev_pct)}%)`;
+  let trend = '';
+  if (stats.trend_direction) {
+    const magnitude = stats.trend_magnitude_pct === undefined || stats.trend_magnitude_pct === null
+      ? '' : ` by ${formatPct(stats.trend_magnitude_pct)} pp per run`;
+    trend = ` The trend is <strong>${esc(stats.trend_direction)}</strong>${magnitude}.`;
+  }
+  return `<p class="meta trend-divergence">Reference divergence:
+    <strong>${band.name}</strong> band (mean ${formatPct(stats.mean_pct)}%${spread})
+    &mdash; ${sample}. ${esc(band.meaning)}.${trend}</p>`;
 }
 
 // The reference each run was scored against, and whether it changed. A trend
@@ -2257,6 +2308,20 @@ async function loadCorridor(to) {
       });
       showErrorBanner(`Could not load corridor data: ${esc(e.message)}. Showing cached data (${formatReadingAge(cached.recorded_at)}).`);
       announce(`Could not load corridor data: ${e.message}. Showing cached reading from ${formatReadingAge(cached.recorded_at)}.`);
+    } else if (e.code === 'no_history') {
+      // A history-first instance with nothing recorded for this corridor is
+      // neither an outage nor a corridor that measured empty: it is an
+      // absence the reader can act on, so it gets its own empty state rather
+      // than the "could not load" banner (issue #614).
+      setOut(`<div class="panel">${emptyState({
+        glyph: '⏳',
+        title: 'No measurement recorded yet',
+        body: 'This instance answers from recorded history, and the scheduler ' +
+          'has not recorded a run for this corridor yet. Nothing is measured ' +
+          'on request and nothing is borrowed from another corridor. Choose ' +
+          'Measure live to take a reading now, or wait for the next sweep.',
+      })}</div>`);
+      announce('No measurement recorded yet for this corridor. Choose Measure live to take a reading now.');
     } else {
       showErrorBanner(
         `Could not load corridor data: ${esc(e.message)}. If the instance is still waking up, wait a moment and <a href="" style="color:inherit">reload</a>.`);

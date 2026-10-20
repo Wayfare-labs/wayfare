@@ -19,6 +19,13 @@ build: ## Build all binaries into bin/
 	@mkdir -p $(BIN)
 	$(GO) build -o $(BIN)/ $(PKGS)
 
+build-stamped: ## Build all binaries with build provenance stamped via -ldflags
+	@mkdir -p $(BIN)
+	$(GO) build -o $(BIN)/ $(PKGS) \
+		-ldflags="-s -w \
+			-X github.com/Wayfare-labs/wayfare/server.codeCommit='$(shell git rev-parse HEAD)' \
+			-X github.com/Wayfare-labs/wayfare/server.dataCommit='$(shell git log -1 --format=%H -- data/)'"
+
 test: ## Run tests
 	$(GO) test $(PKGS)
 

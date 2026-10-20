@@ -408,7 +408,10 @@ absence.
 With no stored run, the request **errors**. Nothing is ever synthesised to fill
 the gap. This is the one place a continuous monitor can quietly betray the
 project, so it has explicit tests: one asserting a stale response is labelled,
-and one asserting a missing one is an error rather than a plausible number.
+and one asserting a missing one is an error rather than a plausible number. On
+a `-history-first` deployment the missing-history case is answered before any
+upstream is contacted — `404` with `code: "no_history"` — so an unswept corridor
+is never reported as an outage (`docs/errors.md`).
 
 ---
 

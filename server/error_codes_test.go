@@ -121,6 +121,7 @@ func TestErrorCodesAreLowerSnakeCase(t *testing.T) {
 		codeStoreRead,
 		codeDivergenceHistory,
 		codeRateLimited,
+		codeNoHistory,
 	}
 	for _, c := range codes {
 		for _, r := range c {

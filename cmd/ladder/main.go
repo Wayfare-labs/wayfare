@@ -58,7 +58,7 @@ var corridors = map[string]corridor{
 func main() {
 	var (
 		to        = flag.String("to", "NGNC", "destination asset code (NGNC, GHSC, KESC, NGNT)")
-		sizesFlag = flag.String("sizes", "0.1,1,5,10,25,50,100,250,500,1000,2500,5000",
+		sizesFlag = flag.String("sizes", defaultSizesFlag(),
 			"comma-separated send amounts in USDC")
 		jsonOut = flag.Bool("json", false, "emit JSON on stdout instead of the text table")
 		record  = flag.String("record", "",
@@ -210,6 +210,21 @@ func main() {
 	if !result.Viable() {
 		os.Exit(1)
 	}
+}
+
+// defaultSizesFlag renders the shared ladder as the comma-separated form the
+// -sizes flag accepts.
+//
+// The default is derived from route.DefaultSizes rather than written out as a
+// second literal. The CLI, the server and the depth metric must measure the
+// same ladder; a literal here would silently drift when the shared definition
+// changed, which is the class of divergence #390 removed everywhere else.
+func defaultSizesFlag() string {
+	parts := make([]string, len(route.DefaultSizes))
+	for i, size := range route.DefaultSizes {
+		parts[i] = size.String()
+	}
+	return strings.Join(parts, ",")
 }
 
 // parseSizes reads the -sizes flag. A malformed entry is reported and

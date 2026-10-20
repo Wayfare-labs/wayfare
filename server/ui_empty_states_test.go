@@ -7,7 +7,8 @@ import (
 
 // TestUIHasDistinctEmptyStates guards the empty-state component added for
 // issue #300 the way the other UI tests guard their surfaces: the whole point
-// of the issue is that a reader can tell apart six different absences, so a
+// of the issue is that a reader can tell apart the absences — six when #300
+// shipped, seven since #614 added the no-history state — so a
 // change that collapsed them back into one generic message must fail here.
 //
 // These are source-text assertions, not rendering ones — they cannot tell you
@@ -36,6 +37,7 @@ func TestUIHasDistinctEmptyStates(t *testing.T) {
 		"No corridor selected",        // nothing chosen yet
 		"No market exists",            // structural absence (NO-MARKET)
 		"No stored runs yet",          // insufficient observations (trend)
+		"No measurement recorded yet", // nothing swept (issue #614, no_history)
 		"Not available in this build", // capability gap (unsupported request)
 	} {
 		if !strings.Contains(page, want) {
