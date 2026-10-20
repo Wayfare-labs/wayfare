@@ -15,11 +15,16 @@ package server
 //   - money crosses the wire as quoted strings, at every level of a response
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Wayfare-labs/wayfare/runstore"
 )
 
 // jsonBody does a GET, asserts the response advertises application/json, and
@@ -132,6 +137,18 @@ func TestAssetsJSONContentType(t *testing.T) {
 	jsonBody(t, srv.URL+"/api/assets")
 }
 
+// TestMarketStructureJSONContentType pins the market-structure endpoint's content type.
+func TestMarketStructureJSONContentType(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+	jsonBody(t, srv.URL+"/api/market-structure")
+}
+
+// TestChainHeadsJSONContentType pins the chain-heads endpoint's content type.
+func TestChainHeadsJSONContentType(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+	jsonBody(t, srv.URL+"/api/chain-heads")
+}
+
 // TestErrorResponseContentType pins that even an error response is JSON, so a
 // client can rely on one decoder for the whole endpoint.
 func TestErrorResponseContentType(t *testing.T) {
@@ -170,12 +187,13 @@ func TestErrorResponseShape(t *testing.T) {
 		t.Fatalf("decoding error body: %v", err)
 	}
 
-	// Exactly two keys: the prose "error" and its machine-readable "code"
-	// (backlog #16 / issue #86), so a client can switch on the cause instead
-	// of substring-matching English. Anything measurement-shaped on an error
-	// path would let an SRE dashboard accidentally parse it as data.
-	if len(body) != 2 {
-		t.Errorf("error body has %d keys, want exactly 2 (error, code): %v", len(body), body)
+	// Exactly three keys: the prose "error", its machine-readable "code"
+	// (backlog #16 / issue #86), and the tracing "request_id" (issue #619),
+	// so a client can switch on the cause instead of substring-matching English,
+	// and correlate client errors with server logs. Anything measurement-shaped
+	// on an error path would let an SRE dashboard accidentally parse it as data.
+	if len(body) != 3 {
+		t.Errorf("error body has %d keys, want exactly 3 (error, code, request_id): %v", len(body), body)
 	}
 	raw, ok := body["error"]
 	if !ok {
@@ -190,6 +208,13 @@ func TestErrorResponseShape(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(code), `"`) {
 		t.Errorf("code = %s, want a string code", code)
+	}
+	reqID, ok := body["request_id"]
+	if !ok {
+		t.Fatal("error body must carry the request_id key")
+	}
+	if !strings.HasPrefix(string(reqID), `"`) {
+		t.Errorf("request_id = %s, want a string request_id", reqID)
 	}
 
 	// Never a measurement-shaped field alongside the error.
@@ -382,5 +407,90 @@ func TestMoneyIsQuotedEverywhere(t *testing.T) {
 			requireQuoted(t, q, "effective_rate")
 			requireQuoted(t, q, "loss_pct")
 		}
+	}
+}
+
+// TestMarketStructureResponseShape pins the schema for /api/market-structure (issue #618).
+// /api/market-structure exposes structural facts (concentrations, counts, generated_at)
+// rather than pricing decimals; this asserts all schema fields are present and typed correctly.
+func TestMarketStructureResponseShape(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+	raw := jsonBody(t, srv.URL+"/api/market-structure")
+	body := objectFields(t, raw)
+
+	for _, field := range []string{"issuer_concentrations", "corridor_count", "concentrated_corridor_count", "generated_at"} {
+		if _, ok := body[field]; !ok {
+			t.Errorf("market-structure response is missing required field %q", field)
+		}
+	}
+
+	var parsed MarketStructureJSON
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("decoding market-structure JSON: %v", err)
+	}
+
+	if parsed.GeneratedAt == "" {
+		t.Error("generated_at must not be empty")
+	}
+	if parsed.CorridorCount <= 0 {
+		t.Errorf("corridor_count = %d, want > 0", parsed.CorridorCount)
+	}
+}
+
+// TestChainHeadsResponseShapeAndDecimals pins the schema and decimal string
+// representations for /api/chain-heads (issue #618).
+func TestChainHeadsResponseShapeAndDecimals(t *testing.T) {
+	// Build server with a store holding at least one recorded corridor run
+	dir := t.TempDir()
+	store, err := runstore.Open(dir)
+	if err != nil {
+		t.Fatalf("runstore.Open: %v", err)
+	}
+	rec := &runstore.Record{
+		Corridor:     "USDC-NGNC",
+		Integrity:    "DIRECT",
+		FloorLossPct: "3.7200",
+		FloorSize:    "100.0000000",
+		WorstLossPct: "3.7200",
+		WorstSize:    "100.0000000",
+		RecordedAt:   time.Now().UTC(),
+	}
+	if err := store.Append(context.Background(), rec); err != nil {
+		t.Fatalf("store.Append: %v", err)
+	}
+
+	s := &Server{
+		Store: store,
+	}
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	raw := jsonBody(t, ts.URL+"/api/chain-heads")
+	body := objectFields(t, raw)
+
+	if _, ok := body["heads"]; !ok {
+		t.Fatal("chain-heads response is missing 'heads' key")
+	}
+
+	var rawHeads struct {
+		Heads []map[string]json.RawMessage `json:"heads"`
+	}
+	if err := json.Unmarshal(raw, &rawHeads); err != nil {
+		t.Fatalf("decoding raw heads: %v", err)
+	}
+
+	if len(rawHeads.Heads) == 0 {
+		t.Fatal("expected at least one head in chain-heads response")
+	}
+
+	for _, head := range rawHeads.Heads {
+		for _, required := range []string{"corridor", "seq", "recorded_at", "hash"} {
+			if _, ok := head[required]; !ok {
+				t.Errorf("head missing field %q", required)
+			}
+		}
+		requireQuoted(t, head, "corridor")
+		requireQuoted(t, head, "recorded_at")
+		requireQuoted(t, head, "hash")
 	}
 }

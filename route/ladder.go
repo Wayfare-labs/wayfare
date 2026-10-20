@@ -208,9 +208,10 @@ func rungReason(r Rung) string {
 //
 // # What a half-measured ladder means
 //
-// Ladder returns a result even when only some rungs could be priced; it
-// returns an error only when the run as a whole was impossible, such as a
-// cancelled context. The contract for the in-between case:
+// Ladder returns a result even when only some rungs could be priced, including
+// when a ladder run times out midway after pricing one or more rungs. It
+// returns an error only when the run as a whole yielded no measurements (such as
+// an upfront cancellation or every rung failing). The contract for the in-between case:
 //
 //   - Every figure — Floor, WorstLoss, Recommended, the reference fields —
 //     describes only the sizes that were measured. An unmeasured size
@@ -291,6 +292,22 @@ func (l *LadderResult) UnmeasuredSizes() []decimal.Decimal {
 // established, and Failed, PartiallyFailed and UnmeasuredSizes separate a
 // full curve from a partial one from no measurement at all.
 func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if e.RefRate == nil {
+		return nil, fmt.Errorf("route: a reference rate provider is required; " +
+			"without one the engine can rank routes but cannot tell a good one from a bad one")
+	}
+
+	// Fail fast: verify the reference rate is available before making any
+	// round trips to Horizon. If the benchmark provider is down or disagreeing,
+	// none of the rungs can be scored anyway.
+	ref, err := e.RefRate.Rate(ctx, req.ReferenceBase, req.ReferenceQuote)
+	if err != nil {
+		return nil, fmt.Errorf("route: reference rate unavailable: %w", err)
+	}
+
 	sizes := req.Sizes
 	if len(sizes) == 0 {
 		sizes = DefaultSizes
@@ -311,8 +328,13 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 		wg.Add(1)
 		go func(i int, size decimal.Decimal) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				out.Rungs[i] = Rung{SendAmount: size, Err: ctx.Err()}
+				return
+			}
 
 			res, err := e.Quote(ctx, Request{
 				SendAsset:      req.SendAsset,
@@ -327,10 +349,26 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 	wg.Wait()
 
 	if err := ctx.Err(); err != nil {
-		// The partial result is returned alongside the error so a caller can
-		// report which rungs finished (CompletedSizes). It is not summarised
-		// and must not be presented as a measurement.
-		return out, err
+		// Populate uncompleted rungs with the cancellation/timeout error so
+		// that they are explicitly recorded as unmeasured.
+		for i := range out.Rungs {
+			if out.Rungs[i].Result == nil && out.Rungs[i].Err == nil {
+				out.Rungs[i].Err = err
+			}
+		}
+		// If every rung failed, nothing was learned: return the error as before.
+		// But if at least one rung priced, summarise what was learned and return
+		// the partial ladder result with explicit unmeasured rungs.
+		if out.Failed() {
+			return out, err
+		}
+	}
+	// Initialise reference benchmark from the pre-fetched rate in case
+	// some rungs failed before reaching Quote.
+	if out.ReferenceMid.IsZero() && !ref.Mid.IsZero() {
+		out.ReferenceMid = ref.Mid
+		out.ReferenceSource = ref.Source
+		out.Reference = ref
 	}
 	out.summarise()
 	return out, nil

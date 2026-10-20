@@ -2,10 +2,12 @@ package route_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -211,5 +213,110 @@ func TestPartialLadderStillRecommendsWhatItMeasured(t *testing.T) {
 	}
 	if !res.RecommendedSize.Equal(decimal.RequireFromString("1")) {
 		t.Errorf("RecommendedSize = %s, want the measured size 1", res.RecommendedSize)
+	}
+}
+
+type errRateProvider struct {
+	err error
+}
+
+func (p errRateProvider) Name() string { return "failing-provider" }
+func (p errRateProvider) Rate(context.Context, string, string) (refrate.Rate, error) {
+	return refrate.Rate{}, p.err
+}
+
+// TestLadderFailFastOnReferenceFailure verifies that when the reference provider
+// fails, Ladder short-circuits immediately with zero requests made to Horizon.
+func TestLadderFailFastOnReferenceFailure(t *testing.T) {
+	var horizonCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		horizonCalls++
+		http.Error(w, "should not be called", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	e := &route.Engine{
+		DEX:     &dex.Client{HorizonURL: srv.URL},
+		RefRate: errRateProvider{err: errors.New("upstream connection refused")},
+	}
+
+	_, err := e.Ladder(context.Background(), route.LadderRequest{
+		SendAsset:      asset.USDC(),
+		ReceiveAsset:   asset.NGNC(),
+		ReferenceBase:  "USD",
+		ReferenceQuote: "NGN",
+		Sizes:          []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(10)},
+	})
+	if err == nil {
+		t.Fatal("expected error when reference provider fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "reference rate unavailable") {
+		t.Errorf("err = %q, want it to contain 'reference rate unavailable'", err.Error())
+	}
+	if horizonCalls != 0 {
+		t.Errorf("horizon was called %d times; expected exactly 0 calls when reference provider fails", horizonCalls)
+	}
+}
+
+// TestLadderReturnsPartialOnTimeout checks that when a ladder times out after
+// some rungs completed, it returns the partial ladder with priced rungs, explicit
+// unmeasured rungs, and a finding qualified by the missing rungs.
+func TestLadderReturnsPartialOnTimeout(t *testing.T) {
+	// Fast for small amount, slow for large amount so it times out.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		amount := r.URL.Query().Get("source_amount")
+		d, _ := decimal.NewFromString(amount)
+		if d.GreaterThanOrEqual(decimal.NewFromInt(10)) {
+			// Delay until cancelled
+			<-r.Context().Done()
+			return
+		}
+		dest := d.Mul(decimal.RequireFromString("1349"))
+		_, _ = w.Write([]byte(`{"_embedded":{"records":[{
+			"source_asset_type":"credit_alphanum4","source_asset_code":"USDC",
+			"source_amount":"` + amount + `",
+			"destination_asset_type":"credit_alphanum4","destination_asset_code":"NGNC",
+			"destination_amount":"` + dest.String() + `","path":[]}]}}`))
+	}))
+	defer srv.Close()
+
+	e := &route.Engine{
+		DEX: &dex.Client{HorizonURL: srv.URL},
+		RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+			"USD/NGN": decimal.RequireFromString("1350"),
+		}),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	res, err := e.Ladder(ctx, route.LadderRequest{
+		SendAsset:      asset.USDC(),
+		ReceiveAsset:   asset.NGNC(),
+		ReferenceBase:  "USD",
+		ReferenceQuote: "NGN",
+		Sizes:          []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(100)},
+	})
+	if err != nil {
+		t.Fatalf("Ladder returned unexpected error on partial timeout: %v", err)
+	}
+	if res == nil {
+		t.Fatal("Ladder returned nil result")
+	}
+	if !res.PartiallyFailed() {
+		t.Error("PartiallyFailed = false, want true")
+	}
+	if len(res.CompletedSizes()) != 1 || !res.CompletedSizes()[0].Equal(decimal.NewFromInt(1)) {
+		t.Errorf("CompletedSizes = %v, want [1]", res.CompletedSizes())
+	}
+	unmeasured := res.UnmeasuredSizes()
+	if len(unmeasured) != 1 || !unmeasured[0].Equal(decimal.NewFromInt(100)) {
+		t.Errorf("UnmeasuredSizes = %v, want [100]", unmeasured)
+	}
+	if res.Recommended == nil {
+		t.Error("expected priced rung to produce a recommendation")
+	}
+	if !strings.Contains(res.Finding, "could not be measured") {
+		t.Errorf("Finding = %q, want qualification about unmeasured sizes", res.Finding)
 	}
 }

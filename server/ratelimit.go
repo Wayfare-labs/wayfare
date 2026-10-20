@@ -158,6 +158,7 @@ func (rl *RateLimiter) middleware(next http.Handler) http.Handler {
 			writeError(w, r, http.StatusTooManyRequests, codeRateLimited,
 				"rate limit exceeded; retry after the delay in the Retry-After header")
 			log().Info("request rate limited",
+				"request_id", requestID(r.Context()),
 				"client", key,
 				"path", r.URL.Path,
 				"retry_after", retryAfter.Round(time.Millisecond).String())

@@ -552,22 +552,53 @@
    * that role's glyph but stays neutral — the distinction (structural absence,
    * not a bad price) is carried by the copy, per docs/state-vocabulary.md. */
   .empty-state.es-structural .es-glyph { border-color: var(--muted); color: var(--muted); }
-  .chain-head-block {
-    display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
-    margin: var(--space-2) 0 0; font-size: var(--text-sm);
-  }
-  .chain-head-hash {
-    font-family: var(--mono); font-size: .8rem;
-    background: var(--neutral-soft); padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-xs); border: 1px solid var(--border);
-  }
-  .btn-copy, .btn-download {
-    font-size: .78rem; padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-xs); border: 1px solid var(--border);
-    background: var(--panel); color: var(--ink); cursor: pointer;
-  }
-  .panel-actions {
-    display: flex; gap: var(--space-2); margin-bottom: var(--space-3);
+  .print-report { display: none; }
+  @page { size: A4 landscape; margin: 8mm; }
+  @media print {
+    html, body { background: #fff !important; color: #111 !important; }
+    body { font: 8pt/1.25 "Georgia", "Times New Roman", serif; }
+    .wrap { max-width: none; margin: 0; padding: 0; }
+    header, .skip-link, .controls, .compare-controls, #compare-out, footer,
+    #out > :not(.print-report) { display: none !important; }
+    #out { display: block; margin: 0; padding: 0; }
+    .print-report {
+      display: block !important; color: #111 !important; background: #fff !important;
+      font-size: 8pt; break-inside: avoid; page-break-inside: avoid;
+    }
+    .print-report * { color: inherit !important; box-shadow: none !important; text-shadow: none !important; }
+    .print-report-header {
+      display: flex; align-items: end; justify-content: space-between;
+      border-bottom: 1.5pt solid #0f766e; padding-bottom: 5pt; margin-bottom: 6pt;
+    }
+    .print-report-header h1 { font: 700 19pt/1.1 Georgia, "Times New Roman", serif; margin: 0; }
+    .print-kicker { font: 700 7pt/1.2 var(--mono); margin: 0 0 3pt; }
+    .print-report-header p:last-child { margin: 0; font: 700 9pt/1.2 var(--mono); }
+    .print-summary {
+      display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 5pt; margin: 0 0 6pt;
+    }
+    .print-summary > div, .print-provenance {
+      border: .5pt solid #94a3b8; padding: 4pt 5pt; min-width: 0;
+    }
+    .print-summary dt, .print-provenance dt {
+      font: 700 6.5pt/1.2 var(--mono); text-transform: uppercase; margin-bottom: 2pt;
+    }
+    .print-summary dd, .print-provenance dd { margin: 0; overflow-wrap: anywhere; }
+    .print-summary dd { font: 700 9pt/1.2 var(--mono); }
+    .print-report h2 { font: 700 8pt/1.2 var(--mono); margin: 0 0 3pt; }
+    .print-provenance { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4pt 8pt; margin-bottom: 6pt; }
+    .print-provenance p { margin: 0; overflow-wrap: anywhere; }
+    .print-ladder { margin-top: 5pt; }
+    .print-ladder table { table-layout: fixed; font: 6.5pt/1.15 var(--mono); }
+    .print-ladder caption { padding-bottom: 2pt; font-size: 6.5pt; }
+    .print-ladder th, .print-ladder td { padding: 2pt 3pt; border-color: #aab4c0; }
+    .print-ladder th { font-size: 6pt; }
+    .print-ladder tr { break-inside: avoid; page-break-inside: avoid; }
+    .print-chain { display: flex; justify-content: space-between; gap: 8pt; border-top: .5pt solid #94a3b8; margin-top: 5pt; padding-top: 4pt; font-size: 6.5pt; }
+    .print-chain strong { font-family: var(--mono); overflow-wrap: anywhere; }
+    .print-footnote { margin: 3pt 0 0; font-size: 6pt; }
+    a { color: #111 !important; text-decoration: none !important; }
+    * { animation: none !important; }
   }
 </style>
 <script>
@@ -613,7 +644,7 @@
     the bottom rung isolates the corridor's spread, the top rung exposes exhaustion.</span>
     <button id="run">Measure live</button>
     <button id="trend">Show trend</button>
-    <button id="market-structure">Market structure</button>
+    <button id="print-report-button" type="button" disabled>Print report</button>
     <span id="status" class="sub" role="status"></span>
   </div>
 
@@ -671,6 +702,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, c => (
 function setOut(html) {
   const out = $('out');
   const focusWasInside = out.contains(document.activeElement);
+  $('print-report-button').disabled = true;
   out.innerHTML = html;
   if (focusWasInside) out.focus();
 }
@@ -1158,223 +1190,9 @@ function errorPanel(prefix, e) {
 // The sizes the last live measurement asked for, '' when it used the default
 // ladder. Purely a display label: the rendered figures are always the rungs
 // the API actually returned, whatever was requested.
-let currentCorridorReading = null;
-let currentChainHeads = null;
-
-function copyText(text, btn) {
-  if (!text) return;
-  const original = btn ? btn.textContent : '';
-  const announceCopy = (msg) => {
-    announce(msg);
-    if (btn) {
-      btn.textContent = 'Copied!';
-      setTimeout(() => { btn.textContent = original; }, 2000);
-    }
-  };
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(() => announceCopy('Hash copied to clipboard.')).catch(() => announceCopy('Copy failed.'));
-  } else {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    try {
-      document.execCommand('copy');
-      announceCopy('Hash copied to clipboard.');
-    } catch (e) {
-      announceCopy('Copy failed.');
-    }
-    document.body.removeChild(ta);
-  }
-}
-
-function csvCell(val) {
-  if (val === null || val === undefined) return '';
-  const s = String(val);
-  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
-
-function downloadLadderCSV() {
-  if (!currentCorridorReading || !Array.isArray(currentCorridorReading.rungs)) return;
-  const d = currentCorridorReading;
-  const corridor = (d.send_asset && d.receive_asset)
-    ? `${d.send_asset.code}-${d.receive_asset.code}`
-    : ($('to').value ? `USDC-${$('to').value}` : 'corridor');
-  const headers = ['send_amount', 'receive_amount', 'effective_rate', 'loss_pct', 'verdict', 'path_count', 'path', 'integrity', 'priced', 'error'];
-  const lines = [headers.join(',')];
-  for (const r of d.rungs) {
-    const q = r.quote || {};
-    const pathCount = (typeof r.path_count === 'number' && r.path_count > 0)
-      ? String(r.path_count)
-      : (typeof q.path_count === 'number' && q.path_count > 0 ? String(q.path_count) : '');
-    const row = [
-      csvCell(r.send_amount),
-      csvCell(q.receive_amount),
-      csvCell(q.effective_rate),
-      csvCell(q.loss_pct),
-      csvCell(q.verdict),
-      csvCell(pathCount),
-      csvCell(q.description),
-      csvCell(r.integrity),
-      csvCell(r.priced),
-      csvCell(r.error)
-    ];
-    lines.push(row.join(','));
-  }
-  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${corridor.toLowerCase()}-ladder.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  announce(`Downloaded ${corridor} ladder CSV.`);
-}
-
-function downloadLadderJSON() {
-  if (!currentCorridorReading) return;
-  const d = currentCorridorReading;
-  const corridor = (d.send_asset && d.receive_asset)
-    ? `${d.send_asset.code}-${d.receive_asset.code}`
-    : ($('to').value ? `USDC-${$('to').value}` : 'corridor');
-  const jsonStr = JSON.stringify(d, null, 2);
-  const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${corridor.toLowerCase()}-ladder.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  announce(`Downloaded ${corridor} ladder JSON.`);
-}
-
-async function fetchChainHeads() {
-  try {
-    const r = await fetch('/api/chain-heads');
-    if (!r.ok) return null;
-    const data = await r.json();
-    currentChainHeads = data.heads || [];
-    return currentChainHeads;
-  } catch (e) {
-    return null;
-  }
-}
-
-function renderChainHeadBlock(d) {
-  const corridor = (d.send_asset && d.receive_asset)
-    ? `${d.send_asset.code}-${d.receive_asset.code}`
-    : ($('to').value ? `USDC-${$('to').value}` : '');
-  let head = null;
-  if (currentChainHeads && corridor) {
-    head = currentChainHeads.find(h => h.corridor === corridor);
-  }
-  if (!head || !head.hash) {
-    return `<div class="chain-head-block" aria-label="Chain head verification">
-      <span class="m-state">UNDETERMINED</span>
-      <span class="sub">Chain head unknown for this corridor.</span>
-      <a href="docs/verify-store.md" target="_blank" rel="noopener">How to verify</a>
-    </div>`;
-  }
-  const fullHash = head.hash;
-  const shortHash = fullHash.length > 23 ? fullHash.slice(0, 20) + '…' : fullHash;
-  return `<div class="chain-head-block" aria-label="Chain head verification">
-    <span>Chain head:</span>
-    <code class="chain-head-hash" title="${esc(fullHash)}">${esc(shortHash)}</code>
-    <button type="button" class="btn-copy" onclick="copyText('${esc(fullHash)}', this)">Copy hash</button>
-    <a href="docs/verify-store.md" target="_blank" rel="noopener">How to verify</a>
-  </div>`;
-}
-
-function renderMarketStructure(d) {
-  const parts = [];
-  const corridorCount = typeof d.corridor_count === 'number'
-    ? String(d.corridor_count)
-    : '<span class="m-state">UNDETERMINED</span>';
-  const concentratedCount = typeof d.concentrated_corridor_count === 'number'
-    ? String(d.concentrated_corridor_count)
-    : '<span class="m-state">UNDETERMINED</span>';
-  const generatedAt = d.generated_at ? esc(d.generated_at) : '<span class="m-state">UNDETERMINED</span>';
-
-  parts.push(`<section class="panel" aria-label="Market structure overview">
-    <h2>Market structure</h2>
-    <p class="meta">Analysis of shared counterparty dependencies across corridors from the verified asset registry.</p>
-    <div style="display:flex; gap:var(--space-6); flex-wrap:wrap; margin:var(--space-3) 0">
-      <div><span class="sub">Corridors</span><div class="m-value">${corridorCount}</div></div>
-      <div><span class="sub">Concentrated corridors</span><div class="m-value">${concentratedCount}</div></div>
-      <div><span class="sub">Generated at</span><div class="m-value" style="font-size:1rem">${generatedAt}</div></div>
-    </div>
-  </section>`);
-
-  const concentrations = d.issuer_concentrations || {};
-  const issuers = Object.keys(concentrations);
-
-  if (issuers.length === 0) {
-    parts.push(`<section class="panel" aria-label="Concentrated issuers">
-      <h2>Issuer concentrations</h2>
-      ${emptyState({
-        glyph: '∅',
-        structural: true,
-        title: 'No concentrated issuers',
-        body: 'All registered corridors have distinct issuers. No single issuer backs multiple destinations.'
-      })}
-    </section>`);
-  } else {
-    const rows = issuers.map(issuer => {
-      const corridors = concentrations[issuer] || [];
-      const corridorBadges = corridors.map(c => `<code>${esc(c)}</code>`).join(' ');
-      return `<tr>
-        <td><code>${esc(issuer)}</code></td>
-        <td class="num">${corridors.length}</td>
-        <td>${corridorBadges}</td>
-      </tr>`;
-    }).join('');
-
-    parts.push(`<section class="panel" aria-label="Concentrated issuers">
-      <h2>Issuer concentrations</h2>
-      <div class="scroll">
-        <table aria-label="Issuers backing multiple corridor destinations">
-          <thead><tr>
-            <th scope="col">Issuer Account</th>
-            <th scope="col" class="num">Corridor count</th>
-            <th scope="col">Concentrated Corridors</th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    </section>`);
-  }
-
-  setOut(parts.join(''));
-  announce('Market structure view loaded.');
-}
-
-async function loadMarketStructure() {
-  const btn = $('market-structure');
-  if (btn) btn.disabled = true;
-  $('status').textContent = 'loading market structure…';
-  try {
-    const r = await fetch('/api/market-structure');
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-    renderMarketStructure(data);
-    $('status').textContent = '';
-  } catch (e) {
-    showErrorBanner(`Could not load market structure: ${esc(e.message)}`);
-    announce(`Could not load market structure: ${e.message}`);
-    $('status').textContent = '';
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
+let lastRequestedSizes = '';
+let printProvenancePromise = Promise.resolve();
+let printProvenanceRequest = 0;
 
 function render(d, options = {}) {
   currentCorridorReading = d;
@@ -1430,8 +1248,88 @@ function render(d, options = {}) {
   if (d.findings) parts.push(findings(d.findings));
 
   parts.push(caseStudy(d));
+  parts.unshift(printReport(d, { cached, fetchedAt, recordedAt }));
   $('out').innerHTML = parts.join('');
+  $('print-report-button').disabled = false;
+  printProvenancePromise = refreshPrintProvenance(d);
   $('out').focus({ preventScroll: true });
+}
+
+function printReport(d, options) {
+  const from = d.send_asset?.code || 'USDC';
+  const to = d.receive_asset?.code || 'Unknown';
+  const recordedAt = d.stale?.recorded_at || options.recordedAt || d.measured_at || 'not supplied';
+  const recordedLabel = options.cached || !d.live ? 'Recorded at' : 'Measured at';
+  const floor = d.floor ?? d.floor_loss_pct ?? 'not supplied';
+  const floorSize = d.floor_size || 'not supplied';
+  const worst = d.worst_loss ?? d.worst_loss_pct ?? 'not supplied';
+  const worstSize = d.worst_size || 'not supplied';
+  const dependencies = (d.depends_on || []).map(a => a.code || a).filter(Boolean).join(', ') || 'None recorded';
+  const reference = `${d.reference_pair || 'Reference'} · ${d.reference_mid || 'not supplied'} · ${d.reference_source || 'provider not supplied'}`;
+  const secondary = d.reference_secondary_mid
+    ? `<p><strong>Secondary:</strong> ${esc(d.reference_secondary_mid)} via ${esc(d.reference_secondary_source || 'provider not supplied')} · as of ${esc(d.reference_secondary_as_of || 'not supplied')}</p>`
+    : '';
+  const cachedAt = options.cached && options.fetchedAt
+    ? `<p><strong>Browser cached at:</strong> ${esc(options.fetchedAt)}</p>` : '';
+
+  return `<article class="print-report" aria-label="Printable corridor report">
+    <div class="print-report-header">
+      <div><p class="print-kicker">WAYFARE / CORRIDOR REPORT</p><h1>${esc(from)} &rarr; ${esc(to)}</h1></div>
+      <p>${esc(d.integrity || 'Integrity not determined')}</p>
+    </div>
+    <dl class="print-summary">
+      <div><dt>Integrity</dt><dd>${esc(d.integrity || 'Not determined')}</dd></div>
+      <div><dt>Floor loss</dt><dd>${esc(floor)}%</dd></div>
+      <div><dt>Floor size</dt><dd>${esc(floorSize)} ${esc(from)}</dd></div>
+      <div><dt>Worst loss / size</dt><dd>${esc(worst)}% / ${esc(worstSize)} ${esc(from)}</dd></div>
+      <div><dt>Depends on</dt><dd>${esc(dependencies)}</dd></div>
+    </dl>
+    <section class="print-provenance" aria-label="Reference and recorded time provenance">
+      <div><h2>Reference</h2><p>${esc(reference)}</p>${secondary}<p><strong>As of:</strong> ${esc(d.reference_as_of || 'not supplied')} · <strong>Fetched:</strong> ${esc(d.reference_fetched_at || 'not supplied')}</p></div>
+      <div><h2>Measurement</h2><p>${esc(recordedLabel)}: <strong>${esc(recordedAt)}</strong></p><p>${esc(d.live ? 'Live measurement' : 'Stored reading; not current market data')}</p>${cachedAt}</div>
+      <div><h2>Finding</h2><p>${esc(d.finding || 'Not supplied')}</p><p>${esc(d.reference_agreement || 'Reference agreement not supplied')}${d.reference_divergence_pct ? ` · ${esc(d.reference_divergence_pct)}% divergence` : ''}</p></div>
+    </section>
+    <section class="print-ladder" aria-label="Measured ladder"><h2>Measured ladder</h2>${table(d.rungs || [], d.scored === true, d.depends_on || [])}</section>
+    <div class="print-chain" aria-label="Network and stored chain heads">
+      <span>Horizon network ledger: <strong id="print-network-head">Loading</strong></span>
+      <span>Stored chain head: <strong id="print-record-chain-head">Loading</strong></span>
+      <span>Lookup started: <strong id="print-head-observed">Loading</strong></span>
+    </div>
+    <p class="print-footnote">Wayfare corridor data is non-custodial and read-only. Network ledger and stored chain head are independently reported provenance values.</p>
+  </article>`;
+}
+
+function refreshPrintProvenance(d) {
+  const request = ++printProvenanceRequest;
+  const startedAt = new Date().toISOString();
+  const networkHead = $('print-network-head');
+  const recordHead = $('print-record-chain-head');
+  const observedAt = $('print-head-observed');
+  if (!networkHead || !recordHead || !observedAt) return Promise.resolve();
+  networkHead.textContent = 'Unavailable';
+  recordHead.textContent = 'Unavailable';
+  observedAt.textContent = startedAt;
+
+  const health = fetch('/healthz').then(response => {
+    if (!response.ok) throw new Error(`health HTTP ${response.status}`);
+    return response.json();
+  }).then(data => {
+    if (request !== printProvenanceRequest) return;
+    const head = data.freshness?.chain_head;
+    networkHead.textContent = Number.isSafeInteger(head) ? String(head) : 'Unavailable';
+  }).catch(() => {});
+
+  const stored = fetch('/api/chain-heads').then(response => {
+    if (!response.ok) throw new Error(`chain heads HTTP ${response.status}`);
+    return response.json();
+  }).then(data => {
+    if (request !== printProvenanceRequest) return;
+    const corridor = `${d.send_asset?.code || 'USDC'}-${d.receive_asset?.code || 'NGNC'}`.toUpperCase();
+    const head = (data.heads || []).find(item => item.corridor === corridor);
+    recordHead.textContent = head ? `#${head.seq} · ${head.hash}` : 'No stored chain head';
+  }).catch(() => {});
+
+  return Promise.all([health, stored]);
 }
 
 // The comparison is deliberately narrow: loss percentages are dimensionless
@@ -1979,6 +1877,7 @@ function defaultTrendSize(data) {
 }
 
 function renderTrend() {
+  $('print-report-button').disabled = true;
   const d = trendState.data;
   const runs = d.runs || [];
   const parts = [];
@@ -2286,6 +2185,10 @@ function runsTable(runs) {
 
 $('run').addEventListener('click', measure);
 $('trend').addEventListener('click', loadTrend);
+$('print-report-button').addEventListener('click', async () => {
+  await printProvenancePromise;
+  window.print();
+});
 
 // --- Theme (#287) ------------------------------------------------------------
 // Three states: system (follows prefers-color-scheme - the media query in the

@@ -26,6 +26,21 @@ For the partial case the contract is:
 - **The Finding qualifies itself.** A partial ladder appends how many sizes
   could not be measured, so a reader never mistakes a partial curve for a
   complete one.
+- **Partial results on timeout.** When a live ladder run times out midway after
+  measuring one or more rungs, the server returns the partially measured ladder
+  rather than failing the whole request. The unmeasured rungs report the timeout
+  reason (`context deadline exceeded`), the response carries the priced rungs
+  along with the explicit unmeasured list, and the verdict and recommendation
+  account only for the surviving priced rungs. Only when zero rungs could be priced
+  does the request return a gateway timeout error (`upstream_timeout`).
+
+## Fail-fast on reference failure
+
+Scoring any ladder rung requires a valid benchmark reference rate. If the reference
+rate provider is down, rate-limited, or disagreeing before pricing begins,
+`Engine.Ladder` fails fast with a typed error (`route: reference rate unavailable: ...`)
+immediately without making any queries to Horizon. Zero round-trips are spent against
+the DEX pathfinder when the benchmark cannot be obtained.
 
 ## Horizon throttling vs Horizon failing
 
