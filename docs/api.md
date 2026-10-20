@@ -410,6 +410,8 @@ curl -s https://wayfare-cdb9.onrender.com/healthz
 ```json
 {
   "status": "ok",
+  "code_commit": "c7436e2257ae391e6177e063a9012e631540e1d7",
+  "data_commit": "05b446626f6f169b927b18822bd08c700f4f80de",
   "data": {
     "USDC-NGNC": {
       "recorded_at": "2026-09-26T08:00:00Z",
@@ -429,6 +431,16 @@ curl -s https://wayfare-cdb9.onrender.com/healthz
 age of that run; a corridor with no stored run is omitted rather than
 reported as fresh, and the whole field is `null` when no history is
 configured.
+
+### Build provenance fields
+
+`code_commit` is the git commit the binary was built from, and `data_commit`
+is the git commit of `data/` that was embedded in the binary at build time.
+Both are stamped at build time with `-ldflags -X` (see the Dockerfile and
+Makefile `build-stamped` target); unstamped dev or test builds report the
+empty string. Together they answer "is the deploy stale or the pipeline
+dead?": if `data_commit` stops advancing while `code_commit` keeps moving, the
+measurement pipeline is not landing new history.
 
 This endpoint checks that the HTTP service is responding. It does not perform a live corridor measurement or validate upstream availability.
 

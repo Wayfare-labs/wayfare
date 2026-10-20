@@ -608,9 +608,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
-		"status":    "ok",
-		"data":      s.healthData(r.Context()),
-		"freshness": s.healthFreshness(r.Context()),
+		"status":      "ok",
+		"code_commit": codeCommit,
+		"data_commit": dataCommit,
+		"data":        s.healthData(r.Context()),
+		"freshness":   s.healthFreshness(r.Context()),
 	})
 }
 
