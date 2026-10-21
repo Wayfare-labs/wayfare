@@ -171,9 +171,16 @@ func (s *Server) limit(next http.Handler) http.Handler {
 // Preflight (OPTIONS) is answered here so a client that adds custom
 // headers can still call the API; the methods list is exactly what the
 // mux supports.
+//
+// Access-Control-Expose-Headers names the response headers a browser may
+// read. Only ETag is listed, and only because the conditional-request
+// contract (issue #613) is useless to a browser consumer otherwise: a
+// cross-origin fetch hides every response header the server did not expose,
+// so a page could not read the tag it is asked to send back.
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Expose-Headers", "ETag")
 		if r.Method == http.MethodOptions {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
 			if reqHeaders := r.Header.Get("Access-Control-Request-Headers"); reqHeaders != "" {
@@ -246,7 +253,10 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case err == nil && found:
 			stale := staleJSON(rec, pair, time.Now().UTC())
-			writeJSON(w, r, http.StatusOK, stale)
+			// The record is the response's validator: a client holding
+			// this record can be answered 304 rather than sent the same
+			// body again. See writeHistoryJSON.
+			writeHistoryJSON(w, r, rec, stale)
 			log().Info("corridor measured",
 				"method", r.Method,
 				"path", r.URL.Path,
@@ -304,8 +314,8 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		// is the one place a continuous monitor can quietly betray the
 		// project, by returning a plausible number instead of admitting
 		// it does not currently know.
-		if stale, ok := s.staleFor(ctx, sendAsset.Code, recvAsset.Code, pegBase+"/"+pegQuote); ok {
-			writeJSON(w, r, http.StatusOK, stale)
+		if rec, stale, ok := s.staleFor(ctx, sendAsset.Code, recvAsset.Code, pegBase+"/"+pegQuote); ok {
+			writeHistoryJSON(w, r, rec, stale)
 			log().Info("corridor measured",
 				"method", r.Method,
 				"path", r.URL.Path,
@@ -726,12 +736,16 @@ func writeError(w http.ResponseWriter, r *http.Request, status int, code, msg st
 // Serving a different shape would mean every consumer needed two parsers, and
 // the one that forgot would be the one that rendered a six-hour-old reading as
 // current.
-func (s *Server) staleFor(ctx context.Context, send, recv, pair string) (route.CorridorJSON, bool) {
+//
+// The record is returned alongside the document because the response's entity
+// tag is the record's own seal hash. The validator and the body are the same
+// bytes read two ways, and neither can be derived from the other.
+func (s *Server) staleFor(ctx context.Context, send, recv, pair string) (*runstore.Record, route.CorridorJSON, bool) {
 	rec, found, err := s.latestRun(ctx, send, recv)
 	if err != nil || !found {
-		return route.CorridorJSON{}, false
+		return nil, route.CorridorJSON{}, false
 	}
-	return staleJSON(rec, pair, time.Now().UTC()), true
+	return rec, staleJSON(rec, pair, time.Now().UTC()), true
 }
 
 // latestRun reads a corridor's most recent record and separates the three

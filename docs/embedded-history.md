@@ -39,6 +39,11 @@ asserts in CI that the embedded history loads and verifies.
 - **Serves the embedded chain.** With `-history-first`, a request answers from
   the stored run unless the caller asks for `?live=1`. Every response carries
   `live: false` and a `stale` block with the reading's age.
+- **Serves a revalidatable response.** A stored record is immutable until the
+  next one lands, so its seal hash is published as an `ETag` and a conditional
+  request that matches it is answered `304` with no body
+  ([the API reference](api.md#conditional-requests-on-history-served-responses)).
+  A `?live=1` response carries no `ETag`: a fresh measurement is not reusable.
 - **Does not measure on a schedule.** `-schedule=0` disables the scheduler. The
   binary says so at startup: *"scheduler disabled; history will only grow if
   another instance is writing."* The instance is a reader, not a clock.

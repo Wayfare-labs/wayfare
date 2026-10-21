@@ -30,6 +30,13 @@ embedded in the binary at build time. Every response carries `live: false` and a
 `stale` block with the reading's age. Ask for a live measurement explicitly with
 `?live=1` — that prices a full ladder against Horizon and takes tens of seconds.
 
+**A recorded response is revalidatable.** Because a stored record is immutable
+until the next one lands, a `live: false` response carries the record's seal
+hash as an `ETag`; a polling client that sends it back as `If-None-Match` gets a
+`304` with no body instead of the document again. A live response carries no
+`ETag` — there is nothing about a fresh measurement that can be reused. See
+[the API reference](docs/api.md#conditional-requests-on-history-served-responses).
+
 **Freshness depends on the measure workflow, not on the deployment.** New
 records are written by `.github/workflows/measure.yml` and committed to `data/`.
 The committed history is a bounded window, not the whole chain: each corridor

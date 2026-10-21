@@ -71,6 +71,64 @@ Content-Type: application/json; charset=utf-8
 
 The status is `404`, the code is `no_history`, and the body carries neither `integrity` nor `rungs` nor any figure — an error is never measurement-shaped ([the note in errors.md](errors.md#a-note-on-no_history)). This is the response a first deployment gives, and a corridor newly added to the registry gives until the scheduler's next sweep records it. Asking with `live=1` opts out: an explicit live request measures, and a failed explicit live request reports `measurement_failed` rather than `no_history`, because in that case something was attempted and did fail. `NO-MARKET` remains a third thing again — a `200` finding that the corridor has no path.
 
+### Conditional requests on history-served responses
+
+A response with `live: false` is served from a stored record. That record is
+immutable — it is hash-sealed, and a new measurement is a new link in the chain
+rather than an edit of the old one — so the server can tell a client exactly
+which record it is holding.
+
+- A `live: false` response carries an `ETag`: the record's own seal hash,
+  quoted (`ETag: "sha256:…"`). It is the same value the run store verifies the
+  chain against, not a digest invented for HTTP, so a reader can check it with
+  `sha256sum`.
+- It also carries `Cache-Control: no-cache`: the body may be stored, but it
+  must be revalidated before it is reused.
+- A request carrying `If-None-Match` with that value is answered `304 Not
+  Modified` — the same `ETag`, no body — and the client keeps the copy it has.
+  The comparison is the weak one RFC 9110 asks for, so `W/"…"` and a
+  comma-separated list both work, and `*` matches any current record.
+- A **live** response carries **no** `ETag` and is never answered `304`. Its
+  figures depend on the market at the moment of the request, so there is
+  nothing about it that can be reused. The absence of the tag is the signal.
+- A response that is not a measurement — `no_history`, or any error — carries no
+  `ETag` either: there is no representation to revalidate.
+
+The tag identifies the **record**, which is the measurement. The `stale`
+envelope's `age_seconds` and `age_human` are recomputed on every request, so
+two responses for the same record differ in those two fields and are not
+byte-identical; the figures they describe are identical. A `304` therefore
+leaves the client with the age its copy was served at.
+
+The `ETag` is listed in `Access-Control-Expose-Headers`, so a browser page on
+another origin can read the tag it is asked to send back.
+
+```http
+GET /api/corridor?from=USDC&to=NGNC HTTP/1.1
+→ 200 OK
+   ETag: "sha256:3f2c…"
+   Cache-Control: no-cache
+
+GET /api/corridor?from=USDC&to=NGNC HTTP/1.1
+   If-None-Match: "sha256:3f2c…"
+→ 304 Not Modified
+   ETag: "sha256:3f2c…"
+   Cache-Control: no-cache
+```
+
+**cURL — a polling client:**
+
+```bash
+# Fetch, and remember the tag. (-D - prints the response headers;
+# the endpoint answers GET only, so the header must come from a GET.)
+etag=$(curl -sD - -o /dev/null "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC" \
+  | awk -F': ' '/^ETag/ {print $2}' | tr -d '\r')
+
+# Ask again: nothing changed, so nothing is downloaded.
+curl -s -o /dev/null -w '%{http_code}\n' -H "If-None-Match: $etag" \
+  "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC"
+```
+
 **cURL:**
 
 ```bash
