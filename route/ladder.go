@@ -34,6 +34,19 @@ type LadderRequest struct {
 
 	ReferenceBase  string
 	ReferenceQuote string
+
+	// OnRung, when non-nil, is called once per rung as its price resolves,
+	// from the goroutine that priced it. Index is the rung's position in the
+	// sorted ladder; the Rung carries whatever that rung alone established
+	// (result, error) before the ladder is summarised.
+	//
+	// The ladder prices concurrently, so OnRung may be invoked from several
+	// goroutines at once and must not assume it is called in index order. A
+	// caller that serialises output — the streaming endpoint writing SSE
+	// events — is responsible for its own synchronisation. This is what lets
+	// a long ladder report progress instead of blocking until every rung
+	// returns (issue #639).
+	OnRung func(index int, rung Rung)
 }
 
 // Rung is one size's result within a ladder.
@@ -322,6 +335,9 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 				ReferenceQuote: req.ReferenceQuote,
 			})
 			out.Rungs[i] = Rung{SendAmount: size, Result: res, Err: err}
+			if req.OnRung != nil {
+				req.OnRung(i, out.Rungs[i])
+			}
 		}(i, size)
 	}
 	wg.Wait()

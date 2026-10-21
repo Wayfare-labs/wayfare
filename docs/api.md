@@ -10,6 +10,7 @@ All endpoints are read-only. The service does not hold funds, issue tokens, sign
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/corridor` | Measure or retrieve one corridor |
+| `GET` | `/api/corridor/stream` | Measure one corridor, streaming per-rung progress as Server-Sent Events |
 | `GET` | `/api/corridor/trend` | Read stored measurements for a corridor |
 | `GET` | `/api/chain-heads` | Publish the current hash-chain tip for each stored corridor |
 | `GET` | `/api/assets` | List verified assets configured in the binary |
@@ -211,6 +212,59 @@ curl -s "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC&sizes=
   ]
 }
 ```
+
+## `GET /api/corridor/stream`
+
+The same corridor measurement as `GET /api/corridor`, but reported as it
+happens. A live ladder is a dozen round trips to Horizon and can take 30–90
+seconds; this endpoint sends each rung as it resolves instead of blocking until
+the whole ladder is finished, so a client can show progress and partial results.
+
+Query parameters are identical to `GET /api/corridor` (`from`, `to`, `sizes`),
+minus `live` — a stream is always a live measurement. Validation and failure
+policy are shared with the JSON endpoint: a malformed request is refused with the
+same JSON error and code before the stream opens, and a live failure that has
+stored history to fall back on serves the same stale envelope.
+
+The response is `Content-Type: text/event-stream`. Events are separated by a
+blank line and named:
+
+| Event | Data |
+|---|---|
+| `start` | `{ "corridor", "total_rungs", "budget", "reference_pair" }` — sent once, when the ladder begins |
+| `rung` | `{ "index", "total", "rung" }` — one rung, in the same wire shape the JSON response uses for that rung; sent as each size resolves, and not necessarily in index order |
+| `final` | The complete corridor document — the same body `GET /api/corridor?live=1` would have returned, produced by the same conversion |
+| `error` | The same `{ "error", "code", ... }` body the JSON endpoint sends on failure |
+| `done` | `{ "status": <http status> }` — always the last event |
+
+```sh
+curl -N "https://wayfare-cdb9.onrender.com/api/corridor/stream?from=USDC&to=NGNC&sizes=10,100,500"
+```
+
+```
+: wayfare live measurement
+
+event: start
+data: {"budget":"44s","corridor":"USDC-NGNC","reference_pair":"USD/NGN","total_rungs":3}
+
+event: rung
+data: {"index":0,"rung":{...},"total":3}
+
+event: final
+data: {...}
+
+event: done
+data: {"status":200}
+```
+
+The number of concurrent streams one instance will hold open is bounded; beyond
+it the request is refused immediately with `503` and code `too_many_streams`
+(see [errors.md](errors.md)) rather than queued. The per-client rate limit
+applies to opening a stream like any other request. A client that disconnects
+cancels the ladder: the server ties the measurement to the request context, so
+navigating away ends the round trips rather than letting them run to completion.
+
+---
 
 Every quote — `recommended` and each rung's `quote` — carries `hops`: the path as structured data, in execution order with both endpoints, each entry an asset with its `issuer` where one was established and its `peg` where known. `description` stays exactly as it was, for display and compatibility; `hops` is the field to consume, because an asset code identifies nothing without its issuer and a client must not parse prose or guess an issuer from a code. A hop whose issuing account could not be established says so with `issuer_unknown: true` instead of omitting the field silently; native and fiat assets have no issuer by nature and are identified in full by `asset`. A stored (stale) reading serves `hops: null` — the run store records the description string only, and “not recorded” is not the same claim as “no intermediate assets”.
 
@@ -598,6 +652,51 @@ authenticate anyone.
 `live` is not a verdict. It describes where the response came from. A response with `live: false` is historical, and its `stale` envelope is authoritative for age. Consumers must not infer freshness from deployment time, request time, or the absence of an error.
 
 Reference rates are never averaged. The response identifies the provider and, when available, the second provider and divergence. On a `DISAGREE` it may also carry `reference_diagnostic`, which names an independent third provider and which of the two primaries is farther from it; that attribution never changes the scored mid. `NO-MARKET` means no path was returned; it is not the same claim as a priced route with an `UNUSABLE` verdict.
+
+## API deprecation policy
+
+Breaking changes to wire shapes without notice break consumers that depend on published measurements. As established in the consumer spike (`docs/spike-api-consumers.md`), the contract's difficulty is not the schema, it is the discipline. This policy defines how endpoints and response fields are phased out.
+
+### Scope of changes
+
+- **Non-breaking (additive):** Introducing optional query parameters or new JSON response fields. Clients must ignore unknown JSON keys.
+- **Breaking:** Renaming or removing endpoints, query parameters, or response fields; changing field types; or modifying error code formats. Any breaking change must follow the full deprecation lifecycle below.
+
+### Deprecation lifecycle
+
+1. **Announcement:**
+   - Documented in the release notes of the version introducing the deprecation.
+   - A dedicated GitHub tracking issue opened under `area:api`.
+   - Updated status and timeline recorded in `docs/api.md`.
+
+2. **In-band signalling (`Deprecation` and `Sunset` headers):**
+   - Deprecated endpoints emit the standard `Deprecation` response header with the date or Unix timestamp representing when deprecation was announced:
+     ```http
+     Deprecation: @1760000000
+     ```
+   - When a definite retirement date is determined, responses also emit the `Sunset` header (RFC 8594) indicating the cutoff date after which the endpoint will be shut down:
+     ```http
+     Sunset: Wed, 11 Nov 2026 00:00:00 GMT
+     ```
+   - A `Link` header with `rel="deprecation"` points consumers to migration guidance:
+     ```http
+     Link: <https://github.com/Wayfare-labs/wayfare/blob/main/docs/api.md>; rel="deprecation"
+     ```
+
+3. **Minimum notice window:**
+   - **Endpoints and fields have a minimum deprecation window of 90 days** (or at least two minor release cycles, whichever is longer) before removal.
+   - During the notice window, the endpoint or field remains fully functional and continues returning real measurements. A deprecated field is never filled with fabricated or estimated numbers: unknown remains reported as unknown.
+
+4. **Removal:**
+   - At the sunset date, the deprecated endpoint or field is permanently removed.
+   - Requests to removed endpoints return HTTP `410 Gone` with a structured JSON error body:
+     ```json
+     {
+       "error": "this endpoint has been retired; refer to docs/api.md for current endpoints",
+       "code": "endpoint_deprecated"
+     }
+     ```
+   - Field removals drop the key from the JSON payload.
 
 ## API deprecation policy
 

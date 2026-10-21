@@ -58,8 +58,8 @@ func main() {
 		rotate    = flag.Bool("rotate-store", false, "trim every chain over the window ceiling and exit")
 		rotateRec = flag.Int("rotate-records", runstore.MaxWindow,
 			"per-corridor record ceiling for -rotate-store")
-		once     = flag.Bool("once", false, "measure every corridor once, record, and exit")
-		exportTo = flag.String("export", "",
+		once      = flag.Bool("once", false, "measure every corridor once, record, and exit")
+		exportTo  = flag.String("export", "",
 			"export one corridor's verified history to stdout and exit, e.g. -export USDC-NGNC; requires -format")
 		exportFmt = flag.String("format", exportFormatCSV,
 			"export format for -export; csv is the only implemented format")
@@ -113,6 +113,24 @@ func main() {
 	// this project is willing to stand behind.
 	if *exportTo != "" {
 		os.Exit(exportChain(store, *exportTo, *exportFmt, os.Stdout, logger))
+	}
+
+	// The alerting hook for scheduled measurement (issue #310): a CI or cron
+	// wrapper runs -once and then -check-fresh, so a sweep that silently
+	// stopped recording — or recorded but dropped a corridor — exits
+	// non-zero and makes the job fail loudly. Needs no network: it only
+	// reads the store, so it also catches the case where the schedule never
+	// ran at all, which no in-process failure could report.
+	if *checkFresh {
+		os.Exit(checkFreshness(store, monitor.DefaultCorridors(), *maxAge, time.Now().UTC(), logger))
+	}
+
+	if *checkFresh {
+		os.Exit(checkFreshness(store, monitor.DefaultCorridors(), *maxAge, time.Now().UTC(), logger))
+	}
+
+	if *rotate {
+		os.Exit(rotateStore(store, *rotateRec, logger))
 	}
 
 	// The alerting hook for scheduled measurement (issue #310): a CI or cron

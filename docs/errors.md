@@ -29,25 +29,26 @@ cause produces the same code on every endpoint. `TestErrorCodeContract` in
 
 | Code | HTTP | Cause | Endpoints |
 |:---|:---|:---|:---|
-| `method_not_allowed` | 405 | A method other than `GET` was used. | `/api/corridor`, `/api/corridor/trend`, `/api/chain-heads`, `/api/market-structure`, `/api/thresholds` |
+| `method_not_allowed` | 405 | A method other than `GET` was used. | `/api/corridor`, `/api/corridor/stream`, `/api/corridor/trend`, `/api/chain-heads`, `/api/market-structure`, `/api/thresholds` |
 | `invalid_query` | 400 | An unsupported query parameter was supplied. Parameter handling is strict: a typo like `?tp=NGNC` is an error, not a silent fall-back to the default corridor. | all |
-| `unknown_send_asset` | 400 | The `from` asset code is not in the verified registry. | `/api/corridor`, `/api/corridor/trend` |
-| `unknown_receive_asset` | 400 | The `to` asset code is not in the verified registry. | `/api/corridor`, `/api/corridor/trend` |
-| `no_fiat_peg` | 400 | The destination asset has no verified fiat peg, so there is no independent rate to score the corridor against. | `/api/corridor`, `/api/corridor/trend` |
-| `invalid_sizes` | 400 | The `sizes` parameter is not a comma-separated list of positive decimals, or names more than 24 sizes. | `/api/corridor` |
+| `unknown_send_asset` | 400 | The `from` asset code is not in the verified registry. | `/api/corridor`, `/api/corridor/stream`, `/api/corridor/trend` |
+| `unknown_receive_asset` | 400 | The `to` asset code is not in the verified registry. | `/api/corridor`, `/api/corridor/stream`, `/api/corridor/trend` |
+| `no_fiat_peg` | 400 | The destination asset has no verified fiat peg, so there is no independent rate to score the corridor against. | `/api/corridor`, `/api/corridor/stream`, `/api/corridor/trend` |
+| `invalid_sizes` | 400 | The `sizes` parameter is not a comma-separated list of positive decimals, or names more than 24 sizes. | `/api/corridor`, `/api/corridor/stream` |
 | `invalid_limit` | 400 | The `limit` parameter is not a positive whole number. | `/api/corridor/trend` |
 | `invalid_cursor` | 400 | The `before` sequence cursor is not a positive whole number. | `/api/corridor/trend` |
-| `measurement_failed` | 502 | A live measurement failed at every size and there is no stored run to serve instead. | `/api/corridor` |
-| `upstream_timeout` | 504 | A live measurement exceeded the server's measurement timeout and there is no stored run to serve instead. | `/api/corridor` |
+| `measurement_failed` | 502 | A live measurement failed at every size and there is no stored run to serve instead. | `/api/corridor`, `/api/corridor/stream` |
+| `upstream_timeout` | 504 | A live measurement exceeded the server's measurement timeout and there is no stored run to serve instead. | `/api/corridor`, `/api/corridor/stream` |
 | `no_history` | 404 | A history-first instance was asked for a corridor it has no stored measurement for, and was not asked to measure one. Nothing was attempted and nothing failed. | `/api/corridor` |
 | `internal_error` | 500 | The request could not be completed because of a server-side failure (for example, the run store could not be listed or read for `/api/assets`). | `/api/assets` |
 | `store_read_error` | 500 | The run store could not be listed or read while serving history. | `/api/corridor/trend`, `/api/chain-heads` |
 | `divergence_history_error` | 500 | A stored `divergence_pct` could not be parsed while summarising reference-divergence history. This is a corrupt record, not an absent observation, so it is reported as an error rather than silently omitted. | `/api/corridor/trend` |
 | `rate_limited` | 429 | The per-client request budget was exhausted. The response carries a `Retry-After` header in whole seconds. | all |
+| `too_many_streams` | 503 | The server is already streaming the maximum number of live measurements it will hold open at once, so this request was refused rather than queued. The refusal is immediate; retry shortly. | `/api/corridor/stream` |
 
 ### A note on `method_not_allowed`
 
-The five endpoints above reject a non-`GET` method in the handler itself. The
+The six endpoints above reject a non-`GET` method in the handler itself. The
 two remaining endpoints, `/api/assets` and `/healthz`, do **not** yet do so:
 they answer any method with the same body. This document reports the code as it
 is, so the row above names only the endpoints that emit the code today. A

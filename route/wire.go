@@ -453,37 +453,52 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 	}
 
 	for _, r := range l.Rungs {
-		rj := RungJSON{
-			SendAmount: r.SendAmount.String(),
-			Priced:     r.Priced(),
-			Integrity:  IntegrityUnknown.String(),
-			Notes:      []string{},
-		}
-		if r.MarginalCost != nil {
-			rj.MarginalCost = r.MarginalCost.Cost.String()
-			rj.MarginalFrom = r.MarginalCost.From.String()
-			rj.MarginalTo = r.MarginalCost.To.String()
-		}
-		if r.Err != nil {
-			rj.Error = r.Err.Error()
-		}
-		if r.Result != nil {
-			rj.Integrity = r.Result.Integrity.String()
-			if r.Result.Notes != nil {
-				rj.Notes = r.Result.Notes
-			}
-			if len(r.Result.Quotes) > 0 {
-				q := &r.Result.Quotes[0]
-				rj.PathCount = q.PathCount
-				rj.Quote = ToQuoteJSON(q)
-			}
-		}
-		if len(r.Decomposition.Parts) > 0 {
-			rj.Cost = ToCostBlockJSON(r.Decomposition)
-		}
-		out.Rungs = append(out.Rungs, rj)
+		out.Rungs = append(out.Rungs, ToRungJSON(r))
 	}
 	return out
+}
+
+// ToRungJSON renders one rung in the wire shape. It is exported so a caller
+// that emits rungs as they resolve — the streaming corridor endpoint, which
+// sends a rung before the ladder has summarised — renders each one with the
+// same conversion the whole-corridor response uses. Two converters would
+// drift, and the one that drifted would be the one a streaming client saw
+// first.
+//
+// A rung sent before summarisation carries no marginal cost or decomposition
+// yet (both are computed across the finished ladder), so those fields are
+// absent here and filled in on the final response. Everything the rung itself
+// established — priced, integrity, quote, notes, error — is present and exact.
+func ToRungJSON(r Rung) RungJSON {
+	rj := RungJSON{
+		SendAmount: r.SendAmount.String(),
+		Priced:     r.Priced(),
+		Integrity:  IntegrityUnknown.String(),
+		Notes:      []string{},
+	}
+	if r.MarginalCost != nil {
+		rj.MarginalCost = r.MarginalCost.Cost.String()
+		rj.MarginalFrom = r.MarginalCost.From.String()
+		rj.MarginalTo = r.MarginalCost.To.String()
+	}
+	if r.Err != nil {
+		rj.Error = r.Err.Error()
+	}
+	if r.Result != nil {
+		rj.Integrity = r.Result.Integrity.String()
+		if r.Result.Notes != nil {
+			rj.Notes = r.Result.Notes
+		}
+		if len(r.Result.Quotes) > 0 {
+			q := &r.Result.Quotes[0]
+			rj.PathCount = q.PathCount
+			rj.Quote = ToQuoteJSON(q)
+		}
+	}
+	if len(r.Decomposition.Parts) > 0 {
+		rj.Cost = ToCostBlockJSON(r.Decomposition)
+	}
+	return rj
 }
 
 // WithFindings attaches check results to a rendered corridor.

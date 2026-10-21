@@ -357,6 +357,28 @@ Checked 2026-08-30.
 
 ---
 
+## Floor
+
+**Question:** What does the corridor lose at its smallest measured size?
+
+The **floor** is the loss percentage at the smallest size the ladder priced
+(`floor_loss_pct`), and `floor_size` is the size it was measured at. At dust
+size price impact is negligible, so what remains is the corridor's **spread**
+— its structural floor — rather than a depth effect. A floor above the
+[unusable](#verdict) threshold (20%) means no size can be acceptable, because
+every larger size stacks slippage on top of it.
+
+The floor is a summary of the ladder, not a verdict. It is read from the priced
+rungs; `worst_loss_pct` / `worst_size` name the other end of the same ladder.
+When nothing priced — a `NO-MARKET` or `UNKNOWN` run — there is no floor to
+report, and the zero is the absence of a measurement rather than a 0% loss.
+
+**Source:** `route/ladder.go` — `Floor`, `FloorSize`, `WorstLoss`,
+`WorstSize`. `route/wire.go` — `floor_loss_pct`, `floor_size`.
+Checked 2026-10-19.
+
+---
+
 ## How the vocabularies interact
 
 The vocabularies are deliberately independent. A corridor can be:

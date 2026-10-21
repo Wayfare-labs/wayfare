@@ -140,17 +140,26 @@ func MeasurabilityHistory(ctx context.Context, store Store, corridor string) ([]
 	}
 	runs := make([]RunMeasurability, 0, len(records))
 	for _, rec := range records {
-		priced := countPricedRungs(rec)
-		runs = append(runs, RunMeasurability{
-			Seq:         rec.Seq,
-			RecordedAt:  rec.RecordedAt,
-			Integrity:   rec.Integrity,
-			TotalRungs:  len(rec.Rungs),
-			PricedRungs: priced,
-			Measurable:  priced > 0,
-		})
+		runs = append(runs, RunMeasurabilityOf(rec))
 	}
 	return runs, nil
+}
+
+// RunMeasurabilityOf classifies a single stored run. It is the record-level
+// constructor behind MeasurabilityHistory, exported so a caller that already
+// holds the records — the trend wire reads the same chain — can build the
+// same per-run series without a second store round-trip, and so both paths
+// classify a run identically rather than each re-deriving "measurable".
+func RunMeasurabilityOf(rec *Record) RunMeasurability {
+	priced := countPricedRungs(rec)
+	return RunMeasurability{
+		Seq:         rec.Seq,
+		RecordedAt:  rec.RecordedAt,
+		Integrity:   rec.Integrity,
+		TotalRungs:  len(rec.Rungs),
+		PricedRungs: priced,
+		Measurable:  priced > 0,
+	}
 }
 
 // SummarizeMeasurability reduces a run series to the uptime figure. It is

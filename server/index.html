@@ -451,6 +451,20 @@
   .cs-info .cs-state.cs-direct { color: var(--unknown); background: var(--neutral-soft); }
   .cs-info .cs-state.cs-derivative { color: var(--warn); background: var(--warning-soft); }
   .cs-info .cs-state.cs-nomarket { color: var(--brand-coral); background: rgba(249, 115, 22, 0.12); }
+
+  /* Glossary help links (#641) ---------------------------------------------
+     A reader who does not know what a state means is one click from the
+     definition, but the link must not shout: it is an affordance beside a
+     figure, not a figure itself. It renders in the muted ink and inherits the
+     focus ring, so it stays reachable and visible without competing with the
+     state it explains. */
+  .help-link { color: var(--muted); font-size: .72rem; text-decoration: underline;
+    text-underline-offset: 2px; white-space: nowrap; }
+  .help-link:hover { color: var(--ink); }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
   svg { width: 100%; height: auto; display: block; }
   .axis { fill: var(--muted); font: 10px var(--mono); }
 
@@ -571,35 +585,6 @@
     border-left: 3px solid var(--border); padding-left: var(--space-3);
   }
 
-  /* Empty states (issue #300) --------------------------------------------
-   * One component, deliberately distinct per cause. An empty state is an
-   * *absence of data*, so it is rendered neutral (a grey `?`/`∅`/`—` glyph),
-   * never with a severity colour — "nothing was measured here" must not read
-   * as "this is bad." Each variant carries a word and a glyph, not colour
-   * alone (WCAG SC 1.4.1), and stays keyboard-reachable because it is plain
-   * text with no interactive parts. */
-  .empty-state {
-    display: flex; gap: var(--space-3); align-items: flex-start;
-    padding: var(--space-1) 0;
-  }
-  .empty-state .es-glyph {
-    flex: none; display: inline-flex; align-items: center; justify-content: center;
-    width: 2rem; height: 2rem; border-radius: var(--radius-md);
-    border: 1px solid var(--availability-undetermined);
-    color: var(--availability-undetermined);
-    font: var(--weight-bold) 1.1rem/1 var(--font-mono);
-  }
-  .empty-state .es-copy { min-width: 0; }
-  .empty-state .es-title {
-    font-weight: var(--weight-semibold); margin: 0; color: var(--ink);
-  }
-  .empty-state .es-body {
-    margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-base);
-  }
-  /* A no-market empty state belongs to the integrity family, so it borrows
-   * that role's glyph but stays neutral — the distinction (structural absence,
-   * not a bad price) is carried by the copy, per docs/state-vocabulary.md. */
-  .empty-state.es-structural .es-glyph { border-color: var(--muted); color: var(--muted); }
   .chain-head-block {
     display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
     margin: var(--space-2) 0 0; font-size: var(--text-sm);
@@ -665,6 +650,36 @@
     a { color: #111 !important; text-decoration: none !important; }
     * { animation: none !important; }
   }
+
+  /* Empty states (issue #300) --------------------------------------------
+   * One component, deliberately distinct per cause. An empty state is an
+   * *absence of data*, so it is rendered neutral (a grey `?`/`∅`/`—` glyph),
+   * never with a severity colour — "nothing was measured here" must not read
+   * as "this is bad." Each variant carries a word and a glyph, not colour
+   * alone (WCAG SC 1.4.1), and stays keyboard-reachable because it is plain
+   * text with no interactive parts. */
+  .empty-state {
+    display: flex; gap: var(--space-3); align-items: flex-start;
+    padding: var(--space-1) 0;
+  }
+  .empty-state .es-glyph {
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    width: 2rem; height: 2rem; border-radius: var(--radius-md);
+    border: 1px solid var(--availability-undetermined);
+    color: var(--availability-undetermined);
+    font: var(--weight-bold) 1.1rem/1 var(--font-mono);
+  }
+  .empty-state .es-copy { min-width: 0; }
+  .empty-state .es-title {
+    font-weight: var(--weight-semibold); margin: 0; color: var(--ink);
+  }
+  .empty-state .es-body {
+    margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-base);
+  }
+  /* A no-market empty state belongs to the integrity family, so it borrows
+   * that role's glyph but stays neutral — the distinction (structural absence,
+   * not a bad price) is carried by the copy, per docs/state-vocabulary.md. */
+  .empty-state.es-structural .es-glyph { border-color: var(--muted); color: var(--muted); }
 </style>
 <script>
   // Issue #287: apply a stored explicit theme before first paint so a reload
@@ -709,6 +724,7 @@
     the bottom rung isolates the corridor's spread, the top rung exposes exhaustion.</span>
     <button id="run">Measure live</button>
     <button id="trend">Show trend</button>
+    <button id="cancel-measure" type="button" hidden>Cancel</button>
     <button id="market-structure">Market structure</button>
     <button id="print-report-button" type="button" disabled>Print report</button>
     <span id="status" class="sub" role="status"></span>
@@ -781,6 +797,35 @@ const formatPct = (s) => {
   return isNaN(n) ? s : n.toFixed(2);
 };
 
+// Glossary help links (issue #641). The glossary lives in the repository and
+// GitHub renders each heading as a stable anchor, so a label in the UI can
+// point straight at the definition of the state beside it. Every label a
+// reader could misread — a verdict grade, an integrity state, the reference
+// agreement, the floor loss — carries one; the anchor is the heading's slug,
+// and the test in ui_glossary_test.go checks each anchor this file links to
+// has a matching heading in docs/glossary.md.
+const GLOSSARY_BASE = 'https://github.com/Wayfare-labs/wayfare/blob/main/docs/glossary.md';
+
+// helpLink renders the small "what's this?" link. The visible text is short so
+// it does not crowd the figure; the accessible name names the term, so a
+// screen reader hears what the link explains rather than a page of identical
+// "what's this?" links.
+function helpLink(anchor, label) {
+  return ` <a class="help-link" href="${GLOSSARY_BASE}#${esc(anchor)}"
+    target="_blank" rel="noopener noreferrer"
+    title="What does ${esc(label)} mean? Open the glossary definition.">what&rsquo;s this?<span class="sr-only">: ${esc(label)} in the glossary</span></a>`;
+}
+
+// helpMark is the compact form for a table cell: a single "?" whose accessible
+// name still spells out the term. A row of full "what's this?" links would
+// overpower the figures they sit beside.
+function helpMark(anchor, label) {
+  return ` <a class="help-link" href="${GLOSSARY_BASE}#${esc(anchor)}"
+    target="_blank" rel="noopener noreferrer"
+    title="What does ${esc(label)} mean? Open the glossary definition."
+    aria-label="What does ${esc(label)} mean? Opens the glossary.">?</a>`;
+}
+
 // emptyState renders a labelled absence of data (issue #300). Seven distinct
 // causes route through this one component so "empty" is never ambiguous: the
 // six #300 established, plus the no-history state #614 added. The
@@ -839,7 +884,7 @@ function integrityElement(state, dependsOn = '') {
   // The structural state badge comes first, then the explanation: the state
   // is the finding, the copy qualifies it.
   return `<div class="integrity-card">
-    <span class="badge ${badgeClass(state)}" title="${esc(info.tooltip)}" aria-label="${esc(state)}: ${esc(info.tooltip)}">${esc(state)}</span>
+    <span class="badge ${badgeClass(state)}" title="${esc(info.tooltip)}" aria-label="${esc(state)}: ${esc(info.tooltip)}">${esc(state)}</span>${helpLink('integrity', state)}
     <div class="integrity-copy"><p class="integrity-title">${esc(info.title)}</p><p class="integrity-help">${esc(info.help)}</p>${dependency}</div>
   </div>`;
 }
@@ -854,7 +899,7 @@ function integrityCell(state, dependsOn = []) {
   const dependency = info.dependency
     ? `<span class="integrity-via">${esc(info.dependency)}</span>` : '';
   return `<span class="badge ${badgeClass(state)}" title="${esc(tip)}"
-    aria-label="${esc(state)}: ${esc(tip)}">${esc(state)}</span>${dependency}`;
+    aria-label="${esc(state)}: ${esc(tip)}">${esc(state)}</span>${dependency}${helpMark('integrity', state)}`;
 }
 
 const verdictClass = (v) => 'v-' + String(v).toLowerCase();
@@ -1013,6 +1058,10 @@ function buildSelector(data) {
   updateCorridorDetail(sel.value);
   sel.addEventListener('change', () => {
     updateCorridorDetail(sel.value);
+    // A corridor change is a navigation: stop any live ladder still running
+    // (#639), silently, so the browser lets go of the request rather than
+    // holding the connection open for a corridor the reader has left.
+    cancelActiveMeasurement('');
     // URL-first (issue #292): a corridor change is a navigation. The sizes
     // the reader typed carry over — they describe how to measure, not which
     // corridor — and the URL bar is updated through the shared path.
@@ -1215,6 +1264,116 @@ function sizesValidation(raw) {
 
 // --- Measurement -------------------------------------------------------------
 
+// A live ladder is a dozen round trips to Horizon and can take 30–90 seconds.
+// The JSON corridor endpoint blocks for all of it, so the UI reads the
+// streaming variant instead: /api/corridor/stream sends a `rung` event as each
+// size resolves, a `final` event whose payload is exactly the body the JSON
+// endpoint would have returned, and a `done` event (#639). The stream is read
+// with fetch(), not EventSource, so one AbortController aborts it — which is
+// what the cancel control is specified as (#640), and what lets a corridor
+// change or a trend click stop a ladder the reader has left.
+let activeMeasurement = null;
+
+// cancelActiveMeasurement aborts whatever measurement is in flight, if any,
+// and restores the idle controls. When message is non-empty it is shown in the
+// status line — a reader who pressed Cancel should see that it was their
+// action, not a failure. A silent cancel (message '') is used when a new
+// measurement or a navigation has already superseded this one. Safe to call
+// when nothing is running.
+function cancelActiveMeasurement(message) {
+  if (!activeMeasurement) return;
+  const { controller } = activeMeasurement;
+  activeMeasurement = null;
+  controller.abort();
+  setMeasuring(false);
+  if (message) $('status').textContent = message;
+}
+
+// parseSSE reads one buffer of Server-Sent Events and returns the complete
+// frames plus the unconsumed remainder. Frames are separated by a blank line;
+// only `event:` and `data:` are used. A comment frame (a line starting ":")
+// carries no data — it is the server's heartbeat that the stream is live — and
+// is dropped here rather than surfaced.
+function parseSSE(buffer) {
+  const frames = buffer.split('\n\n');
+  const rest = frames.pop();
+  const events = [];
+  for (const frame of frames) {
+    let name = 'message';
+    let data = '';
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event:')) name = line.slice(6).trim();
+      else if (line.startsWith('data:')) data += line.slice(5).trim();
+    }
+    if (data === '') continue;
+    let parsed;
+    try { parsed = JSON.parse(data); } catch (err) { continue; }
+    events.push({ name, data: parsed });
+  }
+  return { events, rest };
+}
+
+// streamError turns a non-2xx corridor response into the Error the rest of
+// measure() handles. A refused stream — an unknown asset, bad sizes, too many
+// streams — carries the same JSON error body the JSON endpoint sends before
+// the stream begins, so the API's own code and message survive.
+async function streamError(r) {
+  const data = await r.json().catch(() => ({}));
+  return Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code });
+}
+
+// readCorridorStream consumes the SSE body and resolves with the `final`
+// event's payload — the same document the JSON endpoint returns. onProgress is
+// called with (priced, total) as rungs arrive, so the caller can show progress.
+// An `error` event is thrown; a stream that ends without a `final` is a
+// failure, never silently treated as empty.
+async function readCorridorStream(r, onProgress) {
+  const reader = r.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let final = null;
+  let priced = 0;
+  let total = 0;
+  let failed = null;
+
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parsed = parseSSE(buffer);
+    buffer = parsed.rest;
+    for (const ev of parsed.events) {
+      if (ev.name === 'start') {
+        total = ev.data.total_rungs || 0;
+        if (onProgress) onProgress(0, total);
+      } else if (ev.name === 'rung') {
+        priced += 1;
+        if (onProgress) onProgress(priced, ev.data.total || total);
+      } else if (ev.name === 'final') {
+        final = ev.data;
+      } else if (ev.name === 'error') {
+        failed = ev.data;
+      }
+    }
+  }
+
+  if (failed) throw Object.assign(new Error(failed.error || 'measurement failed'), { code: failed.code });
+  if (final === null) throw new Error('The measurement stream ended without a result.');
+  return final;
+}
+
+// setMeasuring toggles the in-flight controls: the measure button is disabled,
+// the cancel button appears, and the status line explains why this takes time.
+function setMeasuring(on) {
+  const run = $('run');
+  const cancel = $('cancel-measure');
+  if (run) run.disabled = on;
+  if (cancel) cancel.hidden = !on;
+  $('status').textContent = on
+    ? 'measuring live — each size is its own round trip to Horizon, so more sizes take longer…'
+    : '';
+}
+
 async function measure() {
   const to = $('to').value;
   if (!to) {
@@ -1236,15 +1395,35 @@ async function measure() {
   }
   sizesInput.removeAttribute('aria-invalid');
   lastRequestedSizes = sizesRaw;
+
+  // A new measurement supersedes any in flight: abort it (silently) first so
+  // two ladders never run at once against Horizon.
+  cancelActiveMeasurement('');
   const requestId = ++corridorRequest;
-  $('run').disabled = true;
-  $('status').textContent = 'measuring live — each size is its own round trip to Horizon, so more sizes take longer…';
+  const controller = new AbortController();
+  activeMeasurement = { controller, corridor: to };
+  setMeasuring(true);
+
   try {
     const q = new URLSearchParams({ to });
     if (sizesRaw !== '') q.set('sizes', sizesRaw);
-    const r = await fetch(`/api/corridor?${q}&live=1`);
-    const data = await r.json();
-    if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code });
+    const onProgress = (priced, total) => {
+      if (requestId !== corridorRequest || $('to').value !== to) return;
+      $('status').textContent = total
+        ? `measuring live — ${priced} of ${total} sizes priced…`
+        : 'measuring live…';
+    };
+
+    // Prefer the streaming endpoint so rungs appear as they resolve (#639).
+    const r = await fetch(`/api/corridor/stream?${q}`, { signal: controller.signal });
+    if (!r.ok) throw await streamError(r);
+    const ctype = r.headers.get('Content-Type') || '';
+    const data = ctype.startsWith('text/event-stream') && r.body && r.body.getReader
+      ? await readCorridorStream(r, onProgress)
+      // No streaming body (an old browser, or a proxy that stripped it): fall
+      // back to the plain JSON endpoint so the measurement still happens.
+      : await fetchCorridorJSON(q, controller.signal);
+
     if (!validCorridorReading(data, to)) throw new Error('The corridor response was incomplete or invalid.');
     saveCorridorReading(to, data);
     if (requestId !== corridorRequest || $('to').value !== to) return;
@@ -1253,6 +1432,10 @@ async function measure() {
     writeURLState({ to, sizes: sizes.norm, live: true });
     $('status').textContent = '';
   } catch (e) {
+    // An intentional cancel is not a failure (#640): the previous state stays
+    // on screen and the status says so. cancelActiveMeasurement has already
+    // restored the controls and set the message.
+    if (e.name === 'AbortError') return;
     if (requestId !== corridorRequest || $('to').value !== to) return;
     if (e.code === 'invalid_sizes') $('sizes').setAttribute('aria-invalid', 'true');
     const cached = readCorridorReading(to);
@@ -1270,8 +1453,13 @@ async function measure() {
     }
     $('status').textContent = '';
   } finally {
-    $('status').textContent = '';
-    $('run').disabled = false;
+    // Only the measurement that is still current may reset the controls: a
+    // superseding measurement, or a cancel that already cleared it, owns the
+    // UI now and must not be clobbered by this one finishing.
+    if (activeMeasurement && activeMeasurement.controller === controller) {
+      activeMeasurement = null;
+      setMeasuring(false);
+    }
   }
 }
 
@@ -1295,10 +1483,24 @@ function errorPanel(prefix, e) {
   return `<div class="panel err">${esc(prefix)}: ${esc(e.message)}</div>`;
 }
 
+// fetchCorridorJSON is the non-streaming path, used only when the response
+// carries no readable stream (an old browser, or a proxy that stripped the
+// body). It is the exact request the endpoint has always served; the abort is
+// honoured after the fact by checking the signal, since fetch() here is given
+// no signal. It is defined after measure() so it never shadows the validation
+// order the sizes contract asserts (validation, then the request).
+async function fetchCorridorJSON(q, signal) {
+  const r = await fetch(`/api/corridor?${q}&live=1`);
+  if (signal && signal.aborted) throw new DOMException('measurement cancelled', 'AbortError');
+  if (!r.ok) throw await streamError(r);
+  return await r.json();
+}
+
 // The sizes the last live measurement asked for, '' when it used the default
 // ladder. Purely a display label: the rendered figures are always the rungs
 // the API actually returned, whatever was requested.
 let lastRequestedSizes = '';
+
 let currentCorridorReading = null;
 let currentChainHeads = null;
 let printProvenancePromise = Promise.resolve();
@@ -1526,6 +1728,7 @@ function render(d, options = {}) {
   const cached = options.cached === true;
   const recordedAt = cached ? options.recordedAt : (d.stale?.recorded_at || d.measured_at);
   const fetchedAt = cached ? options.fetchedAt : '';
+  const ageHuman = cached ? formatReadingAge(recordedAt) : (d.stale?.age_human || 'historical reading');
   const relAge = formatRelativeAge(recordedAt);
   const localTime = formatLocalDateTime(recordedAt);
   const timeDisplay = recordedAt
@@ -1550,6 +1753,7 @@ function render(d, options = {}) {
     ${d.scored ? recommendationBlock(d) : unscoredBlock(d)}
     <p class="meta">Reference ${esc(d.reference_pair)} mid
       <strong>${esc(d.reference_mid)}</strong> via ${esc(d.reference_source)} ·
+      agreement <strong>${esc(d.reference_agreement || 'UNKNOWN')}</strong>${helpLink('reference-agreement', 'reference agreement')} ·
       measured ${esc(d.measured_at)}</p>
   </section>`);
 
@@ -1794,7 +1998,7 @@ function recommendationBlock(d) {
   const q = d.recommended;
   return `<div class="rec-some">Recommended at ${esc(d.recommended_size)}
     ${esc(d.send_asset.code)}: ${esc(q.description)} &mdash; ${formatPct(q.loss_pct)}%
-    below mid, graded ${verdictMark(q.verdict)}${esc(q.verdict)}.</div>`;
+    below mid, graded ${verdictMark(q.verdict)}${esc(q.verdict)}${helpLink('verdict', q.verdict)}.</div>`;
 }
 
 // A log-x line chart. Loss is clamped to 0–100 so the shape of the curve, not
@@ -2015,7 +2219,7 @@ function table(rungs, scored, depends) {
         <td class="num">${esc(q.receive_amount)}</td>
         <td class="num">${esc(q.effective_rate)}</td>
         <td class="num ${verdictClass(q.verdict)}">${formatPct(q.loss_pct)}%</td>
-        <td class="${verdictClass(q.verdict)}"><span class="v-cell">${verdictMark(q.verdict)}${esc(q.verdict)}</span></td>
+        <td class="${verdictClass(q.verdict)}"><span class="v-cell">${verdictMark(q.verdict)}${esc(q.verdict)}</span>${helpMark('verdict', q.verdict)}</td>
         <td class="num">${pathCount}</td>
         <td>${esc(q.description)}${decomp}</td>
       </tr>`;
@@ -2038,7 +2242,7 @@ function table(rungs, scored, depends) {
     return `<table>
       <caption>Every size measured, and the loss and verdict the curve plots</caption>
       <thead><tr>
-        <th scope="col">Send</th><th scope="col">Receive</th><th scope="col">Rate</th><th scope="col">Loss</th><th scope="col">Verdict</th>${pathCountHeader}
+        <th scope="col">Send</th><th scope="col">Receive</th><th scope="col">Rate</th><th scope="col">Loss</th><th scope="col">Verdict</th>${pathCountHeader}<th scope="col">Path</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
@@ -2047,7 +2251,7 @@ function table(rungs, scored, depends) {
     <caption>Every size measured. No loss or verdict: the reference providers
       disagreed, so none was derived</caption>
     <thead><tr>
-      <th scope="col">Send</th><th scope="col">Receive</th><th scope="col">Rate</th>${pathCountHeader}
+      <th scope="col">Send</th><th scope="col">Receive</th><th scope="col">Rate</th>${pathCountHeader}<th scope="col">Path</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
@@ -2207,6 +2411,9 @@ let trendState = null; // { data, size }
 
 async function loadTrend() {
   const to = $('to').value;
+  // Showing the trend leaves the live view, so stop any measurement still in
+  // flight rather than letting its ladder run on against Horizon (#639).
+  cancelActiveMeasurement('');
   $('trend').disabled = true;
   $('status').textContent = 'loading stored history…';
   try {
@@ -2246,6 +2453,35 @@ function defaultTrendSize(data) {
   return sizes.length ? sizes[0] : '';
 }
 
+// measurabilityBlock renders the trend's measurability figure (#638).
+//
+// "Measurable" is the engine's own definition (runstore.MeasurabilityOf): a
+// sweep that produced at least one priced rung. The rate is always printed
+// with the count it stands on — never a bare percentage — and when the count
+// is below the sample size the project uses for a mean (30), it says so,
+// because "100% of 2 runs" and "100% of 200 runs" are not the same claim. The
+// whole block is absent when the API sends no measurability figure: an uptime
+// that stands on no runs is unknown, not 0%.
+function measurabilityBlock(m) {
+  const total = m.total_runs;
+  const sample = `${total} stored ${total === 1 ? 'run' : 'runs'}`;
+  const counts = `${m.measurable_runs} measurable, ${m.not_measurable_runs} not`;
+  const hasRate = m.uptime_pct !== undefined && m.uptime_pct !== '';
+  const line = hasRate
+    ? `Measurable in <strong>${esc(formatPct(m.uptime_pct))}%</strong> of ${sample} (${counts}).`
+    : `No stored run produced a measurable ladder (0 of ${sample}).`;
+  const low = m.low_sample
+    ? ` <span class="case">Low sample: fewer than 30 runs, so treat this rate as indicative rather than settled.</span>`
+    : '';
+  return `<section class="panel" aria-label="Measurability">
+    <h2>Measurability</h2>
+    <p class="meta">${line}${low}</p>
+    <p class="meta">Runs from ${esc(fmtRunTime(m.first_run_at))} to ${esc(fmtRunTime(m.last_run_at))} UTC.
+    A run that found no market is not measurable, and neither is one that failed
+    to reach an upstream; only a priced ladder counts.</p>
+  </section>`;
+}
+
 function renderTrend() {
   $('print-report-button').disabled = true;
   const d = trendState.data;
@@ -2276,6 +2512,14 @@ function renderTrend() {
     <p class="meta">${referenceSummary(runs)}</p>
     ${divergenceSummary(d.divergence_stats, runs.length)}
   </div>`);
+
+  // Measurability (#638): how often these runs found a market at all. It sits
+  // directly under the header because it qualifies the whole trend — a history
+  // of "0% loss" is a different claim when only one run in ten was measurable.
+  // The rate is never shown without its denominator, and a sample below the
+  // threshold the project uses for a mean (n < 30) is marked as low.
+  if (d.measurability) parts.push(measurabilityBlock(d.measurability));
+
 
   parts.push(`<section class="panel" aria-label="Loss over time">
     <h2>Loss against mid over time</h2>
@@ -2597,7 +2841,7 @@ function runsTable(runs) {
 
   return `<table>
     <thead><tr>
-      <th scope="col">Recorded (UTC)</th><th scope="col">#</th><th scope="col">Integrity</th><th scope="col">Floor loss</th><th scope="col">Worst loss</th><th scope="col">Reference</th>
+      <th scope="col">Recorded (UTC)</th><th scope="col">#</th><th scope="col">Integrity</th><th scope="col">Floor loss${helpMark('floor', 'floor loss')}</th><th scope="col">Worst loss</th><th scope="col">Reference</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
@@ -2605,6 +2849,9 @@ function runsTable(runs) {
 
 $('run').addEventListener('click', measure);
 $('trend').addEventListener('click', loadTrend);
+// The cancel control (#640): abort the in-flight measurement and make clear
+// that the stop was intentional rather than a failure.
+$('cancel-measure').addEventListener('click', () => cancelActiveMeasurement('measurement cancelled'));
 $('print-report-button').addEventListener('click', async () => {
   await printProvenancePromise;
   window.print();

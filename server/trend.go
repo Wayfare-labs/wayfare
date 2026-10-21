@@ -63,6 +63,63 @@ type TrendJSON struct {
 	// explicitly rather than left for a client to infer from an absent key.
 	// Never feeds back into any run's verdict or integrity state above.
 	DivergenceStats DivergenceStatsJSON `json:"divergence_stats"`
+
+	// Measurability reports how often the corridor was measurable across the
+	// runs above: the share of sweeps that produced a priced ladder at all
+	// (issue #526, surfaced in the UI by issue #638). It is a fact about the
+	// measurement, not the price — a NO-MARKET corridor that priced nothing
+	// is not-measurable whether or not its one price was cheap.
+	//
+	// Absent — never a zero — when there is no recorded history: an uptime
+	// that stands on no runs is unknown, not 0%. The rate is always carried
+	// with its denominator (TotalRuns), so no reader sees a percentage
+	// without the sample it rests on.
+	Measurability *MeasurabilityJSON `json:"measurability,omitempty"`
+}
+
+// MeasurabilityJSON is the trend window's measurability figure.
+type MeasurabilityJSON struct {
+	// TotalRuns is the denominator: how many recorded runs the rate covers.
+	TotalRuns         int `json:"total_runs"`
+	MeasurableRuns    int `json:"measurable_runs"`
+	NotMeasurableRuns int `json:"not_measurable_runs"`
+
+	// UptimePct is measurable_runs / total_runs × 100, a decimal string.
+	// Present whenever TotalRuns is non-zero, including a measured "0".
+	UptimePct string `json:"uptime_pct,omitempty"`
+
+	// LowSample is true below the sample size the project treats as enough
+	// to state a figure without a caveat (analysis.MinSampleSizeForMeanStdDev).
+	// It is derived here rather than in the client so the threshold has one
+	// definition and the UI does not invent its own.
+	LowSample bool `json:"low_sample"`
+
+	// FirstRunAt and LastRunAt bound the window the figure covers.
+	FirstRunAt string `json:"first_run_at,omitempty"`
+	LastRunAt  string `json:"last_run_at,omitempty"`
+}
+
+// toMeasurabilityJSON reduces the trend window's runs to the measurability
+// figure. A nil return means there is no history to stand the rate on, so the
+// caller omits the block rather than publish 0% of 0 runs.
+func toMeasurabilityJSON(corridor string, recs []*runstore.Record) *MeasurabilityJSON {
+	runs := make([]runstore.RunMeasurability, 0, len(recs))
+	for _, rec := range recs {
+		runs = append(runs, runstore.RunMeasurabilityOf(rec))
+	}
+	s := runstore.SummarizeMeasurability(corridor, runs)
+	if s == nil {
+		return nil
+	}
+	return &MeasurabilityJSON{
+		TotalRuns:         s.TotalRuns,
+		MeasurableRuns:    s.MeasurableRuns,
+		NotMeasurableRuns: s.NotMeasurableRuns,
+		UptimePct:         s.UptimePct,
+		LowSample:         s.TotalRuns < analysis.MinSampleSizeForMeanStdDev,
+		FirstRunAt:        s.FirstRunAt.UTC().Format(time.RFC3339),
+		LastRunAt:         s.LastRunAt.UTC().Format(time.RFC3339),
+	}
 }
 
 // IntegrityTransitionJSON is one structural change in a trend window.
@@ -205,6 +262,7 @@ func toTrendJSON(recs []*runstore.Record, key, pair string, send, recv asset.Ass
 	for _, transition := range runstore.TransitionsFromRecords(recs) {
 		out.IntegrityTransitions = append(out.IntegrityTransitions, toIntegrityTransitionJSON(transition))
 	}
+	out.Measurability = toMeasurabilityJSON(key, recs)
 	return out
 }
 

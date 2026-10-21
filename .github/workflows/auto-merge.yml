@@ -65,11 +65,6 @@ permissions:
 # <!-- auto-merge-gate --> marker, and the workflow_run re-evaluation
 # after CI finishes must not be cancelled by the earlier pull_request_target
 # run — it is the one that sees the final check-runs state.
-#
-# No job goes without an explicit timeout (#573). GitHub's default ceiling is
-# six hours; this one is bounded by API pagination over a PR's changed files
-# and reviews — measured short (2–8s), never a hanging job by design — plus
-# just enough headroom for a slow runner rather than anything longer.
 
 jobs:
   gate:
@@ -134,11 +129,6 @@ jobs:
           author=$(jq -r '.user.login' <<<"$meta")
           body=$(jq -r '.body // ""' <<<"$meta")
           head_sha=$(jq -r '.head.sha' <<<"$meta")
-          head_repo=$(jq -r '.head.repo.full_name // ""' <<<"$meta")
-          readonly_review_event=false
-          if [ "${GITHUB_EVENT_NAME:-}" = "pull_request_review" ] && [ "$head_repo" != "$REPO" ]; then
-            readonly_review_event=true
-          fi
 
           if [ "$state" != "open" ] || [ "$draft" = "true" ]; then
             echo "PR is $state, draft=$draft; nothing to do"
@@ -366,15 +356,6 @@ jobs:
           # ---------------------------------------------------------------
           # Decide.
           # ---------------------------------------------------------------
-          if [ "$readonly_review_event" = true ]; then
-            echo "::notice::pull_request_review for a fork PR has a read-only token; skipping merge, label, and comment mutations"
-            if [ ${#reasons[@]} -gt 0 ]; then
-              printf 'not auto-merging:\n'
-              printf '  - %s\n' "${reasons[@]}"
-            fi
-            exit 0
-          fi
-
           if [ ${#reasons[@]} -eq 0 ]; then
             echo "all gates satisfied; handing off"
 

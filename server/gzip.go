@@ -105,12 +105,27 @@ func isBodyAllowed(status int) bool {
 	return status != http.StatusNoContent && status != http.StatusNotModified
 }
 
+// isStreamingContentType returns true for response types that must reach the
+// client as the handler wrote them, un-buffered and uncompressed. Server-Sent
+// Events are the current case: a client reads one event at a time, and
+// compressing them would both delay delivery (gzip buffers until it has enough
+// to compress) and strand bytes in the gzip writer until Close, which an open
+// SSE stream never calls.
+func isStreamingContentType(h http.Header) bool {
+	ct := h.Get("Content-Type")
+	if ct == "" {
+		return false
+	}
+	mediaType, _, _ := strings.Cut(ct, ";")
+	return strings.EqualFold(strings.TrimSpace(mediaType), "text/event-stream")
+}
+
 func (g *gzipResponseWriter) WriteHeader(statusCode int) {
 	if g.wroteHeader || g.status != 0 {
 		return
 	}
 	g.status = statusCode
-	if g.Header().Get("Content-Encoding") != "" || !isBodyAllowed(statusCode) {
+	if g.Header().Get("Content-Encoding") != "" || !isBodyAllowed(statusCode) || isStreamingContentType(g.Header()) {
 		g.ResponseWriter.WriteHeader(statusCode)
 		g.wroteHeader = true
 	}
@@ -130,7 +145,7 @@ func (g *gzipResponseWriter) Write(p []byte) (int, error) {
 		}
 		return g.ResponseWriter.Write(p)
 	}
-	if g.Header().Get("Content-Encoding") != "" {
+	if g.Header().Get("Content-Encoding") != "" || isStreamingContentType(g.Header()) {
 		if !g.wroteHeader {
 			status := g.status
 			if status == 0 {

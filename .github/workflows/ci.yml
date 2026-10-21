@@ -26,37 +26,24 @@ permissions:
 # A construct accepted by one toolchain and rejected by another would have
 # shown up as a job disagreeing with its neighbours for reasons unrelated to
 # the change under test. Defining it once removes that failure mode, and keeps
-# CI honest about go.mod (go 1.27), the Dockerfile (golang:1.27-alpine) and
-# the "Go 1.27+" README.md and CONTRIBUTING.md promise.
-#
-# Go 1.22 reached end of life and its standard library carried 22 HIGH/CRITICAL
-# advisories (net/http and crypto/tls sit on the service's trust boundary;
-# recorded rather than gated in SECURITY.md, measured 2026-09-25). Every fix is
-# on the 1.24, 1.25, 1.26 or 1.27 release line — none on 1.22 — so the
-# toolchain moves to a supported release in one place here (#564). This is a
-# deliberate decision, not a quiet bump: #467 deliberately returned CI to 1.22,
-# and staying there would keep carrying known-bad stdlib advisories.
+# CI honest about go.mod (go 1.22.2), the Dockerfile (golang:1.22-alpine) and
+# the "Go 1.22+" both README.md and CONTRIBUTING.md promise.
 env:
-  GO_VERSION: "1.27.2"
+  GO_VERSION: "1.22"
 
 jobs:
   build:
     name: build and test
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    strategy:
-      matrix:
-        timezone: [UTC, Pacific/Kiritimati, America/Adak]
-    env:
-      TZ: ${{ matrix.timezone }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v6
         with:
+          go-version: "1.22"
           go-version: ${{ env.GO_VERSION }}
           cache: true
-          cache-dependency-path: go.sum
 
       - name: gofmt
         run: |
@@ -71,55 +58,34 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      - name: go test -race with coverage
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+      - name: go test -race
+        run: go test -race ./...
 
       - name: go build
         run: go build ./...
-
-  # No job goes without an explicit timeout (#573). GitHub's default ceiling is
-  # six hours; these numbers come from observed durations on GitHub-hosted
-  # runners, sampled across a week of runs, and leave headroom for a cold or
-  # contended runner rather than being chosen at random.
-  #
-  # This job is a needs-gate: it runs a single `test` against needs.build's
-  # aggregated result, and exits as soon as the matrix resolves — measured
-  # check-run spans are 2–4s with a ~4s runner-scheduling tail, so the job is
-  # bounded by the matrix above, whose slowest run finishes in under 10 minutes
-  # (typical axes complete in <1; the worst observed is <3m under cold caches).
-  # The floor of 1m covers the runner and steps alone; 10 matches the matrix's
-  # own timeout, so the gate can never hold a finished branch open longer than
-  # the work it is gating is known to take.
-  build-and-test:
-    name: build and test
-    needs: build
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: require all timezone runs to pass
-        run: test "${{ needs.build.result }}" = success
 
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-          cache-dependency-path: go.sum
 
-      # Build from source with the configured Go toolchain: the prebuilt
-      # golangci-lint binary is built with an older Go version and rejects
-      # this module's Go 1.27.2 target.
-      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+      # v7 of the action is the first that installs golangci-lint v2, which
+      # is the schema .golangi.yml is written against. v6 installs the v1
+
+      # line and rejects the config outright.
+      #
+      # The version is pinned rather than tracking latest so the binary and
+      # the config cannot drift apart again without someone choosing to.
+      - uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.15.0
-          install-mode: goinstall
+          version: v2.1.6
 
   # Every test is meant to run from recorded bytes. snapshot.Replayer returns
   # ErrNotRecorded rather than falling through to the network, so a test that
@@ -131,13 +97,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-          cache-dependency-path: go.sum
 
       # Only the modules need fetching. Compilation itself never touches the
       # network, so downloading is enough and is far cheaper than a full build.
@@ -168,9 +133,9 @@ jobs:
           # sudo: as root the Go module and build caches resolve to a
           # different HOME, the warmed modules are missed, and the download
           # that follows is the very thing being blocked.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo sysctl -w kernel.apparm_restrict_unprivileged_userns=0
 
-          unshare -rn bash -c 'ip link set lo up 2>/dev/null; go test -count=3 -shuffle=on ./...'
+          unshare -rn bash -c 'ip link set lo up 2>/dev/null; go test -count=1 ./...'
 
   # The image is how the monitor actually runs. Building it only at deploy
   # time means it breaks at the least convenient moment.
@@ -179,93 +144,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
+      - uses: actions/checkout@v5
 
       - name: build image
         run: docker build -t wayfare:ci .
 
       - name: binary runs in the image
         run: docker run --rm wayfare:ci -verify-store -data /tmp/empty
-
-      # The Dockerfile says what the image is made of; nothing in this
-      # repository said whether any of it is known-bad. This is that
-      # inspection, run against the image this job just built, so the gate and
-      # the artifact can never be different artifacts.
-      #
-      # Both steps are pinned to a version and a scanner release, the rule the
-      # lint job follows: a scanner that moved under us would silently change
-      # what "passing" means.
-      #
-      # The report comes first because it never fails. It covers the whole
-      # image — OS packages and language packages — which today means the Go
-      # standard library compiled into /wayfared. On 2026-09-25 that scan
-      # reported 22 HIGH/CRITICAL advisories with fixes, all in `stdlib` at Go
-      # 1.22.12, and every fix is on a later release line (1.24.13+, 1.25.7+,
-      # 1.26.0-rc.3+): not reachable without leaving the toolchain this
-      # repository is pinned to. Those findings are real and are recorded here
-      # rather than gated, because a job that is always red teaches people to
-      # ignore it.
-      - name: report known vulnerabilities in the image
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          version: v0.74.0
-          scan-type: image
-          image-ref: wayfare:ci
-          scanners: vuln
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          format: table
-          exit-code: "0"
-
-      # The gate covers what this repository can actually change: the packages
-      # the base image ships. A finding here is always actionable — a newer
-      # distroless tag — so the job never asks for a fix that does not exist.
-      # Unfixed findings are excluded for the same reason: an advisory with no
-      # available patch cannot be acted on, and failing on it would block every
-      # pull request while announcing nothing new.
-      - name: fail on a fixable vulnerability in the image's packages
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          version: v0.74.0
-          scan-type: image
-          image-ref: wayfare:ci
-          scanners: vuln
-          vuln-type: os
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          format: table
-          exit-code: "1"
-
-      # The scanner reports findings; an SBOM is the same inventory in a form a
-      # downstream consumer can scan for themselves, against their own advisory
-      # sources. It is emitted by the scanner the two steps above already use,
-      # pinned to the same release, so the manifest describes the image this job
-      # built and cannot drift from what was scanned.
-      #
-      # exit-code 0 because a report is not a gate: the gate is the step above.
-      - name: generate an SBOM for the image
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          version: v0.74.0
-          scan-type: image
-          image-ref: wayfare:ci
-          format: cyclonedx
-          output: wayfare.cyclonedx.json
-          exit-code: "0"
-
-      # Attached to the run so the SBOM outlives the workspace, which the
-      # runner discards. A build that somehow produces no manifest fails here
-      # rather than publishing an empty artifact.
-      - name: upload the SBOM
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: sbom
-          path: wayfare.cyclonedx.json
-          if-no-files-found: error

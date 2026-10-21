@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -65,6 +66,14 @@ type Server struct {
 	// it. Tests that hammer one endpoint build their own Server or call
 	// NewRateLimiter with a disabled configuration.
 	Limiter *RateLimiter
+
+	// streamOnce lazily builds streamSem. Streaming a corridor holds the
+	// request open for the length of a live measurement — tens of seconds —
+	// so without a bound a handful of clients could pin every connection the
+	// deployment has. Under Go's race detector a lazily built field also
+	// needs the Once: two first requests would otherwise race to set it.
+	streamOnce sync.Once
+	streamSem  chan struct{}
 
 	// now is the clock the handlers stamp a "generated at" field with. It is
 	// swapped in tests, which pin it so the timestamp can be frozen in a
@@ -135,6 +144,7 @@ func (s *Server) budgetFor(n int) time.Duration {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/corridor", s.handleCorridor)
+	mux.HandleFunc("/api/corridor/stream", s.handleCorridorStream)
 	mux.HandleFunc("/api/corridor/trend", s.handleTrend)
 	mux.HandleFunc("/api/chain-heads", s.handleChainHeads)
 	mux.HandleFunc("/api/assets", s.handleAssets)
@@ -189,16 +199,36 @@ func withCORS(next http.Handler) http.Handler {
 
 // handlers -------------------------------------------------------------------
 
-func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
-	started := time.Now()
+// corridorRequest is the validated form of a corridor query: the two assets,
+// the reference pair they are scored against, and the sizes to price. It is
+// built once and shared by the JSON corridor endpoint and the streaming one
+// (issue #639), so both answer a malformed request identically.
+type corridorRequest struct {
+	from, to  string
+	sendAsset asset.Asset
+	recvAsset asset.Asset
+	pegBase   string
+	pegQuote  string
+	sizes     []decimal.Decimal
 
-	if r.Method != http.MethodGet {
-		writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET is supported")
-		return
-	}
-	if err := checkParams(r, "from", "to", "sizes", "live", "pretty"); err != nil {
+	// onRung, when set, receives each rung as it resolves. Only the streaming
+	// handler sets it; the JSON handler leaves it nil and blocks for the whole
+	// ladder.
+	onRung func(index int, rung route.Rung)
+}
+
+// pair is the reference pair the corridor is scored against, e.g. "USD/NGN".
+func (c *corridorRequest) pair() string { return c.pegBase + "/" + c.pegQuote }
+
+// parseCorridorRequest validates the from/to/sizes parameters shared by the
+// corridor endpoints. It writes the error response itself and returns ok=false
+// when the request is invalid, so both handlers reject a bad request the same
+// way rather than each re-deriving the checks. allowed lists the query
+// parameters accepted beyond from/to/sizes.
+func (s *Server) parseCorridorRequest(w http.ResponseWriter, r *http.Request, allowed ...string) (*corridorRequest, bool) {
+	if err := checkParams(r, allowed...); err != nil {
 		writeError(w, r, http.StatusBadRequest, codeInvalidQuery, err.Error())
-		return
+		return nil, false
 	}
 
 	from := param(r, "from", "USDC")
@@ -209,14 +239,14 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, codeUnknownSendAsset, fmt.Sprintf(
 			"unknown send asset %q; verified assets are %s",
 			from, strings.Join(asset.KnownCodes(), ", ")))
-		return
+		return nil, false
 	}
 	recvAsset, ok := asset.Lookup(to)
 	if !ok {
 		writeError(w, r, http.StatusBadRequest, codeUnknownReceiveAsset, fmt.Sprintf(
 			"unknown receive asset %q; verified assets are %s",
 			to, strings.Join(asset.KnownCodes(), ", ")))
-		return
+		return nil, false
 	}
 
 	pegQuote, ok := asset.FiatPeg(recvAsset)
@@ -224,7 +254,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, codeNoFiatPeg, fmt.Sprintf(
 			"no verified fiat peg for %s, so there is no independent rate to score it against",
 			recvAsset.Code))
-		return
+		return nil, false
 	}
 	pegBase, ok := asset.FiatPeg(sendAsset)
 	if !ok {
@@ -234,8 +264,109 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	sizes, err := parseSizes(r.URL.Query().Get("sizes"))
 	if err != nil {
 		writeError(w, r, http.StatusBadRequest, codeInvalidSizes, err.Error())
+		return nil, false
+	}
+
+	return &corridorRequest{
+		from:      from,
+		to:        to,
+		sendAsset: sendAsset,
+		recvAsset: recvAsset,
+		pegBase:   pegBase,
+		pegQuote:  pegQuote,
+		sizes:     sizes,
+	}, true
+}
+
+// measureLive prices the corridor and reduces the result to the body an
+// endpoint should send. It returns the HTTP status and whether the body came
+// from a live measurement (false when it is a stale fallback). It writes
+// nothing, so the JSON and streaming handlers can each frame the same result
+// their own way — one as a body, the other as a final SSE event.
+//
+// The failure policy is deliberately unchanged from the JSON endpoint's: a
+// live failure with history serves the newest stored run with an explicit
+// stale envelope, a timeout reports the partial rungs, and a failure with no
+// history is an error. Nothing is ever synthesised to fill the gap.
+func (s *Server) measureLive(ctx context.Context, req *corridorRequest, budget time.Duration) (any, int, bool) {
+	rungs := len(req.sizes)
+	if rungs == 0 {
+		rungs = len(route.DefaultSizes)
+	}
+
+	res, err := s.Engine.Ladder(ctx, route.LadderRequest{
+		SendAsset:      req.sendAsset,
+		ReceiveAsset:   req.recvAsset,
+		Sizes:          req.sizes,
+		ReferenceBase:  req.pegBase,
+		ReferenceQuote: req.pegQuote,
+		OnRung:         req.onRung,
+	})
+	// A ladder whose every rung errored is not a measurement, even though
+	// Ladder itself returns no error: the figures would all be zero and the
+	// body would look exactly like a corridor that priced at nothing. Treat
+	// it as the failure it is.
+	if err == nil && res.Failed() {
+		err = fmt.Errorf("no size could be measured; every request failed to reach an upstream")
+	}
+	if err != nil {
+		// A live measurement failed. If history exists, serve the most
+		// recent stored run with an explicit stale envelope; if it does
+		// not, error. Nothing is ever synthesised to fill the gap — this
+		// is the one place a continuous monitor can quietly betray the
+		// project, by returning a plausible number instead of admitting
+		// it does not currently know.
+		if stale, ok := s.staleFor(ctx, req.sendAsset.Code, req.recvAsset.Code, req.pair()); ok {
+			return stale, http.StatusOK, false
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			completed := []string{}
+			if res != nil {
+				for _, d := range res.CompletedSizes() {
+					completed = append(completed, d.String())
+				}
+			}
+			return map[string]any{
+				"error": fmt.Sprintf("measuring corridor: timed out after %s with %d of %d rungs completed",
+					budget, len(completed), rungs),
+				"code":            codeUpstreamTimeout,
+				"budget":          budget.String(),
+				"rungs_requested": rungs,
+				"rungs_completed": completed,
+			}, http.StatusGatewayTimeout, false
+		}
+		return map[string]string{
+			"error": "measuring corridor: " + err.Error(),
+			"code":  codeMeasurementFailed,
+		}, http.StatusBadGateway, false
+	}
+
+	out := route.ToCorridorJSON(res, req.pair())
+
+	// Checks run after the measurement and cannot alter it. route.WithFindings
+	// is the only composition point and branches on nothing — see the
+	// composition rule in docs/checks.md.
+	if s.Checks != nil {
+		out = route.WithFindings(out, s.Checks.ForAsset(ctx, req.recvAsset))
+	}
+	return out, http.StatusOK, true
+}
+
+func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+
+	if r.Method != http.MethodGet {
+		writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET is supported")
 		return
 	}
+	req, ok := s.parseCorridorRequest(w, r, "from", "to", "sizes", "live", "pretty")
+	if !ok {
+		return
+	}
+
+	from, to := req.from, req.to
+	sendAsset, recvAsset := req.sendAsset, req.recvAsset
+	pegBase, pegQuote, sizes := req.pegBase, req.pegQuote, req.sizes
 
 	// History-first: answer from the chain unless a live reading was asked
 	// for. The stored document is the same shape, so a client needs no
@@ -283,89 +414,20 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), budget)
 	defer cancel()
 
-	res, err := s.Engine.Ladder(ctx, route.LadderRequest{
-		SendAsset:      sendAsset,
-		ReceiveAsset:   recvAsset,
-		Sizes:          sizes,
-		ReferenceBase:  pegBase,
-		ReferenceQuote: pegQuote,
-	})
-	// A ladder whose every rung errored is not a measurement, even though
-	// Ladder itself returns no error: the figures would all be zero and the
-	// body would look exactly like a corridor that priced at nothing. Treat
-	// it as the failure it is.
-	if err == nil && res.Failed() {
-		err = fmt.Errorf("no size could be measured; every request failed to reach an upstream")
-	}
-	if err != nil {
-		// A live measurement failed. If history exists, serve the most
-		// recent stored run with an explicit stale envelope; if it does
-		// not, error. Nothing is ever synthesised to fill the gap — this
-		// is the one place a continuous monitor can quietly betray the
-		// project, by returning a plausible number instead of admitting
-		// it does not currently know.
-		if stale, ok := s.staleFor(ctx, sendAsset.Code, recvAsset.Code, pegBase+"/"+pegQuote); ok {
-			writeJSON(w, r, http.StatusOK, stale)
-			log().Info("corridor measured",
-				"method", r.Method,
-				"path", r.URL.Path,
-				"from", from,
-				"to", to,
-				"sizes", r.URL.Query().Get("sizes"),
-				"live", false,
-				"integrity", stale.Integrity,
-				"duration", time.Since(started).Round(time.Millisecond).String())
-			return
-		}
-		status := http.StatusBadGateway
-		code := codeMeasurementFailed
-		if errors.Is(err, context.DeadlineExceeded) {
-			completed := []string{}
-			if res != nil {
-				for _, d := range res.CompletedSizes() {
-					completed = append(completed, d.String())
-				}
-			}
-			writeJSON(w, r, http.StatusGatewayTimeout, map[string]any{
-				"error": fmt.Sprintf("measuring corridor: timed out after %s with %d of %d rungs completed",
-					budget, len(completed), rungs),
-				"code":            codeUpstreamTimeout,
-				"budget":          budget.String(),
-				"rungs_requested": rungs,
-				"rungs_completed": completed,
-			})
-			return
-		}
-		writeError(w, r, status, code, "measuring corridor: "+err.Error())
-		return
-	}
-
-	out := route.ToCorridorJSON(res, pegBase+"/"+pegQuote)
-
-	// Checks run after the measurement and cannot alter it. route.WithFindings
-	// is the only composition point and branches on nothing — see the
-	// composition rule in docs/checks.md.
-	if s.Checks != nil {
-		out = route.WithFindings(out, s.Checks.ForAsset(ctx, recvAsset))
-	}
-
-	writeJSON(w, r, http.StatusOK, out)
+	body, status, live := s.measureLive(ctx, req, budget)
+	writeJSON(w, r, status, body)
 
 	// Request log: corridor, sizes, duration, and status. Upstream attribution
 	// happens inside the engine; this boundary log attributes the overall
 	// measurement to the HTTP request that asked for it.
-	// actualLive tracks whether this response came from a live measurement
-	// rather than a stale/history response. It is set after the measurement
-	// succeeds, not derived from the query parameter.
-	actualLive := true
 	log().Info("corridor measured",
 		"method", r.Method,
 		"path", r.URL.Path,
 		"from", from,
 		"to", to,
 		"sizes", r.URL.Query().Get("sizes"),
-		"live", actualLive,
-		"integrity", out.Integrity,
+		"live", live,
+		"status", status,
 		"duration", time.Since(started).Round(time.Millisecond).String())
 }
 
@@ -604,6 +666,7 @@ const (
 	codeDivergenceHistory   = "divergence_history_error"
 	codeRateLimited         = "rate_limited"
 	codeNoHistory           = "no_history"
+	codeTooManyStreams      = "too_many_streams"
 )
 
 // checkParams rejects any query parameter outside the endpoint's allow-list.

@@ -84,6 +84,15 @@ func TestErrorCodeContract(t *testing.T) {
 		{"trend zero cursor", http.MethodGet, "/api/corridor/trend?before=0", codeInvalidCursor, http.StatusBadRequest},
 		{"trend negative cursor", http.MethodGet, "/api/corridor/trend?before=-1", codeInvalidCursor, http.StatusBadRequest},
 
+		// /api/corridor/stream is the same measurement, so it shares the
+		// corridor contract; its own refusal — too many live streams — is
+		// covered by TestCorridorStreamRefusesTooManyStreams.
+		{"stream method", http.MethodPost, "/api/corridor/stream", codeMethodNotAllowed, http.StatusMethodNotAllowed},
+		{"stream unknown param", http.MethodGet, "/api/corridor/stream?tp=NGNC", codeInvalidQuery, http.StatusBadRequest},
+		{"stream unknown receive asset", http.MethodGet, "/api/corridor/stream?to=SCAMC", codeUnknownReceiveAsset, http.StatusBadRequest},
+		{"stream no fiat peg", http.MethodGet, "/api/corridor/stream?to=USDC", codeNoFiatPeg, http.StatusBadRequest},
+		{"stream invalid sizes", http.MethodGet, "/api/corridor/stream?sizes=abc", codeInvalidSizes, http.StatusBadRequest},
+
 		// Read-only endpoints still share the method/param contract.
 		{"market-structure method", http.MethodPost, "/api/market-structure", codeMethodNotAllowed, http.StatusMethodNotAllowed},
 		{"market-structure unknown param", http.MethodGet, "/api/market-structure?tp=x", codeInvalidQuery, http.StatusBadRequest},
@@ -128,6 +137,7 @@ func TestErrorCodesAreLowerSnakeCase(t *testing.T) {
 		codeDivergenceHistory,
 		codeRateLimited,
 		codeNoHistory,
+		codeTooManyStreams,
 	}
 	for _, c := range codes {
 		for _, r := range c {
