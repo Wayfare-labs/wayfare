@@ -8,6 +8,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/route"
 )
 
@@ -237,6 +238,88 @@ func TestReferenceProviderEmptyDefaults(t *testing.T) {
 	}
 	if ref.provider == nil {
 		t.Fatal("provider is nil for empty default")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// corridorCodes & toHelp (issue #586)
+// ---------------------------------------------------------------------------
+
+func TestCorridorCodes(t *testing.T) {
+	codes := corridorCodes()
+	if len(codes) == 0 {
+		t.Fatal("corridorCodes() returned no codes")
+	}
+
+	registered := make(map[string]bool)
+	for _, e := range asset.Registry() {
+		if e.Code == "USDC" || e.Peg == "" {
+			continue
+		}
+		registered[e.Code] = true
+	}
+
+	if len(codes) != len(registered) {
+		t.Fatalf("corridorCodes() returned %d codes, want %d", len(codes), len(registered))
+	}
+
+	for _, c := range codes {
+		if !registered[c] {
+			t.Errorf("corridorCodes() returned unregistered code %q", c)
+		}
+		if c == "USDC" {
+			t.Errorf("corridorCodes() should not contain USDC")
+		}
+	}
+}
+
+func TestToHelp(t *testing.T) {
+	help := toHelp()
+	wantPrefix := "destination asset code ("
+	if !strings.HasPrefix(help, wantPrefix) {
+		t.Errorf("toHelp() = %q, want prefix %q", help, wantPrefix)
+	}
+	if !strings.HasSuffix(help, ")") {
+		t.Errorf("toHelp() = %q, want suffix ')'", help)
+	}
+
+	// Acceptance criteria: Test asserts every registered destination appears.
+	for _, e := range asset.Registry() {
+		if e.Code == "USDC" || e.Peg == "" {
+			continue
+		}
+		if !strings.Contains(help, e.Code) {
+			t.Errorf("toHelp() = %q missing registered destination %q", help, e.Code)
+		}
+	}
+
+	// Negative assertions:
+	// USDC is the start of the corridor, not a destination.
+	if strings.Contains(help, "USDC") {
+		t.Errorf("toHelp() = %q should not contain USDC", help)
+	}
+	// Bogus/unregistered tokens must not appear.
+	if strings.Contains(help, "BOGUS") {
+		t.Errorf("toHelp() = %q should not contain bogus asset", help)
+	}
+}
+
+func TestCorridorsMapCoversEveryDestination(t *testing.T) {
+	for _, e := range asset.Registry() {
+		if e.Code == "USDC" || e.Peg == "" {
+			continue
+		}
+		c, ok := corridors[e.Code]
+		if !ok {
+			t.Errorf("corridors map missing registered destination %q", e.Code)
+			continue
+		}
+		if c.dest.Code != e.Code {
+			t.Errorf("corridor for %q has dest.Code %q", e.Code, c.dest.Code)
+		}
+		if c.refPair != e.Peg {
+			t.Errorf("corridor for %q has refPair %q, want %q", e.Code, c.refPair, e.Peg)
+		}
 	}
 }
 

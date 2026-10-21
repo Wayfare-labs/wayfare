@@ -58,6 +58,21 @@ func FromCorridorJSON(c route.CorridorJSON) *Record {
 		Rungs:           make([]Rung, 0, len(c.Rungs)),
 	}
 
+	// The diagnostic attribution is optional: the wire emits it only when a
+	// third provider was consulted on a DISAGREE, and the record preserves it
+	// so a stale replay does not silently drop the one fact that says which
+	// primary was the outlier. A record with no diagnostic leaves every field
+	// empty, which is the same absence the live document carried.
+	if d := c.ReferenceDiagnostic; d != nil {
+		r.Reference.DiagnosticSource = d.Source
+		r.Reference.DiagnosticMid = d.Mid
+		r.Reference.DiagnosticAsOf = d.AsOf
+		r.Reference.DiagnosticOutlier = d.Outlier
+		r.Reference.DiagnosticOutlierDistancePct = d.OutlierDistancePct
+		r.Reference.DiagnosticOtherDistancePct = d.OtherDistancePct
+		r.Reference.DiagnosticReason = d.Reason
+	}
+
 	// Findings are carried into storage word-for-word, so a history-served
 	// reading shows exactly the checks and metrics the live one did. Absent
 	// (nil) when no checks ran — the wire shape's `findings` block is
@@ -123,9 +138,10 @@ func scoredAgainst(c route.CorridorJSON) string {
 // existed, and the scheduler runs without one.
 type Nop struct{}
 
-func (Nop) Append(context.Context, *Record) error                  { return nil }
-func (Nop) Latest(context.Context, string) (*Record, error)        { return nil, nil }
-func (Nop) Recent(context.Context, string, int) ([]*Record, error) { return nil, nil }
-func (Nop) All(context.Context, string) ([]*Record, error)         { return nil, nil }
-func (Nop) Verify(context.Context, string) error                   { return nil }
-func (Nop) Corridors(context.Context) ([]string, error)            { return nil, nil }
+func (Nop) Append(context.Context, *Record) error                               { return nil }
+func (Nop) Latest(context.Context, string) (*Record, error)                     { return nil, nil }
+func (Nop) Recent(context.Context, string, int) ([]*Record, error)              { return nil, nil }
+func (Nop) RecentBefore(context.Context, string, int, int64) ([]*Record, error) { return nil, nil }
+func (Nop) All(context.Context, string) ([]*Record, error)                      { return nil, nil }
+func (Nop) Verify(context.Context, string) error                                { return nil }
+func (Nop) Corridors(context.Context) ([]string, error)                         { return nil, nil }

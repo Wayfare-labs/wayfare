@@ -2,9 +2,9 @@
 
 A tamper-evident history of corridor measurements.
 
-**Schema version 3.** Implemented by `runstore/`. Version 1 and Version 2
-chains still load and still verify — see [Migration to version 2](#migration-to-version-2)
-and [Migration to version 3](#migration-to-version-3).
+**Schema version 4.** Implemented by `runstore/`. Version 1 through 3 chains
+still load and verify; each migration adds optional fields after the previous
+record shape so old preimages remain unchanged.
 
 ---
 
@@ -37,7 +37,7 @@ This is not a blockchain and makes no distributed-consensus claim.
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "seq": 42,
   "recorded_at": "2026-08-21T22:30:40Z",
   "corridor": "USDC-NGNC",
@@ -79,6 +79,7 @@ This is not a blockchain and makes no distributed-consensus claim.
                     "observed": "bid=1350.1000 ask=1350.6400"}],
      "observed_at": "2026-08-21T22:28:00Z"}
   ],
+  "snapshot": "sha256:8a4e…",
   "prev_hash": "sha256:0000…0000",
   "hash": "sha256:6b1f…"
 }
@@ -98,11 +99,24 @@ recommendation it refused to make.
 **`reference` carries both mids, always,** even when the providers agree. A
 corridor's numbers moving because the benchmark changed is a completely
 different event from the corridor moving, and a history recording only the mid
-it scored against cannot distinguish them afterwards. `scored_against` names
-which mid produced the verdicts in that record. Since Version 3 it also
-carries `fetched_at` — when this project last obtained the rate, which can be
-older than `recorded_at` when a cached rate was reused — so a reader can tell
-how old the benchmark was when the reading was taken.
+it scored against cannot distinguish them afterwards. It records both providers'
+timestamps: `as_of` for the scored mid and `secondary_as_of` for the second mid
+(#368). `scored_against` names which mid produced the verdicts in that record.
+Since Version 3 it also carries `fetched_at` — when this project last obtained
+the benchmark from the provider, which can be older than `recorded_at` when a
+cached rate was reused — so a reader can tell how old the benchmark was when the
+reading was taken. Both providers' as-of and fetch times are thus recorded and
+distinguishable from arrival/fetch times.
+
+On a `DISAGREE` where the optional third provider answered, `reference` also
+carries `diagnostic_source`, `diagnostic_mid`, `diagnostic_as_of`,
+`diagnostic_outlier`, `diagnostic_outlier_distance_pct` and
+`diagnostic_other_distance_pct` (plus `diagnostic_reason` when no side could be
+attributed). These fields are `omitempty` and were declared after every earlier
+field, so a record written before the diagnostic existed encodes exactly as it
+always did and still verifies. They are evidence about which primary is the
+outlier; `mid` and `scored_against` are unaffected. See
+[reference providers](reference-providers.md).
 
 **`checks` and `metrics` carry the findings taken with the measurement.** A
 check result preserves its tri-state — `determined: false` is *not* a failure —
@@ -220,7 +234,10 @@ ever written**. A reader verifying last month's history against the new build
 would be told it had been tampered with.
 
 So a shape change is a `Version` bump plus a migration — never a compatible
-change, and never a tidy-up.
+change, and never a tidy-up. Version 4 adds the optional `snapshot` field
+after the Version 3 fields. Earlier records omit it, preserving their original
+JSON preimage and hash; new writes use version 4. This lets existing chains
+continue from their current tip without rewriting or invalidating history.
 
 This is enforced, not merely agreed. `TestRecordHashIsPinned` freezes the hash
 of a fixed record; a purely cosmetic field reorder fails it. The test's own
@@ -301,14 +318,36 @@ Verification, not rewriting, is what makes a mixed chain safe: the new build
 tell a genuine legacy record from a tampered one — and it refuses any other
 version (see [the version-mismatch rule](#the-version-mismatch-rule)).
 
+### Migration to version 4
+
+Version 3 records have no snapshot link. Version 4 adds the optional
+`snapshot` field after every prior record field. When absent, it is omitted
+from JSON, so Version 1 through Version 3 hashes remain unchanged. New records
+written by the monitor carry the content hash of their snapshot artifact.
+
 ### The version-mismatch rule
 
 A record version this build does not recognise is an error, never a best-effort
-parse: `runstore` accepts exactly `1`, `2` and `3`. Relabelling a record to
+parse: `runstore` accepts versions `1` through `4`. Relabelling a record to
 make it parse is falsification, not migration — a record that says `version: 9`
 is a schema the build cannot speak, and guessing at it would hide the mismatch.
 
 ---
+
+## Snapshot artifacts
+
+Scheduled sweeps with a configured data directory store each complete run's
+snapshot beneath `<data>/snapshots/<hex-digest>`. The run record contains the
+`sha256:` digest; the large response bodies stay outside the NDJSON chain.
+The digest covers the exact manifest bytes and each response path and body,
+sorted by path and length-framed before hashing. Snapshot loading also verifies
+each response against its manifest `body_sha256`.
+
+This is content-addressed storage: an artifact's directory name is derived
+from its content, and a record never depends on a timestamp-based lookup.
+`-verify-store` checks each referenced artifact when it is present. A missing
+artifact does not invalidate the hash chain, but the original inputs are no
+longer available for reproducing that run.
 
 ## Storage
 
@@ -410,11 +449,89 @@ head's `hash` has changed even though its measurements are byte-identical.
 That is deliberate — a re-sealed window must not masquerade as the original
 chain — and `TestRotateChangesTheWindowHashes` pins it.
 
+### Exporting a chain as CSV
+
+The history is NDJSON with a nested `reference` block and a full `rungs` array
+per record. That is the right shape for provenance and the wrong shape for a
+spreadsheet: a researcher or journalist has to flatten it before a pivot table
+works, and every hand flattening is a chance to drop or reorder a figure. So
+the binary exports a verified chain as CSV — one row per record.
+
+```bash
+wayfared -export USDC-NGNC -format csv -data ./data > usdc-ngnc.csv
+
+# on a deployed instance
+fly ssh console -C "/wayfared -export USDC-NGNC -format csv -data /data" > usdc-ngnc.csv
+```
+
+`-format` defaults to `csv`, the only implemented format. The corridor is
+matched case-insensitively.
+
+#### The columns
+
+One header row, then one row per record in chronological order (oldest first,
+the same order `Store.All` returns):
+
+```
+recorded_at,corridor,seq,integrity,floor_loss_pct,floor_size,worst_loss_pct,worst_size,reference_mid,reference_source,reference_as_of,reference_fetched_at,reference_scored_against,reference_secondary_mid,reference_secondary_source,reference_secondary_as_of,reference_divergence_pct
+```
+
+Every cell is the stored value copied through unchanged. Money and rate fields
+stay **decimal strings** (`25.02`, `1350.2568`), never floats: parsing them into
+a spreadsheet number at export time would reintroduce exactly the
+binary-floating-point loss the rest of the project refuses, and the exported
+figure would stop matching the published one. The only transformations are the
+two a readable export cannot avoid — `recorded_at` is normalised to UTC RFC3339
+(the store's own format) and `seq` is rendered as a decimal integer.
+
+The export is one row per **measurement**, not one row per size. Per-rung detail
+stays in the NDJSON chain; a column per rung would make the shape depend on the
+ladder width and break in every spreadsheet. Fields that are legitimately absent
+(a `SINGLE` cross-check has no secondary mid, an older record has no
+`fetched_at`) are exported as empty cells, not as zeros or placeholders.
+
+#### Verification comes first
+
+`-export` walks the chain with `Verify` **before it writes anything**, and
+refuses if the chain does not reconcile:
+
+```
+refusing to export: chain failed verification  corridor=USDC-NGNC
+  error="runstore: USDC-NGNC: record seq 1 has hash 424b33fcf120… but its
+  contents hash to 46a5ad0726de…; it was modified after it was written"
+```
+
+The CSV carries no hashes of its own, so an export of an unverified chain could
+not be distinguished from a faithful copy — exporting one would launder the
+provenance claim the chain exists to support. A refused export writes **no
+partial file**: a truncated CSV reads as a short history rather than as a failed
+verification, and nothing on the artifact itself would say which.
+
+#### Exit codes
+
+The codes follow `-verify-store`, so a script that already handles one handles
+the other:
+
+| Code | Meaning |
+|:---:|:---|
+| `0` | Chain verified and exported; the CSV is on stdout |
+| `1` | The chain failed verification. Nothing was written to stdout |
+| `2` | The export could not run: no store configured, unknown or empty corridor, or an unsupported `-format` |
+
+Usage errors are kept separate from verification failures on purpose: a corridor
+with no history, or a misspelled format, is not a finding about the corridor, and
+neither may be reported as one.
+
+The command writes the document to stdout and logs to stderr, so
+`> corridor.csv` always produces a clean file. It does not serve, measure, or
+modify the store.
+
 ### Backups
 
 The chain proves nothing was edited. It does **not** survive the volume dying.
-Copy the NDJSON files off-box on a schedule, and verify after restoring —
-a backup nobody has restored from is a hypothesis. See
+Copy both the NDJSON files and the `snapshots/` artifact directory off-box on a
+schedule, and verify after restoring — a backup nobody has restored from is a
+hypothesis. See
 [deployment.md](deployment.md).
 
 ---
@@ -422,5 +539,6 @@ a backup nobody has restored from is a hypothesis. See
 ## Related
 
 - [rollback.md](rollback.md) — returning to an older image, and verifying the chain it serves
+- [verify-store.md](verify-store.md) — what a verification failure looks like, and its exit codes
 - [snapshot-format.md](snapshot-format.md) — recorded upstream bytes
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — project invariants

@@ -302,7 +302,7 @@ The same pattern works for any package that accepts an `*http.Client`:
 | Package | Field to set |
 |:---|:---|
 | `dex.Client` | `HTTPClient: snap.HTTPClient()` |
-| `monitor.Scheduler` | Set `Engine.DEX.HTTPClient` |
+| `monitor.Scheduler` | Build `dex.Client` with the snapshot client, then assign it to `Engine.DEX` |
 | `checks.Check` (SEP-10, auth flags) | Pass the client to the check struct |
 | `refrate` providers | Set `.Client` on the provider |
 

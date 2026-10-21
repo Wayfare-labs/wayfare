@@ -23,10 +23,13 @@ loss-floor finding.
 
 ## Which providers price the NGN corridor, and what they claim to track
 
-The naira reference mid comes from two providers configured in `refrate/`. The
-[2026-08-08 measurement](corridor-measurements.md#run-of-2026-08-08) was scored
-against **exchangerate-api** as the primary, with **currency-api** as the
-independent secondary cross-check.
+The naira reference mid comes from two scored providers configured in
+`refrate/`. The [2026-08-08 measurement](corridor-measurements.md#run-of-2026-08-08)
+was scored against **exchangerate-api** as the primary, with **currency-api**
+as the independent secondary cross-check. When those two disagree, an optional
+third provider, **floatrates**, is consulted only to attribute which of them is
+the outlier; it is never averaged into the benchmark and never moves the scored
+mid ([reference providers](reference-providers.md)).
 
 ### 1. exchangerate-api — primary (`refrate/exchangerate.go`)
 

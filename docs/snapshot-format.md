@@ -200,10 +200,11 @@ manifest.
 go run ./cmd/ladder -to NGNC -ref currency-api -record testdata/snapshots
 ```
 
-Recording is **opt-in and off by default**. Nothing writes a snapshot during a
-`wayfared` request: a monitor that scribbles to disk on every page view is a
-different program with different failure modes, and capture should be a
-deliberate act by someone who intends to publish the result.
+`cmd/ladder` recording is **opt-in and off by default**. `wayfared` also
+records complete scheduled sweeps when a persistent data directory is
+configured; HTTP requests never trigger snapshot writes. The scheduled
+artifacts are stored by content hash alongside the run store, rather than
+under this document's timestamp-based fixture naming convention.
 
 Two things the capture path refuses:
 

@@ -227,6 +227,7 @@ upstream directly. These are the same hosts the code fetches (`refrate`
 ```bash
 curl -sS -o /dev/null -w '%{http_code}\n' https://open.er-api.com/v6/latest/USD
 curl -sS -o /dev/null -w '%{http_code}\n' https://latest.currency-api.pages.dev/v1/currencies/usd.json
+curl -sS -o /dev/null -w '%{http_code}\n' https://www.floatrates.com/daily/usd.json
 curl -sS -o /dev/null -w '%{http_code}\n' https://horizon.stellar.org/
 ```
 
@@ -273,6 +274,11 @@ Same failure, different surface. `cmd/wayfared` bounds each measurement with
 | Live measurement fails, history exists | `200` with the newest stored run, `live: false` and a `stale` block carrying its age |
 | Live measurement fails, no history | `502` `measurement_failed`, or `504` `upstream_timeout` when the cause was the deadline |
 | Every request fails to reach an upstream | Treated as the failure it is, not as a corridor that priced at nothing (`server/api.go`) |
+
+The deployed instance answers from history before it measures, so it adds a
+first case that never reaches an upstream at all: a corridor the scheduler has
+not recorded returns `404` `no_history`, with nothing attempted and nothing
+failed (`docs/errors.md#a-note-on-no_history`).
 
 Nothing is ever synthesised to fill the gap, so read `live` before reading any
 figure. The public instance also sleeps when idle and its served history is

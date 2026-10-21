@@ -95,7 +95,11 @@ func TestDescriptorRequiresItsLimits(t *testing.T) {
 		})
 	}
 
-	for _, c := range []Check{AnchorAssetISO4217{}, IssuerAuthFlags{}, SEP10EndpointResponds{}, HomeDomainRoundTrip{}} {
+	for _, c := range []Check{
+		AnchorAssetISO4217{}, SEP12ServerPublished{}, SEP31Info{}, IssuerAuthFlags{},
+		SEP10EndpointResponds{}, SEP24InfoListsAsset{}, SEP38QuoteServerPublished{},
+		IssuerFlagImmutability{}, HomeDomainRoundTrip{},
+	} {
 		d := c.Describe()
 		if err := d.Validate(); err != nil {
 			t.Errorf("%s: %v", d.ID, err)
@@ -807,7 +811,6 @@ func TestSEP24InfoListsAsset(t *testing.T) {
 		{name: "server error", status: 503, body: `{}`,
 			determined: true, passed: false, contains: "HTTP 503"},
 	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := flagServer(t, tc.status, tc.body)
@@ -832,6 +835,113 @@ func TestSEP24InfoNotDeclaredIsUndetermined(t *testing.T) {
 		t.Fatalf("result = determined=%v reason=%q, want undetermined absent server", r.Determined, r.Reason)
 	}
 }
+
+func TestSEP12ServerPublished(t *testing.T) {
+	cases := []struct {
+		name       string
+		profile    *anchor.Profile
+		determined bool
+		passed     bool
+	}{
+		{name: "published, without probing", profile: &anchor.Profile{
+			Domain: "example.test", TOML: anchor.TOML{KYCServer: "https://kyc.example.test"},
+		}, determined: true, passed: true},
+		{name: "not published", profile: &anchor.Profile{Domain: "example.test"}, determined: true},
+		{name: "profile missing", determined: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := Run(ctx(), SEP12ServerPublished{}, Subject{Profile: tc.profile})
+			if r.Determined != tc.determined {
+				t.Fatalf("Determined = %v, want %v", r.Determined, tc.determined)
+			}
+			if tc.determined && r.Passed != tc.passed {
+				t.Errorf("Passed = %v, want %v", r.Passed, tc.passed)
+			}
+			if tc.determined && len(r.Evidence) == 0 {
+				t.Error("determined publication result must carry evidence")
+			}
+		})
+	}
+}
+
+func TestSEP31Info(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		body       string
+		determined bool
+		passed     bool
+	}{
+		{name: "enabled asset", status: 200, body: `{"receive":{"NGNC":{"enabled":true}}}`,
+			determined: true, passed: true},
+		{name: "asset not listed", status: 200, body: `{"receive":{"OTHER":{"enabled":true}}}`,
+			determined: true},
+		{name: "asset disabled", status: 200, body: `{"receive":{"NGNC":{"enabled":false}}}`,
+			determined: true},
+		{name: "missing enabled flag", status: 200, body: `{"receive":{"NGNC":{}}}`,
+			determined: true},
+		{name: "server error", status: 503, body: `{}`, determined: true},
+		{name: "malformed info", status: 200, body: `not json`, determined: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := flagServer(t, tc.status, tc.body)
+			profile := &anchor.Profile{Domain: "example.test", TOML: anchor.TOML{
+				DirectPaymentServer: srv.URL + "/sep31/",
+			}}
+			var gotPath string
+			client := srv.Client()
+			originalTransport := client.Transport
+			client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				gotPath = req.URL.Path
+				return originalTransport.RoundTrip(req)
+			})
+			r := Run(ctx(), SEP31Info{HTTPClient: client}, Subject{
+				Profile: profile, Asset: asset.NGNC(),
+			})
+			if gotPath != "/sep31/info" {
+				t.Errorf("request path = %q, want /sep31/info", gotPath)
+			}
+			if r.Determined != tc.determined {
+				t.Fatalf("Determined = %v, want %v (summary %q, reason %q)",
+					r.Determined, tc.determined, r.Summary, r.Reason)
+			}
+			if tc.determined && r.Passed != tc.passed {
+				t.Errorf("Passed = %v, want %v (summary %q)", r.Passed, tc.passed, r.Summary)
+			}
+			if len(r.Evidence) == 0 {
+				t.Error("SEP-31 result must carry evidence")
+			}
+		})
+	}
+}
+
+func TestSEP31InfoUndeterminedInputs(t *testing.T) {
+	t.Run("profile missing", func(t *testing.T) {
+		r := Run(ctx(), SEP31Info{}, Subject{Asset: asset.NGNC()})
+		if r.Determined {
+			t.Error("missing profile must be undetermined")
+		}
+	})
+	t.Run("asset missing", func(t *testing.T) {
+		r := Run(ctx(), SEP31Info{}, Subject{Profile: &anchor.Profile{}})
+		if r.Determined {
+			t.Error("missing asset must be undetermined")
+		}
+	})
+	t.Run("server not published", func(t *testing.T) {
+		r := Run(ctx(), SEP31Info{}, Subject{Profile: &anchor.Profile{Domain: "example.test"}, Asset: asset.NGNC()})
+		if !r.Failed() {
+			t.Errorf("an anchor with no declared SEP-31 server should fail, got determined=%v passed=%v",
+				r.Determined, r.Passed)
+		}
+	})
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 // SSRF guard ------------------------------------------------------------------
 

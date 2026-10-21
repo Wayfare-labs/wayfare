@@ -35,14 +35,16 @@ type Runner struct {
 	Timeout time.Duration
 }
 
-// Default returns the reference checks.
+// Default returns the project's built-in checks.
 //
-// Deliberately small. These three are the worked examples contributors copy,
+// Deliberately small. These checks are the worked examples contributors copy,
 // and a long default list would make the set feel closed rather than like the
 // beginning of a backlog.
 func (r *Runner) Default() []Check {
 	return []Check{
 		AnchorAssetISO4217{},
+		SEP12ServerPublished{},
+		SEP31Info{HTTPClient: r.client()},
 		SEP10EndpointResponds{HTTPClient: r.client()},
 		SEP24InfoListsAsset{HTTPClient: r.client()},
 		SEP38QuoteServerPublished{},

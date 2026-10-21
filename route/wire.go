@@ -26,8 +26,37 @@ type QuoteJSON struct {
 	// the field is on the wire from the start so a caller never has to
 	// guess which rail a figure came from, and the two are never silently
 	// conflated into one number.
-	Kind          string   `json:"kind"`
-	Description   string   `json:"description"`
+	Kind        string `json:"kind"`
+	Description string `json:"description"`
+
+	// Hops is the same path as structured data: one entry per asset, in
+	// execution order, both endpoints included — [send, …intermediates,
+	// receive]. Each entry carries that asset's identity as established:
+	// code, issuer where known, peg where known (see AssetJSON).
+	//
+	// Description stays exactly as it was — display text, and the field
+	// existing clients already read. Hops exists because that string
+	// cannot be consumed: it names codes only, so a reader cannot tell
+	// which project's NGNC a path touched, and asking a client to parse
+	// prose (or guess issuers from codes) to answer that is the identity
+	// error this project refuses everywhere else. Whether a route crosses
+	// a particular issuer is the exact question the DERIVATIVE integrity
+	// state answers and the route explorer exists to show; this is the
+	// data that answers it without a parse (backlog #84, issue #100).
+	//
+	// An asset with no code to publish is skipped rather than emitted as
+	// an empty placeholder — a hop must identify something to be a hop.
+	// A hop whose issuing account could not be established carries
+	// issuer_unknown rather than a silently missing field.
+	//
+	// Null only on a stale replay: runstore.Rung records the description
+	// string and has no home for the hops (widening the record is a
+	// schema migration with its own review bar), and rebuilding them from
+	// Description would be exactly the prose parse this field exists to
+	// make unnecessary. Null means "not recorded", never "no
+	// intermediate assets".
+	Hops []AssetJSON `json:"hops"`
+
 	Source        string   `json:"source"`
 	ReceiveAmount string   `json:"receive_amount"`
 	EffectiveRate string   `json:"effective_rate"`
@@ -89,6 +118,22 @@ type RungJSON struct {
 	Error        string         `json:"error,omitempty"`
 }
 
+// ReferenceDiagnosticJSON is the third-provider attribution of a DISAGREE.
+//
+// It is present only when a diagnostic provider was configured and the two
+// scored providers disagreed. It is evidence about which primary is the
+// outlier, not an input: reference_mid, reference_source and every verdict are
+// chosen exactly as they would be without it.
+type ReferenceDiagnosticJSON struct {
+	Source             string `json:"source"`
+	Mid                string `json:"mid,omitempty"`
+	AsOf               string `json:"as_of,omitempty"`
+	Outlier            string `json:"outlier,omitempty"`
+	OutlierDistancePct string `json:"outlier_distance_pct,omitempty"`
+	OtherDistancePct   string `json:"other_distance_pct,omitempty"`
+	Reason             string `json:"reason,omitempty"`
+}
+
 type CorridorJSON struct {
 	SendAsset    AssetJSON `json:"send_asset"`
 	ReceiveAsset AssetJSON `json:"receive_asset"`
@@ -107,12 +152,13 @@ type CorridorJSON struct {
 	// verdict could honestly be derived from either; a client rendering the
 	// loss curve without checking it would show zeroes as though they were
 	// measurements.
-	ReferenceAgreement       string `json:"reference_agreement"`
-	ReferenceSecondaryMid    string `json:"reference_secondary_mid,omitempty"`
-	ReferenceSecondarySource string `json:"reference_secondary_source,omitempty"`
-	ReferenceDivergencePct   string `json:"reference_divergence_pct,omitempty"`
-	ReferenceNote            string `json:"reference_note,omitempty"`
-	Scored                   bool   `json:"scored"`
+	ReferenceAgreement       string                   `json:"reference_agreement"`
+	ReferenceSecondaryMid    string                   `json:"reference_secondary_mid,omitempty"`
+	ReferenceSecondarySource string                   `json:"reference_secondary_source,omitempty"`
+	ReferenceDivergencePct   string                   `json:"reference_divergence_pct,omitempty"`
+	ReferenceNote            string                   `json:"reference_note,omitempty"`
+	ReferenceDiagnostic      *ReferenceDiagnosticJSON `json:"reference_diagnostic,omitempty"`
+	Scored                   bool                     `json:"scored"`
 
 	// ReferenceAsOf is the upstream provider's rate timestamp. Omitted if
 	// the provider provided no timestamp.
@@ -202,17 +248,35 @@ type StaleJSON struct {
 // that has only a bare code to work from at all (see route.AssetJSON{Code:
 // code} call sites), because in both cases a wire form built from a guess
 // would state an identity nothing verified.
+//
+// IssuerUnknown is the explicit companion to that absence: it is emitted
+// exactly when the asset names a code but the issuing account could not be
+// established, so the two ways `issuer` can be empty — "there is no issuer
+// by nature" (native XLM, off-chain fiat, identified in full by the wire
+// form above) and "an issuer exists but was never established" — are never
+// indistinguishable in the JSON. Omitting the field silently would make a
+// client guess issuers from codes, which is the identity failure a hops
+// array exists to end; a hop that cannot say who issued it says so.
 type AssetJSON struct {
-	Code   string `json:"code"`
-	Issuer string `json:"issuer,omitempty"`
-	Peg    string `json:"peg,omitempty"`
-	Asset  string `json:"asset,omitempty"`
+	Code          string `json:"code"`
+	Issuer        string `json:"issuer,omitempty"`
+	IssuerUnknown bool   `json:"issuer_unknown,omitempty"`
+	Peg           string `json:"peg,omitempty"`
+	Asset         string `json:"asset,omitempty"`
 }
 
 func ToAssetJSON(a asset.Asset) AssetJSON {
 	j := AssetJSON{Code: a.Code, Issuer: a.Issuer}
 	if a.Identifiable() {
 		j.Asset = a.SEP38()
+	} else if a.Code != "" {
+		// A code with no wire form behind it: native and fiat always
+		// render above, so this is an issued asset (or an unrecognised
+		// kind) naming a code whose identity nothing established. Say so
+		// rather than let the empty issuer field read as "this asset has
+		// no issuer". An asset with no code at all names nothing and
+		// gets no marker — there is no identity question to answer.
+		j.IssuerUnknown = true
 	}
 	if peg, ok := asset.FiatPeg(a); ok {
 		j.Peg = peg
@@ -231,6 +295,7 @@ func ToQuoteJSON(q *Quote) *QuoteJSON {
 	return &QuoteJSON{
 		Kind:          string(q.Kind),
 		Description:   q.Description,
+		Hops:          hopsJSON(q),
 		Source:        q.Source,
 		ReceiveAmount: q.ReceiveAmount.String(),
 		EffectiveRate: q.EffectiveRate.String(),
@@ -240,6 +305,31 @@ func ToQuoteJSON(q *Quote) *QuoteJSON {
 		PathCount:     q.PathCount,
 		Warnings:      w,
 	}
+}
+
+// hopsJSON renders the quote's path as structured hops in execution order:
+// the send asset, every intermediate, the receive asset — the same sequence
+// Description draws its codes from.
+//
+// An asset with no code is skipped rather than published as an empty hop. A
+// placeholder with a blank code identifies nothing at all, so emitting one
+// would put a hop on the wire that no pathfinding ever returned; the
+// endpoints of any path the engine priced always carry codes, so a hops
+// array from a real quote always includes both.
+func hopsJSON(q *Quote) []AssetJSON {
+	seq := make([]asset.Asset, 0, len(q.Hops)+2)
+	seq = append(seq, q.SendAsset)
+	seq = append(seq, q.Hops...)
+	seq = append(seq, q.ReceiveAsset)
+
+	hops := make([]AssetJSON, 0, len(seq))
+	for _, a := range seq {
+		if a.Code == "" {
+			continue
+		}
+		hops = append(hops, ToAssetJSON(a))
+	}
+	return hops
 }
 
 // ToCostBlockJSON renders a decomposition for the wire.
@@ -307,6 +397,27 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 	}
 	if !l.Reference.DivergencePct.IsZero() {
 		out.ReferenceDivergencePct = l.Reference.DivergencePct.StringFixed(4)
+	}
+	if d := l.Reference.Diagnostic; d != nil {
+		out.ReferenceDiagnostic = &ReferenceDiagnosticJSON{
+			Source: d.Source,
+			Reason: d.Reason,
+		}
+		// A failed diagnostic has no mid; zero is absence, not a quoted
+		// figure, so it is omitted rather than published as "0".
+		if !d.Mid.IsZero() {
+			out.ReferenceDiagnostic.Mid = d.Mid.String()
+		}
+		if !d.AsOf.IsZero() {
+			out.ReferenceDiagnostic.AsOf = d.AsOf.UTC().Format(time.RFC3339)
+		}
+		out.ReferenceDiagnostic.Outlier = d.Outlier
+		if !d.OutlierDistancePct.IsZero() {
+			out.ReferenceDiagnostic.OutlierDistancePct = d.OutlierDistancePct.StringFixed(4)
+		}
+		if !d.OtherDistancePct.IsZero() {
+			out.ReferenceDiagnostic.OtherDistancePct = d.OtherDistancePct.StringFixed(4)
+		}
 	}
 	if l.Parallel != nil {
 		out.ParallelStatus = l.Parallel.Status.String()

@@ -1,9 +1,11 @@
 # Plan: the Horizon → Stellar RPC migration (RPC has no pathfinding)
 
-**Status: plan only — no code changes.** This document decides nothing by
-writing code; it establishes the facts, costs and risks that a later decision
-issue should be judged against. Tracked as
-[#11](https://github.com/Wayfare-labs/wayfare/issues/11) (backlog #112).
+**Status: step 1 landed (2026-10-19) — the `Pathfinder` interface seam is in
+`route`; the migration decision remains open.** Beyond that seam this document
+decides nothing by writing code; it establishes the facts, costs and risks
+that a later decision issue should be judged against. Tracked as
+[#11](https://github.com/Wayfare-labs/wayfare/issues/11) (backlog #112); the
+seam itself is [#580](https://github.com/Wayfare-labs/wayfare/issues/580).
 
 **Headline finding:** the capability Wayfare's pricing depends on —
 `/paths/strict-send` — does not exist anywhere in Stellar RPC, and SDF's own
@@ -216,10 +218,17 @@ type Pathfinder interface {
         probe decimal.Decimal) (*dex.Slippage, error)
 }
 
-// route.Engine.DEX changes from *dex.Client to Pathfinder.
+// route.Engine.DEX is now Pathfinder.
 ```
 
-`dex.Client` already satisfies this — the change is mechanical and changes
+**Landed 2026-10-19:** [`route.Pathfinder`](../route/pathfinder.go) is the
+seam, `route.Engine.DEX` is that interface, and `dex.Client` remains the only
+implementation — asserted at compile time. A contract test drives the full
+path set through the interface, and a second pins that corridor integrity is
+classified from every path, so the semantic requirement above is enforceable
+for any future implementer.
+
+`dex.Client` satisfies this — the change was mechanical and changed
 no behavior. It deliberately does **not** include `OrderBook`: that method is
 a diagnostic for `checks`, a separate consumer, and keeping the interface
 narrow to exactly what `route` calls means the contract is the surface that
@@ -258,7 +267,7 @@ immediate work** — defer the decision without forgetting it.
 
 **Do Option E now; re-open the decision only when the facts change.**
 
-1. **Immediately** — land the `Pathfinder` interface seam (Section 5). It is
+1. **Landed 2026-10-19 — the `Pathfinder` interface seam (Section 5).** It is
    the whole answer to "defer without forgetting": the moment a replacement
    exists, `route` accepts it with no further refactor, and the moment a
    shutdown date is announced, the question is reduced from "how do we
@@ -293,6 +302,8 @@ open.
 - [`dex/dex.go`](../dex/dex.go) — the coupling surface and the 2026-08-04
   AMM-vs-order-book measurement that sets the correctness bar
 - [`dex/health.go`](../dex/health.go) — the `/order_book` diagnostic
+- [`route/pathfinder.go`](../route/pathfinder.go) — the landed seam and its
+  semantic contract
 - [`route/route.go`](../route/route.go) — `quoteDEX` and `classify`, the
   consumers that require the full path set
 - [`docs/upstream-failures.md`](upstream-failures.md) — how Horizon failure

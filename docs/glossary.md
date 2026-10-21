@@ -130,6 +130,12 @@ choice rather than a measurement.
 loss. Choosing it ensures the project's bias against flattering a corridor
 holds even when providers disagree.
 
+**Diagnosing DISAGREE.** The conservative rule can say a disagreement exists,
+not which side is wrong. An optional third provider (`floatrates`) is consulted
+only on `DISAGREE` and reports which primary is farther from it in
+`reference_diagnostic`. It is never averaged into the benchmark and never moves
+the scored mid; see [reference providers](reference-providers.md).
+
 **`Scorable()`** returns false for `MALFUNCTION` — a verdict derived from
 a malfunctioning benchmark is not a measurement.
 

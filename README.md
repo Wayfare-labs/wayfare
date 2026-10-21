@@ -35,9 +35,9 @@ records are written by `.github/workflows/measure.yml` and committed to `data/`.
 The committed history is a bounded window, not the whole chain: each corridor
 keeps its newest 366 records and rotates the rest (ADR 007) — the dropped,
 older records live on in the repository's git history. No sweep has reached
-`main` since 2026-08-22 — the workflow could not push
-([#63](https://github.com/Wayfare-labs/wayfare/issues/63)) and then could not
-open a pull request
+`main` since 2026-08-22 — the push rejection (#63) was fixed by switching to
+pull requests, but the workflow cannot open one because Actions may not create
+PRs
 ([#555](https://github.com/Wayfare-labs/wayfare/issues/555)) — so the served
 history is far older than its six-hour cadence implies. Read
 `stale.age_human` rather than assuming. The mechanism — history embedded at
@@ -311,9 +311,11 @@ identical zero-valued figures.
 
 The architectural decision behind this contract is documented in **[ADR: reference mids are never averaged](docs/adr-reference-mids.md)**.
 
-Two providers are queried per measurement. Rates are **never averaged**: a
+Two providers are scored per measurement. Rates are **never averaged**: a
 blended mid names no provider, and every figure has to be traceable to a source
-a reader can check.
+a reader can check. When those two disagree, an independent third provider is
+consulted only to report which one is the outlier; it never enters the scored
+mid ([reference providers](docs/reference-providers.md)).
 
 | Divergence | State | Scored against |
 |:---|:---|:---|
@@ -429,7 +431,7 @@ What verification looks like — including broken-chain output: **[docs/verify-s
 | Package | Responsibility |
 |:---|:---|
 | `asset` | Corridor endpoints, verified issuers, the fiat-peg registry |
-| `refrate` | Reference mid-market rates: two providers, cached, cross-checked |
+| `refrate` | Reference mid-market rates: two scored providers plus a diagnostic third, cached, cross-checked |
 | `anchor` | SEP-1 discovery — can this anchor be priced at all, and which SEPs does it advertise? |
 | `sep38` | Anchor RFQ client, with the fee-denomination identity |
 | `dex` | On-chain pricing via Horizon pathfinding, plus market health |
@@ -463,7 +465,12 @@ go run ./cmd/ladder -checks=false    # skip counterparty checks (no findings blo
 go run ./cmd/wayfared                       # serve + measure every 6h
 go run ./cmd/wayfared -serve=false          # scheduler only, no HTTP
 go run ./cmd/wayfared -verify-store -data ./data
+go run ./cmd/wayfared -export USDC-NGNC -format csv -data ./data > corridor.csv
 ```
+
+`-export` verifies the corridor's hash chain first and refuses to write a CSV
+from a chain that does not reconcile; see
+[docs/run-store.md](docs/run-store.md#exporting-a-chain-as-csv).
 
 Every `cmd/ladder` run also runs the same counterparty checks the server runs
 (anchor toml, SEP-10/SEP-24, issuer flags), so `-json` output and
@@ -743,7 +750,7 @@ The full register — what this project refuses to build, and why, plus the
 | USDC issuer is Circle's | **Not yet verified** against circle.com stellar.toml |
 | Live SEP-38 round-trip | **Verified** — recorded fixture from testanchor.stellar.org in `sep38/testdata/live/` |
 | Public deployment | Running at [wayfare-cdb9.onrender.com](https://wayfare-cdb9.onrender.com/); `/healthz` verified 200 on 2026-08-24 |
-| Continuous measurement | **Not yet running** — no sweep has reached `main` since 2026-08-22. The two causes are fixed in `measure.yml`: the push rejection ([#63](https://github.com/Wayfare-labs/wayfare/issues/63)) and the refusal to open a pull request ([#555](https://github.com/Wayfare-labs/wayfare/issues/555)), which failed every scheduled run to 2026-10-17. The workflow's steps are exercised offline by `go test ./measure`; **the route is not yet confirmed against a live run** — that needs the `MEASURE_TOKEN` secret ([docs/deployment.md](docs/deployment.md#running-the-ci-path)) and a merged measurement pull request. Until then the served history is frozen at its last successful sweep |
+| Continuous measurement | **Not yet running** — no sweep has reached `main` since 2026-08-22. The push rejection (#63) was fixed by switching to pull requests; the current blocker is that Actions may not create a pull request ([#555](https://github.com/Wayfare-labs/wayfare/issues/555)), which failed every scheduled run to 2026-10-17. The workflow's steps are exercised offline by `go test ./measure`; **the route is not yet confirmed against a live run** — that needs the `MEASURE_TOKEN` secret ([docs/deployment.md](docs/deployment.md#running-the-ci-path)) and a merged measurement pull request. Until then the served history is frozen at its last successful sweep |
 
 Unverified claims are marked in the code at the point they are used.
 

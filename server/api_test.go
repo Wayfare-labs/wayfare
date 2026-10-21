@@ -405,6 +405,31 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+// TestHealthzReportsBuildProvenance pins that /healthz exposes the code and
+// data commits that built the binary, so a consumer can tell which provenance
+// is serving. Dev and test builds are unstamped and report the empty string,
+// but the keys are always present.
+func TestHealthzReportsBuildProvenance(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+	_, body := getJSON(t, srv.URL+"/healthz")
+
+	code, ok := body["code_commit"]
+	if !ok {
+		t.Fatal("healthz body lacks code_commit")
+	}
+	if _, isString := code.(string); !isString {
+		t.Errorf("code_commit = %v (%T), want a string", code, code)
+	}
+
+	data, ok := body["data_commit"]
+	if !ok {
+		t.Fatal("healthz body lacks data_commit")
+	}
+	if _, isString := data.(string); !isString {
+		t.Errorf("data_commit = %v (%T), want a string", data, data)
+	}
+}
+
 // TestHealthzReportsDataAge is the A6 contract: on a -history-first
 // deployment the thing at risk is the age of the data, and /healthz must say
 // it. Each corridor's newest record is reported with its recorded_at and age;
