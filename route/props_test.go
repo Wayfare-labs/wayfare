@@ -6,8 +6,8 @@ package route
 //
 // Hand-rolled rather than a library: the repo carries no third-party test
 // dependencies (CONTRIBUTING), so this file uses only the standard library
-// and shopspring/decimal. Generation is deterministic â€” a fixed seed per
-// run, printed on every failure â€” so any counterexample shown here is
+// and shopspring/decimal. Generation is deterministic — a fixed seed per
+// run, printed on every failure — so any counterexample shown here is
 // reproducible with `go test ./route -run TestPropsScore -seed=<printed>`.
 //
 // Tolerances: decimal division in this repo runs at the default
@@ -75,7 +75,7 @@ func TestPropsScoreRateAndLoss(t *testing.T) {
 		if q.LossAmount.IsNegative() {
 			t.Fatalf("seed %d case %d: negative LossAmount %s", propSeed, i, q.LossAmount)
 		}
-		// Zero loss exactly when the route pays at least mid â€” modulo the
+		// Zero loss exactly when the route pays at least mid — modulo the
 		// 16-digit division rounding, which cannot represent a shortfall
 		// below ~1e-15 relative and rounds it to a zero loss.
 		beatsMid := !q.EffectiveRate.LessThan(mid)
@@ -121,7 +121,7 @@ func TestPropsVerdictThresholdsAndMonotonicity(t *testing.T) {
 	for i := 0; i < 400; i++ {
 		cases = append(cases, randPositive(rng))
 	}
-	// Land exactly on each boundary too â€” thresholds are inclusive there.
+	// Land exactly on each boundary too — thresholds are inclusive there.
 	for _, b := range []string{"3", "8", "20"} {
 		v, err := decimal.NewFromString(b)
 		if err != nil {
