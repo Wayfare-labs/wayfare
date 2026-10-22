@@ -289,7 +289,8 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 		return fmt.Errorf("monitor: snapshot checks require a recorder-backed checks factory")
 	}
 	if checkRunner != nil {
-		live = route.WithFindings(live, checkRunner.ForAsset(ctx, c.Receive))
+		baseline := s.issuerDriftBaseline(ctx, c.Key())
+		live = route.WithFindings(live, checkRunner.ForAssetWithBaseline(ctx, c.Receive, baseline))
 	}
 	record := runstore.FromCorridorJSON(live)
 	record.RecordedAt = started
@@ -352,6 +353,18 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 	// visible only by diffing stored records by hand.
 	s.reportTransition(ctx, c.Key())
 	return nil
+}
+
+func (s *Scheduler) issuerDriftBaseline(ctx context.Context, corridor string) *checks.IssuerDriftBaseline {
+	record, err := s.store().Latest(ctx, corridor)
+	if err != nil {
+		s.log().Warn("loading issuer drift baseline failed", "corridor", corridor, "error", err)
+		return nil
+	}
+	if record == nil {
+		return nil
+	}
+	return checks.IssuerDriftBaselineFromChecks(record.Checks)
 }
 
 // reportTransition logs the corridor's most recent structural change, when

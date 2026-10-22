@@ -356,7 +356,8 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	// is the only composition point and branches on nothing — see the
 	// composition rule in docs/checks.md.
 	if s.Checks != nil {
-		out = route.WithFindings(out, s.Checks.ForAsset(ctx, recvAsset))
+		baseline := s.issuerDriftBaseline(ctx, sendAsset.Code, recvAsset.Code)
+		out = route.WithFindings(out, s.Checks.ForAssetWithBaseline(ctx, recvAsset, baseline))
 	}
 
 	writeJSON(w, r, http.StatusOK, out)
@@ -768,6 +769,18 @@ func (s *Server) latestRun(ctx context.Context, send, recv string) (*runstore.Re
 		return nil, false, nil
 	}
 	return rec, true, nil
+}
+
+func (s *Server) issuerDriftBaseline(ctx context.Context, send, recv string) *checks.IssuerDriftBaseline {
+	record, found, err := s.latestRun(ctx, send, recv)
+	if err != nil {
+		log().Warn("loading issuer drift baseline failed", "corridor", runstore.CorridorKey(send, recv), "error", err)
+		return nil
+	}
+	if !found {
+		return nil
+	}
+	return checks.IssuerDriftBaselineFromChecks(record.Checks)
 }
 
 // staleJSON renders a stored record in the wire shape, marked not live.

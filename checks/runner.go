@@ -51,6 +51,7 @@ func (r *Runner) Default() []Check {
 		SEP38QuoteServerPublished{},
 		IssuerAuthFlags{HorizonURL: r.HorizonURL, HTTPClient: r.client()},
 		IssuerFlagImmutability{HorizonURL: r.HorizonURL, HTTPClient: r.client()},
+		IssuerDrift{HorizonURL: r.HorizonURL, HTTPClient: r.client()},
 		HomeDomainRoundTrip{HorizonURL: r.HorizonURL, HTTPClient: r.client(), Resolver: r.resolver()},
 	}
 }
@@ -97,6 +98,12 @@ func (r *Runner) client() *http.Client {
 // nothing because a document could not be fetched would discard observations
 // that were perfectly obtainable.
 func (r *Runner) ForAsset(ctx context.Context, a asset.Asset) *Findings {
+	return r.ForAssetWithBaseline(ctx, a, nil)
+}
+
+// ForAssetWithBaseline runs checks with the stored issuer drift observation,
+// if one exists, as the baseline for this asset.
+func (r *Runner) ForAssetWithBaseline(ctx context.Context, a asset.Asset, baseline *IssuerDriftBaseline) *Findings {
 	ctx, cancel := context.WithTimeout(ctx, r.timeout())
 	defer cancel()
 
@@ -117,7 +124,23 @@ func (r *Runner) ForAsset(ctx context.Context, a asset.Asset) *Findings {
 	}
 
 	f := &Findings{}
-	for _, res := range RunAll(ctx, r.checks(), subject) {
+	checks := append([]Check(nil), r.checks()...)
+	if baseline != nil {
+		for i, check := range checks {
+			switch drift := check.(type) {
+			case IssuerDrift:
+				drift.Baseline = baseline
+				checks[i] = drift
+			case *IssuerDrift:
+				if drift != nil {
+					copy := *drift
+					copy.Baseline = baseline
+					checks[i] = copy
+				}
+			}
+		}
+	}
+	for _, res := range RunAll(ctx, checks, subject) {
 		f.Add(res)
 	}
 	return f

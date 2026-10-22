@@ -19,6 +19,8 @@ package anchor
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,8 +75,9 @@ const MainnetPassphrase = "Public Global Stellar Network ; September 2015"
 
 // Profile is an anchor's capabilities, resolved from its stellar.toml.
 type Profile struct {
-	Domain string
-	TOML   TOML
+	Domain   string
+	TOML     TOML
+	TOMLHash string
 
 	// Priceable reports whether a program can obtain a rate from this
 	// anchor without human interaction. This is the single most important
@@ -294,12 +297,12 @@ func (r *Resolver) Resolve(ctx context.Context, domain string) (*Profile, error)
 	if _, err := toml.Decode(string(raw), &t); err != nil {
 		// Not valid TOML. Recover what we can rather than losing the
 		// anchor entirely, and record the defect. See salvage.go.
-		p := profileFrom(domain, salvageTOML(string(raw)))
+		p := profileFromRaw(domain, salvageTOML(string(raw)), raw)
 		p.Malformed = true
 		p.MalformedReason = err.Error()
 		return p, nil
 	}
-	return profileFrom(domain, t), nil
+	return profileFromRaw(domain, t, raw), nil
 }
 
 // maxTOMLBytes caps how much of a stellar.toml is read. SEP-1 sets a 100KB
@@ -320,6 +323,13 @@ func profileFrom(domain string, t TOML) *Profile {
 		SEP12:     strings.TrimSpace(t.KYCServer) != "",
 		Mainnet:   t.NetworkPassphrase == MainnetPassphrase,
 	}
+}
+
+func profileFromRaw(domain string, t TOML, raw []byte) *Profile {
+	p := profileFrom(domain, t)
+	sum := sha256.Sum256(raw)
+	p.TOMLHash = hex.EncodeToString(sum[:])
+	return p
 }
 
 // QuoteClientBaseURL returns the SEP-38 base URL, or an error explaining why
