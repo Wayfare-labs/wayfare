@@ -81,8 +81,7 @@ jobs:
       # is the default ref for pull_request_target, workflow_run,
       # pull_request_review and issue_comment alike; the PR head is never
       # checked out, so the no-PR-code rule above still holds.
-      # actions/checkout@v5.0.0
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 1
@@ -169,10 +168,14 @@ jobs:
           # required status; checking here as well means this gate never
           # depends on that status having arrived.
           # ---------------------------------------------------------------
+          # Files are fetched through `gh`, so the offline tests' fake gh
+          # answers them too.
+          scanner_dir="${GITHUB_WORKSPACE:-.}/.github/scripts"
+          scan_json="$(mktemp)"
           scan_rc=0
-          if python3 -B .github/scripts/test_malware_scan.py >/dev/null 2>&1; then
-            python3 -B .github/scripts/malware_scan.py --repo "$REPO" \
-              --pr "$PR" --json > "${RUNNER_TEMP}/scan.json" || scan_rc=$?
+          if python3 -B "$scanner_dir/test_malware_scan.py" >/dev/null 2>&1; then
+            python3 -B "$scanner_dir/malware_scan.py" --gh --repo "$REPO" \
+              --pr "$PR" --json > "$scan_json" || scan_rc=$?
           else
             scan_rc=3
           fi
@@ -188,7 +191,7 @@ jobs:
               loc = loc.replace("`", "").replace("\n", " ")[:120]
               out.append(f["rule"] + " in `" + loc + "`")
           print("; ".join(out) + ("; ..." if len(d) > 5 else ""))
-          ' "${RUNNER_TEMP}/scan.json" "$1" 2>/dev/null || echo "see the job log"
+          ' "$scan_json" "$1" 2>/dev/null || echo "see the job log"
           }
           case "$scan_rc" in
             0|4) echo "malware scan: ok (rc=$scan_rc)" ;;

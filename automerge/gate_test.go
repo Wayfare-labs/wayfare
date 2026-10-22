@@ -146,6 +146,9 @@ type prRecord struct {
 
 type fileRec struct {
 	Filename string `json:"filename"`
+	// Status and Patch are what GATE 0's malware scan reads.
+	Status string `json:"status,omitempty"`
+	Patch  string `json:"patch,omitempty"`
 }
 
 type checkRec struct {
@@ -433,8 +436,16 @@ func runGate(t *testing.T, s scenario) result {
 		t.Fatalf("installing the fake gh: %v", err)
 	}
 
+	// GATE 0 runs .github/scripts/malware_scan.py from the workspace root,
+	// as it does in Actions.
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatalf("resolving the repository root: %v", err)
+	}
+
 	callsPath := filepath.Join(dir, "calls.log")
 	env := map[string]string{
+		"GITHUB_WORKSPACE": root,
 		"PATH":          bin + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"GATE_FIXTURES": dir,
 		"GATE_CALLS":    callsPath,
@@ -455,7 +466,7 @@ func runGate(t *testing.T, s scenario) result {
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 
 	return result{stdout: stdout.String(), stderr: stderr.String(), calls: readLines(callsPath), err: err}
 }
@@ -482,6 +493,27 @@ func TestAutoMergeGate(t *testing.T) {
 			stdout:    []string{"all gates satisfied; handing off"},
 			merged:    true,
 			commented: true,
+		},
+		{
+			// GATE 0 — malicious code is never merged, even when every other
+			// gate would pass. The shape is the one use-assay/Assay#267 used:
+			// a hidden editor task that runs a "font" file on folder open.
+			name: "malware-detected",
+			mutate: func(t *testing.T, f *fixtures) {
+				f.pr.Body = tickedBody
+				f.dropHoldMarker()
+				f.coderabbit("No actionable comments were generated for this review.")
+				f.files = append(f.files, fileRec{
+					Filename: ".vscode/tasks.json",
+					Status:   "added",
+					Patch: "@@ -0,0 +1,2 @@\n" +
+						"+      \"command\": \"node ./public/fonts/fa-solid.lkf\",\n" +
+						"+      \"runOptions\": { \"runOn\": \"folderOpen\" }",
+				})
+			},
+			stdout:  []string{"not auto-merging:"},
+			holds:   []string{"contains code matching known malicious patterns"},
+			labeled: true, commented: true,
 		},
 		{
 			// GATE 1 — maintainer-owned paths are never merged unreviewed.
