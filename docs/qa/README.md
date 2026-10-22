@@ -8,8 +8,9 @@ and reproducibility**: issues
 and [#272](https://github.com/Wayfare-labs/wayfare/issues/272) (both colour
 schemes).
 
-Everything here drives the **real server binary** and a **real browser engine**.
-Nothing is a mock of the product: the responses the UI renders are the bytes
+Except for the explicitly labelled offline CSS specimens for #286, these
+suites drive the **real server binary** and a **real browser engine**.
+In those server suites, the responses the UI renders are the bytes
 `server/api.go` actually produced, and the rendering is a browser's.
 
 Recorded results live in [`browser/results/`](browser/results/), and the written
@@ -21,6 +22,7 @@ findings in:
 | #269 cross-browser matrix | [`artifacts/269-cross-browser.md`](artifacts/269-cross-browser.md) |
 | #270 mobile device QA | [`artifacts/270-mobile.md`](artifacts/270-mobile.md) |
 | #272 QA both colour schemes | [`artifacts/272-color-schemes.md`](artifacts/272-color-schemes.md) |
+| #286 token contrast audit (offline CSS specimens) | [`artifacts/286-token-contrast.md`](artifacts/286-token-contrast.md) |
 | #293 errors preserve the page | [`artifacts/293-error-preservation.md`](artifacts/293-error-preservation.md) |
 | #304 state legible without colour | [`artifacts/304-state-legibility.md`](artifacts/304-state-legibility.md) |
 | #751 scheduled accessibility re-audit | [`artifacts/751-scheduled-wcag-audit.md`](artifacts/751-scheduled-wcag-audit.md) |
