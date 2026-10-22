@@ -446,16 +446,16 @@ func runGate(t *testing.T, s scenario) result {
 	callsPath := filepath.Join(dir, "calls.log")
 	env := map[string]string{
 		"GITHUB_WORKSPACE": root,
-		"PATH":          bin + string(os.PathListSeparator) + os.Getenv("PATH"),
-		"GATE_FIXTURES": dir,
-		"GATE_CALLS":    callsPath,
-		"GH_TOKEN":      "test-token",
-		"REPO":          repoSlug,
-		"EVENT_PR":      prNumber,
-		"ISSUE_PR":      "",
-		"IS_PR":         "",
-		"HEAD_SHA":      fx.pr.Head.SHA,
-		"SELF_CHECK":    selfCheck,
+		"PATH":             bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"GATE_FIXTURES":    dir,
+		"GATE_CALLS":       callsPath,
+		"GH_TOKEN":         "test-token",
+		"REPO":             repoSlug,
+		"EVENT_PR":         prNumber,
+		"ISSUE_PR":         "",
+		"IS_PR":            "",
+		"HEAD_SHA":         fx.pr.Head.SHA,
+		"SELF_CHECK":       selfCheck,
 	}
 	for k, v := range s.env {
 		env[k] = v
