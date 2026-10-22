@@ -87,6 +87,10 @@ func uiHandler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET and HEAD are supported")
+			return
+		}
 		body, err := uiFS.ReadFile("index.html")
 		if err != nil {
 			http.Error(w, "ui unavailable", http.StatusInternalServerError)

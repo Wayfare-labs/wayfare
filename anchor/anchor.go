@@ -76,6 +76,12 @@ type Profile struct {
 	Domain string
 	TOML   TOML
 
+	// FetchedAt is when the stellar.toml was originally fetched. When a
+	// sweep resolves the same domain for several assets, the document is
+	// fetched once and the cached profile is reused, so FetchedAt stays at
+	// the original fetch time rather than being rewritten per asset.
+	FetchedAt time.Time
+
 	// Priceable reports whether a program can obtain a rate from this
 	// anchor without human interaction. This is the single most important
 	// field: a corridor served only by non-priceable anchors cannot be
@@ -297,9 +303,12 @@ func (r *Resolver) Resolve(ctx context.Context, domain string) (*Profile, error)
 		p := profileFrom(domain, salvageTOML(string(raw)))
 		p.Malformed = true
 		p.MalformedReason = err.Error()
+		p.FetchedAt = time.Now().UTC()
 		return p, nil
 	}
-	return profileFrom(domain, t), nil
+	p := profileFrom(domain, t)
+	p.FetchedAt = time.Now().UTC()
+	return p, nil
 }
 
 // maxTOMLBytes caps how much of a stellar.toml is read. SEP-1 sets a 100KB

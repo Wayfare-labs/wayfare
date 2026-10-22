@@ -1,6 +1,8 @@
 package route
 
 import (
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -402,6 +404,59 @@ func TestHealthScoreClampsExtremeValues(t *testing.T) {
 	if !result.Value.Equal(want) {
 		t.Errorf("extreme values score = %s, want %s", result.Value, want)
 	}
+}
+
+// TestHealthScoreStaysOffTheWire is the mechanical half of ADR 009.
+//
+// The decision is that the blended number is never a wire field. The tag on
+// HealthScoreResult.Value enforces it for a serialised result, and this test
+// enforces the other direction: no corridor or findings document declares a
+// field able to carry a health score, so wiring one means changing a type here
+// and failing this test rather than adding a line in a handler.
+func TestHealthScoreStaysOffTheWire(t *testing.T) {
+	for _, typ := range []reflect.Type{
+		reflect.TypeOf(CorridorJSON{}),
+		reflect.TypeOf(checks.FindingsJSON{}),
+	} {
+		for i := 0; i < typ.NumField(); i++ {
+			f := typ.Field(i)
+			tag := f.Tag.Get("json")
+			if strings.Contains(strings.ToLower(tag), "health") || assertsHealthScore(f.Type) {
+				t.Errorf("%s declares field %q (%s, json:%q); ADR 009 keeps the "+
+					"health score off the wire", typ.Name(), f.Name, f.Type, tag)
+			}
+		}
+	}
+
+	// And a serialised result cannot carry the value itself.
+	res := HealthScore(
+		fixedMetric(MetricSpread, decimal.NewFromInt(1), checks.UnitRatio),
+		fixedMetric(MetricDepth, decimal.NewFromInt(1), checks.UnitCount),
+		fixedMetric(MetricPriceImpact, decimal.NewFromInt(1), checks.UnitPercent),
+		fixedMetric(MetricConcentration, decimal.NewFromInt(1), checks.UnitRatio),
+		decimal.NewFromInt(1), true, "",
+	)
+	raw, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc["value"]; ok {
+		t.Error("a serialised health score carries its blended value; the decision " +
+			"is that it never crosses the wire")
+	}
+}
+
+// assertsHealthScore reports whether t is, or contains, a HealthScoreResult.
+func assertsHealthScore(t reflect.Type) bool {
+	h := reflect.TypeOf(HealthScoreResult{})
+	if t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice {
+		return assertsHealthScore(t.Elem())
+	}
+	return t == h
 }
 
 func TestHealthScoreInputsCount(t *testing.T) {

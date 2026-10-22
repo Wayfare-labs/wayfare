@@ -6,13 +6,12 @@ implementation, and this is the walkthrough that sits beside them: the same
 path [`docs/adding-a-check.md`](adding-a-check.md) takes for a fact, walked once
 for a quantity, end to end.
 
-**Checked against the code at commit `35d7d8d`, 2026-09-25.** Every claim about
-the code below was read from the tree at that commit. One thing it says is
-unflattering and is stated plainly rather than skipped: **a metric added today
-is compiled, validated, tested and callable, and does not appear in any
-response.** [Step 6](#step-6--registering-there-is-nowhere-to-put-it-yet) is
-that finding, and CONTRIBUTING.md's rule that a negative finding is a valid
-result applies to this document as much as to a corridor.
+**Checked against the code at commit `29117fe`, 2026-10-22.** Every claim about
+the code below was read from the tree at that commit. The reachability finding
+this document used to open with — that a metric was compiled, validated, tested
+and callable, and appeared in no response — has since been fixed:
+[step 6](#step-6--registering-the-default-set-and-what-it-costs) is how a
+metric reaches the wire now, and what it costs to put one there.
 
 ---
 
@@ -104,18 +103,21 @@ consumes — `spread.bid-ask`, `depth.observed-executable`, `price-impact.size` 
 `concentration.liquidity`, plus a synthetic `cost.total_loss_pct` that comes from
 `route.Decompose` rather than from a `checks.Metric` — and matches them by
 string. Renaming an ID silently unhooks that metric from the health score rather
-than failing to compile. The health score is itself merged and unreachable today
-— see step 6 — so this is a trap for the future, which is exactly when it will be
+than failing to compile. The health score is itself merged and unreachable by
+decision ([ADR 009](adr/009-why-the-health-score-stays-off-the-wire.md)) — see
+step 6 — so this is a trap for the future, which is exactly when it will be
 forgotten.
 
 ---
 
 ## Step 2 — Decide what the subject must contain
 
-`Runner.ForAsset` never populates `Subject.Send` or `Subject.Receive`, because
-the runner has no metric path (step 6). A corridor metric is therefore written
-against a subject a future caller supplies, and it must behave when the fields
-it needs are absent.
+`Runner.ForCorridor` populates `Subject.Send` and `Subject.Receive` from the
+corridor it was given, along with `Integrity`, `Underlying` and
+`ReferenceAgreement` from the ladder (step 6). The single-asset `Runner.ForAsset`
+path stays checks-only and populates none of the corridor fields, so a metric is
+still written to behave when the fields it needs are absent — a stub subject in
+a unit test has them empty.
 
 The fields a corridor metric reads, and what each means when it is empty:
 
@@ -280,50 +282,58 @@ make fmt vet test race
 
 ---
 
-## Step 6 — Registering: there is nowhere to put it yet
+## Step 6 — Registering: the default set, and what it costs
 
-This is the step the check guide could take and this one cannot, and it is worth
-stating with the code that shows it rather than as a caveat.
+Registering a metric is an upstream-request decision as much as a code change,
+so the runner separates the two: the field, the default set, and the corridor
+context a metric is handed.
 
 ```
-  checks.Runner                    checks/runner.go
-    Metrics []Metric               <- does not exist
-    ForAsset()                     -> RunAll(ctx, r.checks(), subject): checks only
-    Subject.Send / Subject.Receive <- never populated by ForAsset
-        │
-        ╳  NOT REACHABLE
-           RunMetric has no non-test caller.
-           Findings.AddMetric has no non-test caller.
-           FindingsJSON.Metrics has no non-test producer.
+  checks.Runner                        checks/runner.go
+    Metrics []Metric                   <- nil means DefaultMetrics
+    ForCorridor(corridor)              -> RunAll(checks) then RunMetric(metrics)
+    ForAsset(asset)                    -> checks only: no pair, no metric
+    Subject.Send / Subject.Receive     <- populated by ForCorridor
+    Subject.Integrity/Underlying       <- from the ladder's result
+    Subject.ReferenceAgreement         <- from the reference cross-check
 
-  route/health_score.go            consumes metric IDs by string
+  server.Server, monitor.Scheduler     -> both call ForCorridor, so a live
+                                          response and a recorded run carry
+                                          the same findings.metrics
+
+  route/health_score.go                consumes metric IDs by string
         │
-        ╳  NOT REACHABLE — no non-test caller anywhere in the tree
+        ╳  NOT REACHABLE — a decision, not an oversight: ADR 009
 ```
 
-`checks/wire.go` already serialises metrics (`MetricJSON`, and `Metrics` inside
-`FindingsJSON` with `omitempty`), and `route.WithFindings` will attach whatever
-is in `Findings.Metrics`. So the wire is ready and empty: on the live
-deployment, `GET /api/corridor?to=NGNC` returns no `findings.metrics` key at
-all, which is the correct output for "none were run" and would be
-indistinguishable from "none were found" if the field were always present.
+`checks/wire.go` serialises metrics (`MetricJSON`, and `Metrics` inside
+`FindingsJSON` with `omitempty`), and `route.WithFindings` attaches whatever is
+in `Findings.Metrics`. A metric that runs is therefore published, and a metric
+that was not run leaves no key at all — "not measured" and "measured, nothing
+found" stay distinguishable.
+
+**What `DefaultMetrics` contains, and why.** Four order-book metrics: spread,
+concentration, observed depth, and deviation from the reference mid. The ladder
+has already spent a dozen pathfinding round trips before they run, so the
+default set reads one endpoint and nothing else. `price-impact.size` and
+`depth.executable` are reachable but excluded: each sweeps pathfinding at every
+probed size, which is a cost a caller opts into (`Runner.Metrics`) rather than
+inherits.
 
 What this means for a contributed metric:
 
-- **Write it, test it, and say what it is.** A metric is compiled, validated by
-  `ValidateAsMetric`, callable through `RunMetric`, and covered by offline tests
-  today. That is real work that will not need rewriting.
-- **Do not invent a caller to reach it.** Adding `Metrics` to the runner means
-  deciding how many upstream requests a sweep is allowed to spend, which is a
-  budget question with a public-Horizon blast radius, and it is already scoped
-  as [#91](https://github.com/Wayfare-labs/wayfare/issues/91) (backlog `#49`,
-  labelled `needs-maintainer-review`). A PR that wires metrics by another route
-  is a PR that changes how every corridor response is produced.
-- **Do not describe it as published.** In the PR, in a doc, or in a comment:
-  the honest sentence is *"implemented and tested; not yet reachable from
-  `/api/corridor`"*. The README's own capability table uses that phrasing for
-  exactly this situation, and a metric described as though it were on the wire
-  is the failure mode this project exists to catch.
+- **Adding it to the default set is a budget change.** One more metric on the
+default path is another request against the shared public Horizon for every
+measured corridor, in the API and on the schedule. Say so in the PR, with the
+request count, rather than only that the metric works.
+- **A metric can also be added without touching the default set.** A caller
+whose needs justify the cost can register it through `Runner.Metrics`; that is
+the path for the two pathfinding metrics above. Either way, cite the test that
+runs it through `RunMetric`.
+- **Do not describe it as published until it is registered.** Writing,
+  testing and `ValidateAsMetric` are real work, but a metric that is in no
+  suite appears in no response. The honest sentence before registration is
+  *"implemented and tested; not registered in the default set"*.
 - **A threshold derived from your metric is a separate contribution.** "Spread
   above X is a failure" is a check built on a metric, and it belongs to the same
   maintainer-owned class as the verdict bands.
@@ -463,10 +473,11 @@ Note what is absent: no verdict, no severity, no threshold. A consumer that
 wants to grade this mid against the reference mid has to do so explicitly, in
 the open, which is the separation the whole contract exists to keep.
 
-**What it would report today: nothing.** `Runner.ForAsset` does not run metrics,
-so this metric would compile, pass its tests, and appear in no response. That is
-not a defect in the metric; it is the state of the plumbing, scoped as
-[#91](https://github.com/Wayfare-labs/wayfare/issues/91).
+**What it would report today: nothing.** It is an illustration, and nothing
+below is registered. Were it added to the default set it would run with the
+rest, cost one more order-book request per measured corridor, and appear as a
+`book.mid` entry in `findings.metrics` — but only once it is registered, which
+is the decision step 6 describes.
 
 ---
 
@@ -485,8 +496,9 @@ not a defect in the metric; it is the state of the plumbing, scoped as
 - [ ] No new dependency; no `float64`; no unbounded read of an upstream body
 - [ ] Tests cover determined, empty, one-sided, nil-client and structural
       cases, offline, through `RunMetric`
-- [ ] The PR says plainly that the metric is implemented and tested but **not
-      reachable** from `/api/corridor` yet
+- [ ] The PR says whether the metric joins the default set (and how many
+      upstream requests that adds), or is registered through `Runner.Metrics`
+      by the caller that needs it
 - [ ] `make fmt vet test race` is clean
 
 ## Related

@@ -142,19 +142,14 @@ point and branches on nothing.
 ### How do I add a metric?
 
 [docs/adding-a-metric.md](adding-a-metric.md), with
-[docs/metrics.md](metrics.md) for the methodology. Be aware: as of this writing
-**no metric runs in production**. `checks.Runner` has no `Metrics` field and
-`RunMetric` has no non-test caller, so the five merged metric types are
-unreachable. Wiring them was
-[#91](https://github.com/Wayfare-labs/wayfare/issues/91), the critical path for
-the whole V2 milestone — but #91 was closed on 2026-09-02 by
-[PR #449](https://github.com/Wayfare-labs/wayfare/pull/449), a strict-send
-payload fix that did not add the metric path. Re-verified at commit `1bc5593`:
-`checks.Runner` still has no `Metrics` field and `RunMetric` still has no
-non-test caller, so the wiring has not landed. The unwired work remains listed
-as backlog entry **#49** in [docs/backlog.md](backlog.md) — a metric you add is
-validated and testable now, and does not reach a response until that wiring
-actually exists.
+[docs/metrics.md](metrics.md) for the methodology. Metrics do run now: since
+2026-10-22 `checks.Runner` carries a `Metrics` field and `ForCorridor` runs the
+default set beside the checks, so a live response and every recorded run carry a
+`findings.metrics` block ([#577](https://github.com/Wayfare-labs/wayfare/issues/577)).
+What that changes for you is the cost question rather than the plumbing one: a
+metric added to the default set is another upstream request on every measured
+corridor, so step 6 of the guide asks you to state the request count in the PR.
+The pathfinding metrics are registered through `Runner.Metrics` instead.
 
 ### Do I need to change the wire format to add things?
 

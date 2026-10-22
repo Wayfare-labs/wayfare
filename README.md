@@ -12,6 +12,7 @@ issued, no KYC, no keys.
 
 ---
 
+
 ## Try Wayfare
 
 | | |
@@ -208,8 +209,9 @@ deterministic measurements, and answers no on the evidence the repository has:
                              │      per size:     rate → loss → verdict
                              │      per corridor: integrity
                              ▼
-                        checks.Runner ── counterparty facts
-                             │           (qualify; never move the headline)
+                        checks.Runner ── counterparty facts and measured
+                             │           quantities (qualify; never move
+                             │           the headline)
               ┌──────────────┴───────────────┐
               ▼                              ▼
      monitor.Scheduler                 server.Server
@@ -370,9 +372,10 @@ Full spec: **[docs/checks.md](docs/checks.md)**
 Methodology: **[docs/metrics.md](docs/metrics.md)**
 Writing a check: **[docs/adding-a-check.md](docs/adding-a-check.md)**
 Writing a metric: **[docs/adding-a-metric.md](docs/adding-a-metric.md)** — which
-opens with the one thing a contributor has to know: a metric written today is
-validated and testable, and reaches no response, because `checks.Runner` has no
-metric path ([#91](https://github.com/Wayfare-labs/wayfare/issues/91)).
+opens with the one thing a contributor has to know: a metric is validated and
+testable through `RunMetric`, and a corridor sweep runs the default set beside
+the checks (`checks.Runner.ForCorridor`), so a metric that is registered there
+appears in `findings.metrics` on live responses and in recorded runs.
 
 ### Asset identity — breaking if altered
 
@@ -628,12 +631,18 @@ taxonomy, cross-checked reference rates, recorded snapshots, pinned arithmetic.
 merge log suggests. Counterparty checks are **DONE**: seven run per corridor and
 appear in every live response (`checks.Runner.Default()`), and
 [docs/adding-a-check.md](docs/adding-a-check.md) walks the path to an eighth.
-Market-quality metrics — spread, observed versus executable depth, price
-impact, liquidity concentration — are **implemented but not reachable**: `checks.Runner` has no way to run a `Metric`, so none of them
-has ever appeared in a response, been recorded, or been rendered. Effective
-transfer cost (`route.Decompose`) is in the same state — merged, with no caller.
-Wiring that path is [#91](https://github.com/Wayfare-labs/wayfare/issues/91) and
-it blocks the rest of v2. Layers 1 and 2.
+Market-quality metrics are **reachable and recorded**: a corridor sweep runs the
+default set — spread, liquidity concentration, observed depth, and the book's
+deviation from the reference mid — and they appear in `findings.metrics` on a
+live response and in every recorded run ([#577](https://github.com/Wayfare-labs/wayfare/issues/577)).
+Two are deliberately not in the default set because each costs a pathfinding
+sweep the ladder has already paid for: executable depth
+(`DepthMetric.RunExecutable`) and price impact (`PriceImpactMetric`). Those are
+reachable to a caller who registers them, and the CLI and UI do not render
+metrics yet. Effective transfer cost (`route.Decompose`) is still merged with no
+caller, and the health score that would blend these numbers is unreachable by
+decision ([ADR 009](docs/adr/009-why-the-health-score-stays-off-the-wire.md)).
+Layers 1 and 2.
 
 **v3 — Quantitative execution risk.** **BACKLOG.** Effective transfer cost decomposed into
 FX loss, fees, slippage and expected failure cost, each computed and reported
@@ -710,10 +719,12 @@ expect close review and discuss the approach first:
 - SEP-38 fee handling
 - the check engine and how results compose
 - the corridor health score — how signals become one published number. Merged
-  and **not reachable** (`route/health_score.go` has no non-test caller, and its
-  blended value is deliberately absent from the wire). It needs its component
-  metrics to exist first, and it is a judgement of the same class as the
-  verdict bands
+  and **not reachable by decision** (`route/health_score.go` has no non-test
+  caller, and its blended value is deliberately absent from the wire). Its
+  component metrics are reachable since 2026-10-22, which is why the decision
+  is now written down rather than implied: see
+  [ADR 009](docs/adr/009-why-the-health-score-stays-off-the-wire.md). It is a
+  judgement of the same class as the verdict bands
 
 Each area's blast radius, what defends it, and what is *not* owned:
 **[docs/maintainer-owned-areas.md](docs/maintainer-owned-areas.md)**.

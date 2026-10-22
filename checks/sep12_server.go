@@ -34,6 +34,12 @@ func (c SEP12ServerPublished) Run(_ context.Context, s Subject) CheckResult {
 
 	const field = "KYC_SERVER"
 	tomlURL := "https://" + s.Profile.Domain + "/.well-known/stellar.toml"
+	// Evidence about the cached document carries the time it was originally
+	// fetched, not the time this check runs.
+	at := s.Profile.FetchedAt
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
 	server := strings.TrimSpace(s.Profile.TOML.KYCServer)
 	observed := "(field absent)"
 	if server != "" {
@@ -42,7 +48,7 @@ func (c SEP12ServerPublished) Run(_ context.Context, s Subject) CheckResult {
 	evidence := Evidence{
 		Source:     tomlURL + " -> " + field,
 		Observed:   observed,
-		ObservedAt: time.Now().UTC(),
+		ObservedAt: at,
 	}
 	if server == "" {
 		return Fail(d, s, "the anchor does not publish a SEP-12 KYC server", evidence)

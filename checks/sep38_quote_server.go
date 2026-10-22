@@ -59,7 +59,12 @@ func (SEP38QuoteServerPublished) Run(_ context.Context, s Subject) CheckResult {
 
 	quoteServer := strings.TrimSpace(s.Profile.TOML.AnchorQuoteServer)
 	tomlURL := "https://" + s.Profile.Domain + "/.well-known/stellar.toml"
-	at := time.Now().UTC()
+	// Evidence about the cached document carries the time it was originally
+	// fetched, not the time this check runs.
+	at := s.Profile.FetchedAt
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
 
 	if quoteServer != "" {
 		return Pass(d, s,

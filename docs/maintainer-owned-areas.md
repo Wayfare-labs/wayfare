@@ -195,10 +195,16 @@ owned now: the first corridor that does wire it in will publish on top of it.
 
 ## 5. Check engine and composition
 
-**What is owned.** `checks.Runner` (`Default`, `ForAsset`, the resolve-once
-structure), `checks.RunAll`, the three-valued result model
-(`Determined` / `Passed` / `Reason`) with its severity ordering, and above all
-`route.WithFindings` — the composition point.
+**What is owned.** `checks.Runner` (`Default`, `ForAsset`, `ForCorridor`,
+`DefaultMetrics`, the resolve-once structure), `checks.RunAll`, `RunMetric`, the
+three-valued result model (`Determined` / `Passed` / `Reason`) with its severity
+ordering, and above all `route.WithFindings` — the composition point.
+
+**What the metrics default set costs.** Since 2026-10-22 `ForCorridor` measures
+four order-book metrics per corridor. Adding a metric to `DefaultMetrics` adds
+an upstream request to every measured corridor, in the API and on the schedule;
+that is a budget decision as much as a code one, so it belongs here even though
+individual metrics are open contribution.
 
 **Why composition, specifically.** `WithFindings` is the only place check
 results meet a corridor document, and it copies every headline field through
@@ -245,13 +251,20 @@ same class as the verdict bands, and it would be read the way a grade is read.
 The weights are labelled provisional in the code itself: *"they will be adjusted
 once the five component metrics are reachable and producing real data"*.
 
-**Status: implemented, tested, and unreachable.** There is no non-test caller of
-`HealthScore` or `HealthScoreWeighted` in this tree, and `HealthScoreResult.Value`
-is tagged `json:"-"`, so the blended number is deliberately absent from the wire
-even if it were wired up. Its inputs are the four market-quality metrics — which
-`checks.Runner` cannot run — plus `route.Decompose`'s total. Since the metrics
-are unreachable, every input would be undetermined today, and the undetermined
-rule would make the score report nothing at all.
+**Status: implemented, tested, and unreachable by decision.** There is no
+non-test caller of `HealthScore` or `HealthScoreWeighted` in this tree, and
+`HealthScoreResult.Value` is tagged `json:"-"`, so the blended number is
+deliberately absent from the wire even if it were wired up.
+[ADR 009](adr/009-why-the-health-score-stays-off-the-wire.md) records the
+decision and the four conditions that must be decided together before a caller
+is added.
+
+Its inputs are the four market-quality metrics plus `route.Decompose`'s total.
+Those metrics became reachable on 2026-10-22 (#577), so the earlier answer to
+*"why not wire it?"* — that every input would be undetermined — no longer
+applies. The reason it stays unwired is the one that does not depend on
+reachability: a blended number read beside an empty `recommended` turns a
+refusal into a bad grade. That is the judgement ADR 009 records.
 
 **A finding.** The list in [CONTRIBUTING.md](../CONTRIBUTING.md#maintainer-owned-areas)
 and the summary in [docs/contributor-faq.md](contributor-faq.md#which-parts-are-maintainer-owned)
