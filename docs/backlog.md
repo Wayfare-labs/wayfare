@@ -991,6 +991,15 @@ A number, with the statistical reasoning written out, that the project can point
 to when it declines to publish a trend.
 `V4+` `area:research` `difficulty:medium` `research`
 
+> **Finding written:** [docs/spike-trend-minimum-observations.md](spike-trend-minimum-observations.md)
+> (2026-10-23). The floor is **100 observations** of one series for one
+> corridor: where a two-sided Mann–Kendall test at α = 0.05 first has ~80%
+> power for a one-sigma drift, assuming independent runs, and about
+> 100·(1 + ρ)/(1 − ρ) under lag-1 autocorrelation ρ. Mixed result: the
+> existing `analysis.MinSampleSizeForTrend = 60` is below it (~58% power),
+> and every committed chain still holds one record, so the independence
+> assumption is untested. No threshold changed; follow-up belongs to #185.
+
 **#140 — Spike: how to express uncertainty in a published figure** *(filed: [#338](https://github.com/Wayfare-labs/wayfare/issues/338))*
 Today a figure is either measured or unknown. A third category — measured with
 an interval — needs a wire representation before it needs a calculation.
