@@ -77,6 +77,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # BASE branch only, for .github/scripts/malware_scan.py (GATE 0). This
+      # is the default ref for pull_request_target, workflow_run,
+      # pull_request_review and issue_comment alike; the PR head is never
+      # checked out, so the no-PR-code rule above still holds.
+      # actions/checkout@v5.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
       - name: evaluate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -147,6 +157,46 @@ jobs:
 
           # Collected reasons the PR is not auto-mergeable. Empty means merge.
           reasons=()
+
+          # ---------------------------------------------------------------
+          # GATE 0 — no malicious code.
+          #
+          # The base-branch scanner reads the PR's patches through the API
+          # (it never runs PR code) and looks for malware and supply-chain
+          # attack patterns. Its self-tests run first, so a broken or
+          # weakened scanner holds the PR instead of reporting it clean.
+          # The "Malware scan" workflow publishes the same verdict as a
+          # required status; checking here as well means this gate never
+          # depends on that status having arrived.
+          # ---------------------------------------------------------------
+          scan_rc=0
+          if python3 -B .github/scripts/test_malware_scan.py >/dev/null 2>&1; then
+            python3 -B .github/scripts/malware_scan.py --repo "$REPO" \
+              --pr "$PR" --json > "${RUNNER_TEMP}/scan.json" || scan_rc=$?
+          else
+            scan_rc=3
+          fi
+          scan_where() {  # one line: "rule in path:line; ..." for a severity
+            # Paths come from the PR, so each is wrapped in a code span with
+            # backticks and newlines stripped before it reaches a comment.
+            python3 -B -c '
+          import json, sys
+          d = [f for f in json.load(open(sys.argv[1])) if f["severity"] == sys.argv[2]]
+          out = []
+          for f in d[:5]:
+              loc = f["path"] + (":" + str(f["line"]) if f["line"] else "")
+              loc = loc.replace("`", "").replace("\n", " ")[:120]
+              out.append(f["rule"] + " in `" + loc + "`")
+          print("; ".join(out) + ("; ..." if len(d) > 5 else ""))
+          ' "${RUNNER_TEMP}/scan.json" "$1" 2>/dev/null || echo "see the job log"
+          }
+          case "$scan_rc" in
+            0|4) echo "malware scan: ok (rc=$scan_rc)" ;;
+            1) reasons+=("contains code matching known malicious patterns ($(scan_where BLOCK)) — do not check this branch out locally")
+               gh pr edit "$PR" --repo "$REPO" --add-label security-hold >/dev/null 2>&1 || true ;;
+            2) reasons+=("touches security-sensitive configuration ($(scan_where HOLD))") ;;
+            *) reasons+=("the malware scan could not complete, so the change is not known to be safe") ;;
+          esac
 
           # ---------------------------------------------------------------
           # GATE 1 — maintainer-owned paths.
