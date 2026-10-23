@@ -4,6 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wayfare — corridor integrity monitor</title>
+
+<!-- Inline SVG favicon (#635): no external request, no third-party icon, the
+     mark ships inside the binary like everything else. The W glyph is the
+     two-bank crossing the corridor name implies. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230F172A'/%3E%3Cpath d='M6 10l4.5 12L16 12l5.5 10L26 10' fill='none' stroke='%2310B981' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+
+<!-- Static Open Graph tags (#635): shared links unfurl with a name and a
+     plain-language description instead of a bare URL. Static values only —
+     the per-corridor title a rendered page sets is document.title, which
+     link previews do not read. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Wayfare">
+<meta property="og:title" content="Wayfare — corridor integrity monitor">
+<meta property="og:description" content="Prices a stablecoin→fiat-token corridor across trade sizes, scores every route against an independent reference rate, and states plainly when none are worth taking.">
+<meta property="og:url" content="https://wayfare.app/">
+<meta name="twitter:card" content="summary">
 <style>
   /*
    * Design tokens (issue #281). Three layers, no build step.
@@ -71,6 +87,12 @@
     --chart-direct: var(--brand-navy);
     --chart-derivative: var(--brand-slate);
     --chart-nomarket: var(--brand-coral);
+    /* Movement decomposition (#637): the corridor's own move and the
+       benchmark's move are two data series, painted from chart roles
+       in the same family as the integrity marks — never from a
+       verdict severity. */
+    --chart-move-corridor: var(--brand-teal);
+    --chart-move-benchmark: var(--brand-slate);
     --focus-ring: rgba(15, 118, 110, 0.28);
     /* The halo above gives the indicator area; this is the edge that carries
        it. A focus indicator has to reach 3:1 against the surfaces it sits on
@@ -140,6 +162,8 @@
       --chart-direct: #F8FAFC;
       --chart-derivative: #CBD5E1;
       --chart-nomarket: #FDBA74;
+      --chart-move-corridor: #34D399;
+      --chart-move-benchmark: #94A3B8;
       --inset: #1E293B;
       --critical-soft: rgba(185, 28, 28, 0.18);
       --warning-soft: rgba(245, 158, 11, 0.18);
@@ -176,6 +200,8 @@
       --chart-direct: #F8FAFC;
       --chart-derivative: #CBD5E1;
       --chart-nomarket: #FDBA74;
+      --chart-move-corridor: #34D399;
+      --chart-move-benchmark: #94A3B8;
       --inset: #1E293B;
       --critical-soft: rgba(185, 28, 28, 0.18);
       --warning-soft: rgba(245, 158, 11, 0.18);
@@ -686,6 +712,28 @@
     rate, and states plainly when none are worth taking.</p>
   </header>
 
+  <!-- Server-rendered summary (#636): text browsers, strict privacy setups
+       and crawlers get the default corridor's latest stored record without
+       executing a line of script. Rendered by html/template from the same
+       history-first record the API serves, so every value is escaped and
+       nothing is derived client-side. -->
+  <noscript>
+    <section class="panel" aria-label="Latest stored reading without JavaScript">
+      <h2>Latest stored reading</h2>
+      {{if .Summary}}
+      <p>Corridor <strong>{{.Summary.Corridor}}</strong> —
+         integrity <strong>{{.Summary.Integrity}}</strong>.
+         Floor loss {{.Summary.FloorLossPct}}%, worst loss {{.Summary.WorstLossPct}}%.
+         Recorded {{.Summary.RecordedAt}} ({{.Summary.Age}}).</p>
+      <p>Enable JavaScript for the full ladder, the trend chart and a live measurement.</p>
+      {{else}}
+      <p>No stored reading is available yet. The scheduler records a run every
+         6 hours, and history appears as it exists — nothing is interpolated
+         or estimated. Enable JavaScript for the full dashboard.</p>
+      {{end}}
+    </section>
+  </noscript>
+
   <a class="skip-link" href="#out">Skip to results</a>
   <div class="controls">
     <label for="to">Corridor</label>
@@ -780,6 +828,44 @@ const formatPct = (s) => {
   const n = parseFloat(s);
   return isNaN(n) ? s : n.toFixed(2);
 };
+
+// formatAmount groups the integer part of an exact amount string with
+// locale-aware digit grouping (#634). NGN amounts run to five and six
+// digits, and ungrouped digits are easy to misread by an order of
+// magnitude. The decimal tail is appended exactly as the server published
+// it — this helper never parses to a float and never rounds, so
+// 62900.1234567 displays as 62,900.1234567 and not one digit is lost. The
+// grouping separator itself comes from Intl.NumberFormat so the grouping
+// follows the reader's locale, not a hard-coded comma. Anything that is
+// not a plain decimal string passes through untouched: a malformed figure
+// must be shown as the server sent it, never reformatted into something
+// that looks valid.
+const formatAmount = (s) => {
+  if (typeof s !== 'string' || s === '') return s;
+  const negative = s.startsWith('-');
+  const body = negative ? s.slice(1) : s;
+  const dot = body.indexOf('.');
+  const intPart = dot === -1 ? body : body.slice(0, dot);
+  const tail = dot === -1 ? '' : body.slice(dot);
+  if (!/^\d+$/.test(intPart)) return s;
+  let sep = ',';
+  try {
+    const parts = new Intl.NumberFormat().formatToParts(12345);
+    const found = parts.find((p) => p.type === 'group');
+    if (found) sep = found.value;
+  } catch (e) {
+    // Intl unavailable: the default comma grouping still satisfies the
+    // readability goal, so carry on rather than dropping the format.
+  }
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, sep);
+  return (negative ? '-' : '') + grouped + tail;
+};
+
+// amountCell renders an exact amount for display: the grouped figure in the
+// cell, the exact server string preserved in the tooltip (and therefore
+// available for copy), so grouping never costs the reader precision.
+const amountCell = (s) =>
+  `<span class="amount" title="${esc(String(s))}">${esc(formatAmount(s))}</span>`;
 
 // emptyState renders a labelled absence of data (issue #300). Seven distinct
 // causes route through this one component so "empty" is never ambiguous: the
@@ -895,6 +981,13 @@ const announce = (message) => {
   window.setTimeout(() => { region.textContent = message; }, 50);
 };
 
+// The tab title tracks what the reader is looking at (#635): the corridor
+// and its verdict after a measurement, the corridor and the window's latest
+// integrity in the trend view. Static fallback is the head <title>.
+const setDocTitle = (corridor, state) => {
+  document.title = `${corridor} — ${state} — Wayfare`;
+};
+
 // One announcement for a measurement document: the integrity state the
 // engine issued, the finding in the engine's own words, then the
 // recommendation or its explicit absence.
@@ -922,9 +1015,23 @@ const announceTrend = (d) => {
     return;
   }
   const latest = runs[runs.length - 1];
-  announce(`Trend for the ${d.corridor} corridor: ${runs.length} stored ` +
+  let msg = `Trend for the ${d.corridor} corridor: ${runs.length} stored ` +
     `run${runs.length === 1 ? '' : 's'} from ${fmtRunTime(runs[0].recorded_at)} ` +
-    `to ${fmtRunTime(latest.recorded_at)} UTC. Latest integrity ${latest.integrity}.`);
+    `to ${fmtRunTime(latest.recorded_at)} UTC. Latest integrity ${latest.integrity}.`;
+  // Movement decomposition in words (#637): both components named for the
+  // most recent pair that established one, so the text alternative carries
+  // the same two series the chart draws.
+  const moves = d.movements || [];
+  const last = moves.length ? moves[moves.length - 1] : null;
+  if (last) {
+    const corridor = last.corridor_pct ? `corridor moved ${last.corridor_pct}%` :
+      'corridor move unknown';
+    const bench = last.benchmark_pct ? `benchmark moved ${last.benchmark_pct}%` :
+      'benchmark move unknown';
+    msg += ` Latest pair: ${corridor}, ${bench}` +
+      (last.loss_pct_change ? `, headline change ${last.loss_pct_change} percentage points.` : '.');
+  }
+  announce(msg);
 };
 
 // --- Asset / corridor selector -----------------------------------------------
@@ -1583,6 +1690,16 @@ function render(d, options = {}) {
   $('print-report-button').disabled = false;
   printProvenancePromise = refreshPrintProvenance(d);
   $('out').focus({ preventScroll: true });
+
+  // Per-corridor tab title (#635): name the corridor and the verdict the
+  // reader just received, so a tab bar of measurements stays navigable.
+  const sendCode = (d.send_asset && d.send_asset.code) || '';
+  const recvCode = (d.receive_asset && d.receive_asset.code) || '';
+  const corridorName = [sendCode, recvCode].filter(Boolean).join(' → ') || 'Corridor';
+  const verdictName = !d.scored ? `integrity ${d.integrity}`
+    : d.recommended ? `recommended ${d.recommended.verdict}`
+    : 'no size worth taking';
+  setDocTitle(corridorName, verdictName);
 }
 
 function printReport(d, options) {
@@ -2012,7 +2129,7 @@ function table(rungs, scored, depends) {
       // the loss of colour.
       return `<tr>
         <td class="num">${esc(r.send_amount)}</td>
-        <td class="num">${esc(q.receive_amount)}</td>
+        <td class="num">${amountCell(q.receive_amount)}</td>
         <td class="num">${esc(q.effective_rate)}</td>
         <td class="num ${verdictClass(q.verdict)}">${formatPct(q.loss_pct)}%</td>
         <td class="${verdictClass(q.verdict)}"><span class="v-cell">${verdictMark(q.verdict)}${esc(q.verdict)}</span></td>
@@ -2025,7 +2142,7 @@ function table(rungs, scored, depends) {
     // engine refused to stand behind.
     return `<tr>
       <td class="num">${esc(r.send_amount)}</td>
-      <td class="num">${esc(q.receive_amount)}</td>
+      <td class="num">${amountCell(q.receive_amount)}</td>
       <td class="num">${esc(q.effective_rate)}</td>
       <td class="num">${pathCount}</td>
       <td>${esc(q.description)}${decomp}</td>
@@ -2296,6 +2413,23 @@ function renderTrend() {
     unusable threshold, as on the live curve.</p>
   </section>`);
 
+  // Benchmark vs corridor movement (#637): the decomposition that says which
+  // of the two moved. Rendered only when the runstore established one, and
+  // its own text alternative names both components.
+  if ((d.movements || []).length) {
+    parts.push(`<section class="panel" aria-label="Benchmark versus corridor movement">
+      <h2>Benchmark vs corridor movement</h2>
+      <div id="movement-chart">${movementChart(d)}</div>
+      <p class="meta">Each row decomposes one consecutive-run pair: the
+      corridor's own move against its previous rate (teal) beside the
+      benchmark's move against its own previous mid (slate) &mdash; the
+      corridor bar is benchmark-free and the benchmark bar corridor-free, so
+      a headline loss change can be attributed to whichever moved. An
+      &ldquo;unknown&rdquo; side means that pair could not be measured (no
+      priced rung or no scorable mid); it is never drawn as zero.</p>
+    </section>`);
+  }
+
   parts.push(`<div class="panel">
     <h2>Integrity transitions</h2>
     <div class="scroll">${integrityTransitionsTable(d.integrity_transitions || [])}</div>
@@ -2312,6 +2446,11 @@ function renderTrend() {
 
   $('out').innerHTML = parts.join('');
   $('out').focus({ preventScroll: true });
+
+  // Per-corridor tab title for the trend view (#635): the corridor and the
+  // window's latest integrity state.
+  setDocTitle(d.corridor || 'Trend', `latest ${latest.integrity}`);
+
   $('trend-size').addEventListener('change', (e) => {
     trendState.size = e.target.value;
     $('trend-chart').innerHTML = trendChart(d, trendState.size);
@@ -2576,6 +2715,87 @@ function trendChart(d, size) {
       aria-label="Loss against mid over stored runs, with the integrity state of each run">
       ${grid}${thresh}${segments}${dots}${empty}${strip}${ticks}
       <text class="axis" x="${W / 2}" y="${H - 4}" text-anchor="middle">time (UTC) &mdash; each point one stored run</text>
+    </svg>${legend}`;
+}
+
+// movementChart plots the benchmark-vs-corridor decomposition the runstore
+// now separates (#637): one row per consecutive pair, two bars per row —
+// the corridor's own move and the benchmark's move — so a reader can see
+// whether a loss change came from the reference rate or the corridor. An
+// absent percentage is the explicit unknown: no bar is drawn for it and the
+// row says so in its tooltip, never a zero-length bar that reads as "no
+// move". Painted only from the chart palette (#284), never a severity
+// colour.
+function movementChart(d) {
+  const moves = (d.movements || []).filter(
+    m => (m.corridor_pct && m.corridor_pct !== '') ||
+         (m.benchmark_pct && m.benchmark_pct !== ''));
+  if (!moves.length)
+    return `<div class="panel" style="border:0; padding: var(--space-4) 0">
+      No pair of stored runs established a benchmark or corridor movement
+      in this window — at least two runs with a scorable benchmark and a
+      priced rung are needed, and nothing is inferred when they are absent.</div>`;
+
+  const rows = moves.slice(-12);
+  const W = 640, H = Math.max(140, 44 + rows.length * 30), P = 110;
+  const mid = P + (W - P - 24) / 2;
+  const half = (W - P - 24) / 2;
+  const rowH = (H - 44) / rows.length;
+
+  const num = (s) => {
+    if (typeof s !== 'string' || s === '') return null;
+    const n = parseFloat(s);
+    return isNaN(n) ? null : n;
+  };
+  const parsed = rows.map(m => ({ m, c: num(m.corridor_pct), b: num(m.benchmark_pct) }));
+  const vals = [];
+  for (const r of parsed) {
+    if (r.c !== null) vals.push(r.c);
+    if (r.b !== null) vals.push(r.b);
+  }
+  const maxAbs = Math.max(...vals.map(Math.abs), 0.1);
+  const sx = (v) => mid + (v / maxAbs) * half;
+
+  // Zero axis, then min/0/max labels — the axis the two series share.
+  const axis = `<line x1="${mid}" y1="30" x2="${mid}" y2="${H - 14}"
+      stroke="var(--chart-grid)" stroke-width="1"/>
+    <text class="axis" x="${mid}" y="22" text-anchor="middle">0%</text>
+    <text class="axis" x="${P}" y="22" text-anchor="start">−${maxAbs.toFixed(2)}%</text>
+    <text class="axis" x="${W - 24}" y="22" text-anchor="end">+${maxAbs.toFixed(2)}%</text>`;
+
+  const bars = parsed.map((r, i) => {
+    const y = 34 + i * rowH;
+    const bh = Math.max(Math.min(rowH * 0.3, 9), 4);
+    const label = esc(fmtRunDay(Date.parse(r.m.current_run_at)));
+    const parts = [
+      `corridor ${r.m.corridor_pct !== undefined && r.m.corridor_pct !== '' ? r.m.corridor_pct + '%' : 'unknown'}`,
+      `benchmark ${r.m.benchmark_pct !== undefined && r.m.benchmark_pct !== '' ? r.m.benchmark_pct + '%' : 'unknown'}`,
+      `headline change ${r.m.loss_pct_change !== undefined && r.m.loss_pct_change !== '' ? r.m.loss_pct_change + ' pp' : 'unknown'}`,
+    ];
+    const tip = `<title>${label} UTC<br/>${parts.join('<br/>')}</title>`;
+    const rect = (v, yy, fill) => {
+      if (v === null) return '';
+      const x = sx(v), w = Math.max(Math.abs(x - mid), 1);
+      return `<rect x="${(v < 0 ? x : mid).toFixed(1)}" y="${yy.toFixed(1)}"
+        width="${w.toFixed(1)}" height="${bh.toFixed(1)}" fill="${fill}">${tip}</rect>`;
+    };
+    const unknown = (v, yy, xoff) => v !== null ? '' :
+      `<text class="axis" x="${(mid + xoff).toFixed(1)}" y="${(yy + bh).toFixed(1)}"
+        text-anchor="middle">unknown</text>`;
+    return `<text class="axis" x="${P - 6}" y="${y + bh + 4}" text-anchor="end">${label}</text>` +
+      rect(r.c, y, 'var(--chart-move-corridor)') +
+      rect(r.b, y + bh + 3, 'var(--chart-move-benchmark)') +
+      unknown(r.c, y, 0) + unknown(r.b, y + bh + 3, 0);
+  }).join('');
+
+  const legend = `<div class="trend-legend">
+      <span><span class="sw" style="background:var(--chart-move-corridor)"></span>corridor move</span>
+      <span><span class="sw" style="background:var(--chart-move-benchmark)"></span>benchmark move</span>
+    </div>`;
+
+  return `<svg viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="Corridor and benchmark percent movement between consecutive stored runs, newest twelve pairs">
+      ${axis}${bars}
     </svg>${legend}`;
 }
 

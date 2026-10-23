@@ -115,8 +115,21 @@ func BenchmarkMovement(ctx context.Context, store Store, corridor string) ([]*Mo
 	if err != nil {
 		return nil, fmt.Errorf("runstore: fetching history for %s: %w", corridor, err)
 	}
+	return MovementsFromRecords(records), nil
+}
+
+// MovementsFromRecords derives every consecutive-pair movement from records
+// in chronological order (oldest first), without a store round-trip. It is
+// the read-side helper the trend wire uses so the API can serve the same
+// decomposition BenchmarkMovement computes, over whatever window of history
+// the request asked for.
+//
+// The same contract applies: nil means no pair established any movement
+// (fewer than two records, or a chain with neither a scorable benchmark nor
+// a priced rung between consecutive records).
+func MovementsFromRecords(records []*Record) []*Movement {
 	if len(records) < 2 {
-		return nil, nil
+		return nil
 	}
 
 	var out []*Movement
@@ -125,7 +138,7 @@ func BenchmarkMovement(ctx context.Context, store Store, corridor string) ([]*Mo
 			out = append(out, m)
 		}
 	}
-	return out, nil
+	return out
 }
 
 // benchmarkMovement derives the benchmark's move, the corridor's own move and

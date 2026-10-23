@@ -11,6 +11,19 @@ import (
 	"testing"
 )
 
+// renderedIndexHTML returns the bytes a Server with no Store writes for GET /
+// — the embedded index.html rendered through uiTemplate with a nil Summary.
+// Round-trip tests use this so they compare against what the handler actually
+// serves, not the raw embedded file (which carries template directives).
+func renderedIndexHTML(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := uiTemplate.Execute(&buf, uiPageData{}); err != nil {
+		t.Fatalf("rendering template: %v", err)
+	}
+	return buf.Bytes()
+}
+
 // clientWithoutDecompression returns an http.Client that does not perform
 // transparent gzip decompression, allowing tests to inspect the raw wire bytes
 // and headers (Content-Encoding, Content-Length).
@@ -68,10 +81,7 @@ func TestGzipAccepted_IndexHTML(t *testing.T) {
 		t.Fatalf("decompressing body: %v", err)
 	}
 
-	rawExpected, err := uiFS.ReadFile("index.html")
-	if err != nil {
-		t.Fatal(err)
-	}
+	rawExpected := renderedIndexHTML(t)
 
 	if !bytes.Equal(decompressed, rawExpected) {
 		t.Errorf("decompressed body length %d != expected %d", len(decompressed), len(rawExpected))
@@ -118,10 +128,7 @@ func TestGzipNotAccepted_IndexHTML(t *testing.T) {
 		t.Fatalf("reading body: %v", err)
 	}
 
-	rawExpected, err := uiFS.ReadFile("index.html")
-	if err != nil {
-		t.Fatal(err)
-	}
+	rawExpected := renderedIndexHTML(t)
 
 	if !bytes.Equal(body, rawExpected) {
 		t.Errorf("uncompressed body length %d != expected %d", len(body), len(rawExpected))

@@ -430,6 +430,76 @@ func TestServerErrorStaysAGenericFailure(t *testing.T) {
 	}
 }
 
+// TestStrictReceivePathsParsesResponse covers the mirror endpoint's parse
+// against a real strict-receive body — the shape recorded by
+// cmd/asymmetry for the #595 cross-check.
+func TestStrictReceivePathsParsesResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/paths/strict-receive" {
+			t.Errorf("path = %q, want /paths/strict-receive", r.URL.Path)
+		}
+		q := r.URL.Query()
+		if got := q.Get("destination_amount"); got != "150000" {
+			t.Errorf("destination_amount = %q, want the fixed delivered amount 150000", got)
+		}
+		if got := q.Get("source_assets"); !strings.HasPrefix(got, "USDC:") {
+			t.Errorf("source_assets = %q, want USDC encoding", got)
+		}
+		if got := q.Get("destination_asset_code"); got != "NGNC" {
+			t.Errorf("destination_asset_code = %q, want NGNC", got)
+		}
+		w.Header().Set("Content-Type", "application/hal+json")
+		_, _ = w.Write([]byte(`{"_embedded":{"records":[
+			{"source_asset_type":"credit_alphanum4","source_asset_code":"USDC",
+			 "source_asset_issuer":"` + asset.USDCIssuer + `","source_amount":"100.0000000",
+			 "destination_asset_type":"credit_alphanum4","destination_asset_code":"NGNC",
+			 "destination_asset_issuer":"` + asset.LinkIOIssuer + `","destination_amount":"150000.0000000",
+			 "path":[{"asset_type":"native"}]}
+		]}}`))
+	}))
+	defer srv.Close()
+
+	c := &dex.Client{HorizonURL: srv.URL}
+	paths, err := c.StrictReceivePaths(context.Background(),
+		asset.USDC(), dec(t, "150000"), asset.NGNC())
+	if err != nil {
+		t.Fatalf("StrictReceivePaths: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("parsed %d paths, want 1", len(paths))
+	}
+	p := paths[0]
+	if !p.SourceAmount.Equal(dec(t, "100")) || !p.DestAmount.Equal(dec(t, "150000")) {
+		t.Errorf("amounts = %s -> %s, want 100 -> 150000", p.SourceAmount, p.DestAmount)
+	}
+	if len(p.Hops) != 1 || !p.Hops[0].IsNative() {
+		t.Errorf("hops = %v, want the single native hop as recorded", p.Hops)
+	}
+}
+
+// TestStrictReceivePathsRejectsNonPositiveSourceAmount keeps the validation
+// symmetric across directions: in strict-receive the source_amount is
+// Horizon's computation, so a non-positive one is a corrupted response, not
+// a price — the same rule strict-send applies to destination_amount.
+func TestStrictReceivePathsRejectsNonPositiveSourceAmount(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"_embedded":{"records":[
+			{"source_amount":"0","destination_amount":"150000"}]}}`))
+	}))
+	defer srv.Close()
+
+	c := &dex.Client{HorizonURL: srv.URL}
+	_, err := c.StrictReceivePaths(context.Background(),
+		asset.USDC(), dec(t, "150000"), asset.NGNC())
+	if err == nil {
+		t.Fatal("expected an error for a zero source_amount, got none")
+	}
+	if !strings.Contains(err.Error(), "source_amount") ||
+		!strings.Contains(err.Error(), "must be positive") {
+		t.Errorf("error %q should name source_amount and the positivity rule", err)
+	}
+}
+
 // helpers --------------------------------------------------------------------
 
 // horizonBodyForAmount finds the recorded pathfinding body for one send size.

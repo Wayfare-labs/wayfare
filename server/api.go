@@ -143,7 +143,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/market-structure", s.handleMarketStructure)
 	mux.HandleFunc("/api/thresholds", s.handleThresholds)
 	mux.HandleFunc("/healthz", s.handleHealth)
-	mux.Handle("/", uiHandler())
+	mux.Handle("/", s.uiHandler())
 	return withCORS(withGzip(s.limit(mux)))
 }
 

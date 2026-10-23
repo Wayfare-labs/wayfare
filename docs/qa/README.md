@@ -8,10 +8,10 @@ and reproducibility**: issues
 and [#272](https://github.com/Wayfare-labs/wayfare/issues/272) (both colour
 schemes).
 
-Except for the explicitly labelled offline CSS specimens for #286, these
-suites drive the **real server binary** and a **real browser engine**.
-In those server suites, the responses the UI renders are the bytes
-`server/api.go` actually produced, and the rendering is a browser's.
+The integration passes drive the **real server binary** and a **real browser
+engine**: their responses are bytes `server/api.go` actually produced. The
+#268 metric matrix additionally calls the real renderer with labelled schema
+fixtures; those passes are explicitly separate from API/navigation evidence.
 
 Recorded results live in [`browser/results/`](browser/results/), and the written
 findings in:
@@ -19,6 +19,7 @@ findings in:
 | Issue | Written artifact |
 |:---|:---|
 | #266 error paths in the browser | [`artifacts/266-error-paths.md`](artifacts/266-error-paths.md) |
+| #268 metric rendering, including undetermined | [`artifacts/268-metric-rendering.md`](artifacts/268-metric-rendering.md) |
 | #269 cross-browser matrix | [`artifacts/269-cross-browser.md`](artifacts/269-cross-browser.md) |
 | #270 mobile device QA | [`artifacts/270-mobile.md`](artifacts/270-mobile.md) |
 | #272 QA both colour schemes | [`artifacts/272-color-schemes.md`](artifacts/272-color-schemes.md) |
@@ -75,6 +76,15 @@ Flags: `--base=URL`, `--upstream-down=URL`, `--upstream-slow=URL`,
 Playwright's own download, for a machine that cannot fetch one.
 
 ## Scope limits, stated up front
+
+**#268 records two different sources of evidence.**
+`node run-metric-rendering.mjs --base=URL` reads real recorded API responses,
+then calls the production `findings()` renderer with explicitly labelled
+metric-schema fixtures. The committed history has no metrics, so those fixture
+passes are renderer-only evidence, not measurements or end-to-end navigation
+results. The runner also records startup failures; it never silently repairs
+them. See the artifact for exact setup, raw results, screenshots, and separately
+filed defects. `--result=metric-rendering-crlf.json` preserves a second run.
 
 These are properties of the environment, not of the harness, and the artifacts
 repeat them where they apply:

@@ -83,6 +83,61 @@ type wireOrderBook struct {
 // rather than real.
 var dustThreshold = decimal.NewFromFloat(0.0000001)
 
+// maxDecimalExponent bounds how far a wire decimal may stray from unity
+// before its level is treated as corrupted rather than measured.
+//
+// A Stellar price or amount carries at most 7 decimal places, and no asset on
+// the network approaches a magnitude of 1e30 — an offer outside this bound
+// is not a market fact but garbage bytes. The bound is not pedantry:
+// shopspring/decimal parses exponents lazily, so "1e999999999" is cheap to
+// hold but materialises to a billion-digit number the first time it is
+// compared against anything — fuzzing the order-book path found the decoder
+// pegging a worker on exactly such a body (#589). A level beyond the bound is
+// skipped before any arithmetic can touch it.
+const maxDecimalExponent = 30
+
+// pricedLevels reduces one side of the wire book to the prices that count.
+//
+// A level becomes a priced level only when it could actually fill: the price
+// must parse and the amount must parse and be positive. A level with a
+// garbled or non-positive amount is malformed — counting it would let a
+// nonsense offer inflate the level counts and make an abandoned market look
+// populated, which is the same failure mode a garbled price would cause.
+//
+// Dust is the one malformed shape that is counted rather than skipped: a
+// parseable price at or near zero is a signal about the market in its own
+// right (abandoned offers), so it is reported via the dust count instead of
+// silently dropped.
+func pricedLevels(offers []wireOffer) (prices []decimal.Decimal, dust int) {
+	prices = make([]decimal.Decimal, 0, len(offers))
+	for _, o := range offers {
+		p, err := decimal.NewFromString(o.Price)
+		if err != nil || absExponent(p) > maxDecimalExponent {
+			continue
+		}
+		if p.LessThanOrEqual(dustThreshold) {
+			dust++
+			continue
+		}
+		a, err := decimal.NewFromString(o.Amount)
+		if err != nil || !a.IsPositive() || absExponent(a) > maxDecimalExponent {
+			continue
+		}
+		prices = append(prices, p)
+	}
+	return prices, dust
+}
+
+// absExponent reports a decimal's exponent as an absolute value, saturating
+// at max int so the comparison against maxDecimalExponent is total.
+func absExponent(d decimal.Decimal) int {
+	e := int(d.Exponent())
+	if e < 0 {
+		e = -e
+	}
+	return e
+}
+
 // OrderBook fetches the market and summarises its health.
 func (c *Client) OrderBook(ctx context.Context, selling, buying asset.Asset) (*BookHealth, error) {
 	q := url.Values{}
@@ -104,30 +159,9 @@ func (c *Client) OrderBook(ctx context.Context, selling, buying asset.Asset) (*B
 	// Dust is excluded before picking the best price on each side. Including
 	// a zero-priced bid would drag the computed spread to 100% and mask
 	// whatever the real spread is.
-	realBids := make([]decimal.Decimal, 0, len(body.Bids))
-	for _, b := range body.Bids {
-		p, err := decimal.NewFromString(b.Price)
-		if err != nil {
-			continue
-		}
-		if p.LessThanOrEqual(dustThreshold) {
-			h.DustLevels++
-			continue
-		}
-		realBids = append(realBids, p)
-	}
-	realAsks := make([]decimal.Decimal, 0, len(body.Asks))
-	for _, a := range body.Asks {
-		p, err := decimal.NewFromString(a.Price)
-		if err != nil {
-			continue
-		}
-		if p.LessThanOrEqual(dustThreshold) {
-			h.DustLevels++
-			continue
-		}
-		realAsks = append(realAsks, p)
-	}
+	realBids, bidDust := pricedLevels(body.Bids)
+	realAsks, askDust := pricedLevels(body.Asks)
+	h.DustLevels = bidDust + askDust
 
 	h.BidLevels = len(realBids)
 	h.AskLevels = len(realAsks)
