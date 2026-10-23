@@ -142,6 +142,9 @@ func TestRunnerDefaultsApplyWhenNoChecksSupplied(t *testing.T) {
 	for _, c := range r.Default() {
 		want[c.Describe().ID] = true
 	}
+	if !want["issuer.drift"] {
+		t.Fatal("issuer.drift must be part of the default check set")
+	}
 	if len(got) != len(want) {
 		t.Fatalf("checks() returned %d checks, want the %d defaults",
 			len(got), len(want))

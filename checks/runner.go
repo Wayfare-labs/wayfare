@@ -68,6 +68,7 @@ func (r *Runner) Default() []Check {
 		SEP38QuoteServerPublished{},
 		IssuerAuthFlags{HorizonURL: r.HorizonURL, HTTPClient: r.client()},
 		IssuerFlagImmutability{HorizonURL: r.HorizonURL, HTTPClient: r.client()},
+		IssuerDrift{HorizonURL: r.HorizonURL, HTTPClient: r.client()},
 		HomeDomainRoundTrip{HorizonURL: r.HorizonURL, HTTPClient: r.client(), Resolver: r.resolver()},
 	}
 }
@@ -98,6 +99,11 @@ type Corridor struct {
 	// against a reference report undetermined when it is unscorable, and
 	// short-circuit before any network call.
 	Reference refrate.Rate
+
+	// Baseline is the issuer drift observation stored by the previous run of
+	// this corridor, if any. With it the issuer.drift check reports what
+	// changed since then; nil means there is nothing to compare against yet.
+	Baseline *IssuerDriftBaseline
 }
 
 func (r *Runner) checks() []Check {
@@ -181,11 +187,17 @@ func (r *Runner) client() *http.Client {
 // nothing because a document could not be fetched would discard observations
 // that were perfectly obtainable.
 func (r *Runner) ForAsset(ctx context.Context, a asset.Asset) *Findings {
+	return r.ForAssetWithBaseline(ctx, a, nil)
+}
+
+// ForAssetWithBaseline runs checks with the stored issuer drift observation,
+// if one exists, as the baseline for this asset.
+func (r *Runner) ForAssetWithBaseline(ctx context.Context, a asset.Asset, baseline *IssuerDriftBaseline) *Findings {
 	ctx, cancel := context.WithTimeout(ctx, r.timeout())
 	defer cancel()
 
 	f := &Findings{}
-	for _, res := range RunAll(ctx, r.checks(), r.subject(ctx, a)) {
+	for _, res := range RunAll(ctx, r.checksWithBaseline(baseline), r.subject(ctx, a)) {
 		f.Add(res)
 	}
 	return f
@@ -211,7 +223,7 @@ func (r *Runner) ForCorridor(ctx context.Context, c Corridor) *Findings {
 	subject.ReferenceAgreement = c.Reference.Agreement.String()
 
 	f := &Findings{}
-	for _, res := range RunAll(ctx, r.checks(), subject) {
+	for _, res := range RunAll(ctx, r.checksWithBaseline(c.Baseline), subject) {
 		f.Add(res)
 	}
 	for _, m := range r.metrics(c) {
@@ -248,4 +260,28 @@ func (r *Runner) subject(ctx context.Context, a asset.Asset) Subject {
 		// several different questions.
 	}
 	return subject
+}
+
+// checksWithBaseline returns the check set with the issuer drift baseline, if
+// one is given, installed on the issuer.drift check. The runner's own check
+// set is never modified: each call works on a copy.
+func (r *Runner) checksWithBaseline(baseline *IssuerDriftBaseline) []Check {
+	checks := append([]Check(nil), r.checks()...)
+	if baseline == nil {
+		return checks
+	}
+	for i, check := range checks {
+		switch drift := check.(type) {
+		case IssuerDrift:
+			drift.Baseline = baseline
+			checks[i] = drift
+		case *IssuerDrift:
+			if drift != nil {
+				copy := *drift
+				copy.Baseline = baseline
+				checks[i] = copy
+			}
+		}
+	}
+	return checks
 }

@@ -112,6 +112,38 @@ func TestRunOnceWritesOneRecordPerCorridor(t *testing.T) {
 	}
 }
 
+func TestSchedulerLoadsIssuerDriftBaselineFromLatestRecord(t *testing.T) {
+	ctx := context.Background()
+	store, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := checks.IssuerDriftBaseline{
+		AuthRequired:  true,
+		AuthImmutable: true,
+		TOMLHash:      strings.Repeat("a", 64),
+	}
+	record := &runstore.Record{
+		Corridor: "USDC-NGNC",
+		Checks: []checks.CheckJSON{{
+			ID: "issuer.drift",
+			Evidence: []checks.EvidenceJSON{{
+				Source:   "https://horizon.stellar.org/accounts/issuer → drift-check",
+				Observed: "auth_required=true auth_revocable=false auth_clawback_enabled=false auth_immutable=true toml_sha256=" + want.TOMLHash,
+			}},
+		}},
+	}
+	if err := store.Append(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+
+	scheduler := &Scheduler{Store: store, Logger: quiet()}
+	got := scheduler.issuerDriftBaseline(ctx, "USDC-NGNC")
+	if got == nil || *got != want {
+		t.Fatalf("baseline = %#v, want %#v", got, want)
+	}
+}
+
 // TestRunOnceRecordsMetrics is the second acceptance criterion of #577: a
 // scheduled sweep must store its metrics, not only serve them live. The
 // snapshot these tests replay predates metrics, so the recorded set is

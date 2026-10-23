@@ -264,10 +264,12 @@ the set has grown, and `checks.Runner.Default()` returns:
 | `sep38.quote-server-published` | anchor | free | notice |
 | `issuer.auth-flags` | asset | one-request | critical |
 | `issuer.auth-immutable` | asset | one-request | info |
+| `issuer.drift` | asset | one-request | warning |
 | `toml.home-domain-roundtrip` | asset | expensive | notice |
 
-`checks/issuer_drift.go` also implements `Check` (`issuer.drift`) and is **not**
-in the default set, so it does not run on a sweep.
+`issuer.drift` compares Horizon flags and the SHA-256 of the resolved
+stellar.toml against the preceding stored observation. With no usable prior
+observation, it is undetermined rather than passing without evidence.
 
 **Writing one.** [docs/adding-a-check.md](adding-a-check.md) walks the whole
 path for a new check — ID, scope, subject fields, evidence, the tests CI runs,

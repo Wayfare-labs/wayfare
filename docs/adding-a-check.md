@@ -79,18 +79,21 @@ your fact before writing a new one — they are all in `checks/`:
 | ID | File | Scope | Cost | Severity |
 |:---|:---|:---|:---|:---|
 | `toml.anchor-asset-iso4217` | `toml_anchor_asset.go` | asset | free | notice |
+| `sep12.server-published` | `sep12_info_lists_asset.go` | anchor | free | info |
 | `sep10.endpoint-responds` | `sep10_endpoint.go` | anchor | one-request | warning |
+| `sep6.info-lists-asset` | `sep6_info_lists_asset.go` | asset | one-request | notice |
 | `sep24.info-lists-asset` | `sep24_info_lists_asset.go` | asset | one-request | notice |
+| `sep31.info` | `sep31_info_lists_asset.go` | asset | one-request | warning |
 | `sep38.quote-server-published` | `sep38_quote_server.go` | anchor | free | notice |
 | `issuer.auth-flags` | `issuer_auth_flags.go` | asset | one-request | critical |
 | `issuer.auth-immutable` | `issuer_flag_immutability.go` | asset | one-request | info |
+| `issuer.drift` | `issuer_drift.go` | asset | one-request | warning |
 | `toml.home-domain-roundtrip` | `toml_home_domain_roundtrip.go` | asset | expensive | notice |
 
-Those seven are what `Runner.Default()` returns, so they run on every corridor
-sweep. `checks/issuer_drift.go` also implements `Check` (`issuer.drift`) but is
-**not** in the default set, so it does not run — and its `Run` re-reads the
-issuer's auth flags without comparing them to any earlier observation, so it
-cannot report drift today. It is a file to read, not a shape to copy.
+These are what `Runner.Default()` returns, so they run on every corridor
+sweep. `issuer.drift` compares the current Horizon flags and the SHA-256 of the
+resolved stellar.toml with the preceding stored observation. Its first run, or
+a run without a usable baseline, is undetermined rather than a no-drift pass.
 
 **IDs are `<source>.<fact>`, lower-case, hyphenated.** `<source>` names where
 the fact comes from — `toml`, `sep10`, `sep24`, `sep38`, `issuer` — and `<fact>`
