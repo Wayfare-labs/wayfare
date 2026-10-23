@@ -21,6 +21,16 @@
 // Below these thresholds the result is UNDETERMINED. No statistics are
 // fabricated from insufficient data.
 //
+// # Structural floor tracking
+//
+// The structural floor is the corridor's spread at the dust size. Its
+// movement over time is tracked by TrackFloor, which applies the same
+// minimum-sample and undetermined rules to a longitudinal series of floor
+// observations. A floor value that is unavailable for a given observation
+// must be supplied as an unknown (nil), never as zero or a default; such
+// observations are excluded from the series and counted separately so the
+// caller can see how much of the history is missing.
+//
 // # What this is NOT
 //
 //   - Not a new persistence mechanism
@@ -207,6 +217,53 @@ func AnalyzeDecimal(values []decimal.Decimal, thresholds *RegimeThresholds) *Met
 	}
 
 	return result
+}
+
+// FloorSeries is a longitudinal series of structural-floor observations.
+// A nil entry is an unknown observation (the floor could not be obtained for
+// that measurement) and is never treated as zero.
+type FloorSeries struct {
+	// Observations are the floor values in chronological order; nil means
+	// unknown for that measurement.
+	Observations []*decimal.Decimal
+}
+
+// FloorTrack is the result of tracking the structural floor over time.
+type FloorTrack struct {
+	// Known is the number of observations with a known floor value.
+	Known int
+
+	// Unknown is the number of observations whose floor was unavailable.
+	// These are excluded from the statistics, never imputed.
+	Unknown int
+
+	// Stats is the analysis of the known observations only. Its
+	// Undetermined flag applies the same minimum sample rules as
+	// AnalyzeDecimal.
+	Stats *MetricStats
+}
+
+// TrackFloor analyses the structural floor series over time. Unknown
+// observations are excluded from the statistics and counted in Unknown so the
+// history's gaps stay visible. Statistics are computed through AnalyzeDecimal,
+// so the minimum sample sizes and undetermined semantics are identical to
+// every other metric in this package. Pass nil thresholds for the defaults.
+func TrackFloor(series FloorSeries, thresholds *RegimeThresholds) FloorTrack {
+	values := make([]decimal.Decimal, 0, len(series.Observations))
+	unknown := 0
+	for _, obs := range series.Observations {
+		if obs == nil {
+			unknown++
+			continue
+		}
+		values = append(values, *obs)
+	}
+
+	return FloorTrack{
+		Known:   len(values),
+		Unknown: unknown,
+		Stats:   AnalyzeDecimal(values, thresholds),
+	}
 }
 
 // computeMean calculates the arithmetic mean of a slice of decimals.

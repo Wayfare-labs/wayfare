@@ -1,6 +1,6 @@
 # Metrics methodology
 
-**Status: v1, current as of 2026-10-23.** One page per metric: definition, unit,
+**Status: v1, current as of 2026-10-23.** *(Metric `#119` — structural floor over time — is blocked on #93 and not yet measured; no figure is published for it here.)* One page per metric: definition, unit,
 data source, what it cannot determine, and what undetermined means for it.
 
 Every claim about the code is checked against the code at time of writing. Future
