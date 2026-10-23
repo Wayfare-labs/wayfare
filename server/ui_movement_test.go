@@ -114,7 +114,7 @@ func TestTrendServesMovements(t *testing.T) {
 			},
 			FloorLossPct: s.loss, FloorSize: "0.1",
 			WorstLossPct: s.loss, WorstSize: "0.1",
-			Finding:      "seeded run",
+			Finding: "seeded run",
 			Rungs: []runstore.Rung{{
 				SendAmount: "0.1", Priced: true, Integrity: "DIRECT",
 				ReceiveAmount: "100", EffectiveRate: s.rate,

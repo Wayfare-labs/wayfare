@@ -197,16 +197,6 @@ func (s *Server) uiHandler() http.Handler {
 	})
 }
 
-// uiSourceRaw returns the raw embedded page source, for tests that assert on
-// the file's text rather than a rendered response.
-func uiSourceRaw() (string, error) {
-	b, err := uiFS.ReadFile("index.html")
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
-
 // noscriptSummary extracts the rendered <noscript> block from a page body.
 // Used by tests to assert on what a reader without JavaScript sees.
 func noscriptSummary(page string) string {
