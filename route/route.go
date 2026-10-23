@@ -559,29 +559,6 @@ func describeAssets(as []asset.Asset) string {
 	return strings.Join(codes, " and ")
 }
 
-// unknownHopNote renders the coverage finding for hops pathfinding routed
-// through that the asset registry does not know. An empty list produces no
-// note.
-//
-// The note exists because the classification treats an unregistered hop as
-// evidence of an independent market — the documented false-negative in
-// asset/known.go — and that decision must be visible wherever a corridor is
-// reported, not buried in the registry.
-func unknownHopNote(unknown []asset.Asset) []string {
-	if len(unknown) == 0 {
-		return nil
-	}
-	names := make([]string, len(unknown))
-	for i, a := range unknown {
-		names[i] = a.String()
-	}
-	return []string{fmt.Sprintf(
-		"Unregistered hop asset(s) %s appeared in pathfinding and are not in the "+
-			"asset registry. An unrecognised hop is currently treated as having an "+
-			"independent market; see asset/known.go for the bounded false-negative.",
-		strings.Join(names, ", "))}
-}
-
 // describeChainStatus renders the measured integrity of each dependency
 // for a human-readable warning.
 func describeChainStatus(nodes []DependencyNode) string {
@@ -611,6 +588,29 @@ func fiatAssets(nodes []DependencyNode) []asset.Asset {
 		out[i] = n.Asset
 	}
 	return out
+}
+
+// unknownHopNote renders the coverage finding for hops pathfinding routed
+// through that the asset registry does not know. An empty list produces no
+// note.
+//
+// The note exists because the classification treats an unregistered hop as
+// evidence of an independent market — the documented false-negative in
+// asset/known.go — and that decision must be visible wherever a corridor is
+// reported, not buried in the registry.
+func unknownHopNote(unknown []asset.Asset) []string {
+	if len(unknown) == 0 {
+		return nil
+	}
+	names := make([]string, len(unknown))
+	for i, a := range unknown {
+		names[i] = a.String()
+	}
+	return []string{fmt.Sprintf(
+		"Unregistered hop asset(s) %s appeared in pathfinding and are not in the "+
+			"asset registry. An unrecognised hop is currently treated as having an "+
+			"independent market; see asset/known.go for the bounded false-negative.",
+		strings.Join(names, ", "))}
 }
 
 // classify determines corridor integrity from the complete set of paths.
