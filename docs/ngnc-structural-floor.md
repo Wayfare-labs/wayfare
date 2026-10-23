@@ -218,11 +218,19 @@ concrete:
   and let the recorded chain carry metrics.~~ Done since 2026-10-22: the runner
   measures the default order-book set and recorded runs carry it. The chains
   this document cites predate the change, so they do not carry one.
-- Add a metric that measures the loss at the dust size against the reference
-  mid, so the floor can be split into a spread component and a depth component
-  rather than inferred from the ladder alone.
+- Add a metric that measures the dust-size rung's loss **against the reference
+  mid** rather than against the smallest probed size. That is the figure that
+  separates a floor from slippage, and the current `PriceImpactMetric`
+  definition cannot produce it.
+- Only then can the spread/depth attribution be promoted from inference to
+  result, and until then the finding above states it as an inference.
 - Record that metric into the hash-chained store so the decomposition is
   reproducible from committed bytes rather than from this document.
+
+Until those land, the honest summary is the one this document is built on: at
+0.1 USDC, on three dates and three different routes, USDC → NGNC loses about a
+quarter of its value — and the tool can show you that, but cannot yet tell you
+which part of the market it comes from.
 
 ---
 
@@ -234,3 +242,22 @@ narrowing or stable. Tracking it requires that each recorded run carry the
 dust-size loss and its benchmark in a form that can be compared across dates.
 The three dated observations above are the seed of that series; they are not
 yet a continuous one, and they are not yet computed by the tool.
+
+---
+
+## Related documents
+
+- [docs/corridor-measurements.md](corridor-measurements.md) — the raw ladders,
+  with timestamps and the endpoint each came from
+- [docs/why-wayfare.md](why-wayfare.md) — why this finding changed the product
+  thesis, and what that story does not claim
+- [docs/ladder-sizes.md](ladder-sizes.md) — why the ladder is 0.1 → 5000 and
+  what the dust rung is for
+- [docs/fair-value-ngn.md](fair-value-ngn.md) — what the reference mid is and
+  why it is the charitable benchmark
+- [docs/market-structure.md](market-structure.md) — which market-structure
+  questions the current code can and cannot answer
+- [docs/glossary.md](glossary.md) — verdicts, integrity states, agreement bands,
+  and what *not determined* means
+- [README.md](../README.md) — the shared contracts: thresholds, the
+  recommendation rule, integrity states, and the layer model
