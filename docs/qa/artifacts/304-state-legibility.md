@@ -123,3 +123,12 @@ quietly stops asserting this would stop being evidence.
 - Console errors recorded on every pass are the Cloudflare challenge-platform
   404 that `269-cross-browser.md` already filed as an adjacent finding, plus
   the expected 502s in the error-banner pass. Nothing from this change.
+
+## Blocked on #79
+
+This issue (#209, the stale-banner QA) is blocked on #79 (backlog `#1`). The
+stale-banner state it is meant to exercise — a `RECORDED` reading rendering
+with a visible age — is the contract #79 defines, and that contract does not
+exist on this branch yet. No stale-banner pass has been recorded here. Nothing
+in this artifact should be read as evidence about the stale-banner regression
+until #79 lands and the QA procedure is run against it.
