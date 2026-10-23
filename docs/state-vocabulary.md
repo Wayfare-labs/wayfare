@@ -112,6 +112,20 @@ the description to a `title`/`aria-label` so the row cannot overflow. None of
 these change *which* state is shown — only where the words wrap. Verify at
 320 / 375 / 768 / 1024 / 1440 per the QA harness (`docs/qa/README.md`).
 
+## Stale-as-live guard (QA reference)
+
+The specific regression this vocabulary must prevent is a `RECORDED` or `STALE`
+reading rendering with `LIVE` provenance. The guard is the provenance banner:
+
+- A `LIVE` banner carries the words `LIVE MEASUREMENT` and a measurement
+  timestamp; it is only shown when the payload's provenance field is `live`.
+- A `RECORDED` reading must show `RECORDED — NOT CURRENT` and its `age_human`
+  value, never the `LIVE` words, regardless of how recent the record is.
+- The QA procedure for this guard (cases, endpoints, and recorded timestamps)
+  is maintained alongside the state matrix in `docs/qa/`. Any observed case
+  where a stale figure presents as live is a defect and is filed separately,
+  not fixed under this document.
+
 ## Out of scope
 
 This document specifies appearance. The `GOOD ≤ 3%` / `FAIR ≤ 8%` / `POOR ≤ 20%`
