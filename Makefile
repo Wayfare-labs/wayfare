@@ -2,13 +2,29 @@ GO      ?= go
 BIN     := bin
 PKGS    := ./...
 
-.PHONY: all build test race lint fmt vet cover run clean help offline-test docker-build
+# The image the deployment runs, and the scanner CI inspects it with.
+# Both are variables so a version can be bumped in one place.
+#
+# Note the tag forms, which differ: the scanner's GitHub release is tagged
+# `v0.74.0` (that is what CI pins in its `version:` input) while its container
+# image is tagged `0.74.0`. A `v` here fails to pull.
+IMAGE       ?= wayfare:local
+TRIVY_IMAGE ?= aquasec/trivy:0.74.0
+
+.PHONY: all build test race lint fmt vet cover run clean help offline-test docker-build image-scan
 
 all: fmt vet test build ## Format, vet, test and build
 
 build: ## Build all binaries into bin/
 	@mkdir -p $(BIN)
 	$(GO) build -o $(BIN)/ $(PKGS)
+
+build-stamped: ## Build all binaries with build provenance stamped via -ldflags
+	@mkdir -p $(BIN)
+	$(GO) build -o $(BIN)/ $(PKGS) \
+		-ldflags="-s -w \
+			-X github.com/Wayfare-labs/wayfare/server.codeCommit='$(shell git rev-parse HEAD)' \
+			-X github.com/Wayfare-labs/wayfare/server.dataCommit='$(shell git log -1 --format=%H -- data/)'"
 
 test: ## Run tests
 	$(GO) test $(PKGS)
@@ -37,10 +53,29 @@ offline-test: ## Run the test suite with no external network (mirrors the CI job
 	@# CI blocks ports 80 and 443 with iptables instead, which leaves the
 	@# ephemeral ports httptest uses untouched and reaches the same end.
 	$(GO) build $(PKGS)
-	unshare -rn bash -c 'ip link set lo up 2>/dev/null; $(GO) test -count=1 $(PKGS)'
+	unshare -rn bash -c 'ip link set lo up 2>/dev/null; $(GO) test -count=3 -shuffle=on $(PKGS)'
 
 docker-build: ## Build the container image (mirrors the CI job)
-	docker build -t wayfare:local .
+	docker build -t $(IMAGE) .
+
+image-scan: ## Scan the built image for known vulnerabilities (mirrors the CI job; needs docker)
+	@# The scanner runs from its own image, so nothing has to be installed
+	@# locally, and the socket mount lets it read the local image store rather
+	@# than pulling from a registry. The release is pinned to the same one CI
+	@# pins — a scanner that moved under us would change what "clean" means.
+	@#
+	@# Two invocations, mirroring CI: the first reports every advisory in the
+	@# image (OS packages and language packages, which means the Go standard
+	@# library compiled into /wayfared) and never fails; the second fails on a
+	@# fixable finding in the image's own packages, which is the part a change
+	@# here can act on.
+	@# `--scanners vuln` is passed explicitly so this matches the CI step:
+	@# trivy also scans for secrets and misconfiguration by default, which would
+	@# make the local output a different report from the one CI produces.
+	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock $(TRIVY_IMAGE) image \
+		--scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --vuln-type os,library $(IMAGE)
+	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock $(TRIVY_IMAGE) image \
+		--scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --vuln-type os --exit-code 1 $(IMAGE)
 
 cover: ## Run tests with coverage and write coverage.html
 	$(GO) test -coverprofile=coverage.out $(PKGS)

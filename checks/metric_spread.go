@@ -30,12 +30,12 @@ func (SpreadMetric) Describe() Descriptor {
 		ID:    "spread.bid-ask",
 		Scope: ScopeCorridor,
 		Cost:  CostOneRequest,
+		Venue: VenueOrderBook,
 		Title: "Bid/ask spread on the direct order book",
 		CanDetermine: "The bid/ask spread as a percentage of mid, read from " +
 			"Horizon's /order_book endpoint for the corridor's direct pair.",
 		CannotDetermine: "Whether the spread reflects executable depth or " +
-			"only the top of book. Horizon's order_book endpoint does not " +
-			"expose AMM liquidity, so the spread measures the book alone.",
+			"only the top of book, and whether AMM liquidity would tighten it.",
 	}
 }
 
@@ -85,14 +85,18 @@ func (m SpreadMetric) Run(ctx context.Context, s Subject) MetricResult {
 		return MetricUndetermined(d, s, reason, evidence)
 	}
 
-	evidence.Observed = fmt.Sprintf("spread=%s%%, bid=%s, ask=%s, bids=%d, asks=%d, dust=%d",
-		h.SpreadPct.StringFixed(4), h.BestBid, h.BestAsk,
+	evidence.Observed = fmt.Sprintf("spread=%s%%, mid=%s, bid=%s, ask=%s, bids=%d, asks=%d, dust=%d",
+		h.SpreadPct.StringFixed(4), h.Mid, h.BestBid, h.BestAsk,
 		h.BidLevels, h.AskLevels, h.DustLevels)
 
 	summary := fmt.Sprintf(
 		"spread %s%% of mid: best bid %s, best ask %s, %d bid levels, %d ask levels",
 		h.SpreadPct.StringFixed(2), h.BestBid, h.BestAsk,
 		h.BidLevels, h.AskLevels)
+
+	if substituted {
+		summary = fmt.Sprintf("on the underlying %s book: %s", buy.Code, summary)
+	}
 
 	return MetricValue(d, s, h.SpreadPct, UnitPercent, summary, evidence)
 }

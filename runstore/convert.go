@@ -28,16 +28,24 @@ func FromCorridorJSON(c route.CorridorJSON) *Record {
 		// scorable at all: an unscorable rate never produced a verdict, so
 		// naming a source here would claim one did.
 		//
-		// SecondaryAsOf and the parallel/street-market block have no home in
-		// this record shape yet — see the note on Record's field-addition
+		// FetchedAt is carried because the wire publishes reference_fetched_at
+		// and a stale replay must reproduce it: a reader needs to know how
+		// old the benchmark was when the reading was taken. It lives on the
+		// record as the Version 3 field (see Reference and docs/run-store.md).
+		//
+		// SecondaryAsOf and the parallel/street-market block still have no
+		// home in this record shape — see the note on Record's field-addition
 		// rule. Adding them is a Record layout change with its own migration
 		// and review bar, so it is flagged here rather than done as part of
 		// this fix.
 		Reference: Reference{
 			Mid:             c.ReferenceMid,
 			Source:          c.ReferenceSource,
+			AsOf:            c.ReferenceAsOf,
+			FetchedAt:       c.ReferenceFetchedAt,
 			SecondaryMid:    c.ReferenceSecondaryMid,
 			SecondarySource: c.ReferenceSecondarySource,
+			SecondaryAsOf:   c.ReferenceSecondaryAsOf,
 			DivergencePct:   c.ReferenceDivergencePct,
 			ScoredAgainst:   scoredAgainst(c),
 		},
@@ -48,6 +56,21 @@ func FromCorridorJSON(c route.CorridorJSON) *Record {
 		RecommendedSize: c.RecommendedSize,
 		Finding:         c.Finding,
 		Rungs:           make([]Rung, 0, len(c.Rungs)),
+	}
+
+	// The diagnostic attribution is optional: the wire emits it only when a
+	// third provider was consulted on a DISAGREE, and the record preserves it
+	// so a stale replay does not silently drop the one fact that says which
+	// primary was the outlier. A record with no diagnostic leaves every field
+	// empty, which is the same absence the live document carried.
+	if d := c.ReferenceDiagnostic; d != nil {
+		r.Reference.DiagnosticSource = d.Source
+		r.Reference.DiagnosticMid = d.Mid
+		r.Reference.DiagnosticAsOf = d.AsOf
+		r.Reference.DiagnosticOutlier = d.Outlier
+		r.Reference.DiagnosticOutlierDistancePct = d.OutlierDistancePct
+		r.Reference.DiagnosticOtherDistancePct = d.OtherDistancePct
+		r.Reference.DiagnosticReason = d.Reason
 	}
 
 	// Findings are carried into storage word-for-word, so a history-served
@@ -118,9 +141,10 @@ func scoredAgainst(c route.CorridorJSON) string {
 // existed, and the scheduler runs without one.
 type Nop struct{}
 
-func (Nop) Append(context.Context, *Record) error                  { return nil }
-func (Nop) Latest(context.Context, string) (*Record, error)        { return nil, nil }
-func (Nop) Recent(context.Context, string, int) ([]*Record, error) { return nil, nil }
-func (Nop) All(context.Context, string) ([]*Record, error)         { return nil, nil }
-func (Nop) Verify(context.Context, string) error                   { return nil }
-func (Nop) Corridors(context.Context) ([]string, error)            { return nil, nil }
+func (Nop) Append(context.Context, *Record) error                               { return nil }
+func (Nop) Latest(context.Context, string) (*Record, error)                     { return nil, nil }
+func (Nop) Recent(context.Context, string, int) ([]*Record, error)              { return nil, nil }
+func (Nop) RecentBefore(context.Context, string, int, int64) ([]*Record, error) { return nil, nil }
+func (Nop) All(context.Context, string) ([]*Record, error)                      { return nil, nil }
+func (Nop) Verify(context.Context, string) error                                { return nil }
+func (Nop) Corridors(context.Context) ([]string, error)                         { return nil, nil }

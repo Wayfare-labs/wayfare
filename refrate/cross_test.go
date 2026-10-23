@@ -3,6 +3,7 @@ package refrate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +108,63 @@ func TestDisagreementScoresConservatively(t *testing.T) {
 	}
 }
 
+// TestDisagreeSelectsConservativeMidRegardlessOfOrder pins the selection rule
+// inside the DISAGREE band: between 2% and 10% the *more conservative* mid —
+// the one producing the higher loss — is scored against, whichever position it
+// holds in the configuration.
+//
+// The disagreement band answers "which reading is more pessimistic", not
+// "which is primary", so the choice must not depend on ordering. The single
+// ordering in TestDisagreementScoresConservatively is satisfied by an
+// implementation that always scores the secondary; the swap in reconcile()
+// only runs when the conservative mid sits with the secondary, so an
+// implementation selecting correctly by accident in one ordering fails here.
+func TestDisagreeSelectsConservativeMidRegardlessOfOrder(t *testing.T) {
+	// 5% apart: past agreement, well inside malfunction. The larger mid
+	// produces the higher loss — loss is measured as how far the achieved
+	// rate falls below the benchmark — so it is the conservative choice in
+	// both orderings.
+	low := &fakeProvider{name: "low", mid: "1300"}
+	high := &fakeProvider{name: "high", mid: "1365"}
+
+	cases := []struct {
+		name               string
+		primary, secondary *fakeProvider
+	}{
+		{"conservative secondary", low, high},
+		{"conservative primary", high, low},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := rateOf(t, &Cross{Primary: tc.primary, Secondary: tc.secondary})
+
+			if r.Agreement != AgreementDisagree {
+				t.Fatalf("Agreement = %s, want DISAGREE (divergence %s%%)",
+					r.Agreement, r.DivergencePct.StringFixed(2))
+			}
+			// The conservative mid is the same whichever ordering ran.
+			if !r.Mid.Equal(decimal.RequireFromString("1365")) {
+				t.Errorf("Mid = %s, want 1365 — the mid producing the higher loss", r.Mid)
+			}
+			if r.Source != "high" {
+				t.Errorf("Source = %s, want the provider holding the conservative mid", r.Source)
+			}
+			// The displaced feed survives in the secondary fields, so a
+			// reader can see both readings rather than only the chosen one.
+			if r.SecondarySource != "low" || !r.SecondaryMid.Equal(decimal.RequireFromString("1300")) {
+				t.Errorf("secondary = %s/%s, want the unused mid 1300 from low",
+					r.SecondarySource, r.SecondaryMid)
+			}
+			if !r.Scorable() {
+				t.Error("a disagreement inside the malfunction bound is still scorable")
+			}
+			if !strings.Contains(r.Note, "conservative") {
+				t.Errorf("Note = %q, want it to explain the conservative choice", r.Note)
+			}
+		})
+	}
+}
+
 // TestMalfunctionBandRefusesToScore is the band added because conservative
 // scoring has a failure mode: a broken feed always wins it.
 //
@@ -159,6 +217,80 @@ func TestBandBoundaries(t *testing.T) {
 			if r.Agreement != tc.want {
 				t.Errorf("Agreement = %s, want %s (divergence %s%%)",
 					r.Agreement, tc.want, r.DivergencePct.StringFixed(4))
+			}
+		})
+	}
+}
+
+// atPct returns the decimal string for base*(1+pct/100), computed entirely
+// in decimal.Decimal so the result lands on the boundary exactly rather than
+// being approached through float error.
+func atPct(base, pct string) string {
+	b := decimal.RequireFromString(base)
+	p := decimal.RequireFromString(pct)
+	delta := b.Mul(p).Div(decimal.NewFromInt(100))
+	return b.Add(delta).String()
+}
+
+// TestDivergenceBoundariesExact pins the classification at the exact
+// thresholds where cross.go's `<` and `<=` comparisons diverge: 2% (agree vs
+// disagree) and 10% (disagree vs malfunction). Both provider orderings are
+// covered, since which provider carries the higher mid determines which one
+// is selected once the band is decided.
+func TestDivergenceBoundariesExact(t *testing.T) {
+	const base = "1000"
+
+	cases := []struct {
+		pct      string
+		want     Agreement
+		scorable bool
+	}{
+		{"1.999", AgreementAgree, true},
+		{"2", AgreementAgree, true},
+		{"2.001", AgreementDisagree, true},
+		{"9.999", AgreementDisagree, true},
+		{"10", AgreementDisagree, true},
+		{"10.001", AgreementMalfunction, false},
+	}
+
+	for _, tc := range cases {
+		hi := atPct(base, tc.pct)
+
+		t.Run(tc.pct+"%_primary_lower", func(t *testing.T) {
+			r := rateOf(t, crossOf(base, hi))
+
+			if r.Agreement != tc.want {
+				t.Errorf("Agreement = %s, want %s (divergence %s%%)", r.Agreement, tc.want, tc.pct)
+			}
+			if r.Scorable() != tc.scorable {
+				t.Errorf("Scorable() = %v, want %v", r.Scorable(), tc.scorable)
+			}
+			// Below 10%, the higher mid wins once it's a genuine disagreement.
+			// Elsewhere (agree, malfunction), the primary's own mid is kept.
+			wantMid := base
+			if tc.want == AgreementDisagree {
+				wantMid = hi
+			}
+			if !r.Mid.Equal(decimal.RequireFromString(wantMid)) {
+				t.Errorf("Mid = %s, want %s", r.Mid, wantMid)
+			}
+		})
+
+		t.Run(tc.pct+"%_primary_higher", func(t *testing.T) {
+			r := rateOf(t, crossOf(hi, base))
+
+			if r.Agreement != tc.want {
+				t.Errorf("Agreement = %s, want %s (divergence %s%%)", r.Agreement, tc.want, tc.pct)
+			}
+			if r.Scorable() != tc.scorable {
+				t.Errorf("Scorable() = %v, want %v", r.Scorable(), tc.scorable)
+			}
+			// The primary already carries the higher mid here, so it is kept
+			// in every band: on agree/malfunction because nothing reassigns
+			// it, and on disagree because it is already the conservative
+			// choice.
+			if !r.Mid.Equal(decimal.RequireFromString(hi)) {
+				t.Errorf("Mid = %s, want %s", r.Mid, hi)
 			}
 		})
 	}
@@ -228,6 +360,7 @@ func TestStaleSelectsFresherFeedRegardlessOfOrder(t *testing.T) {
 		{"fresh primary", fresh, stale},
 		{"fresh secondary", stale, fresh},
 	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := rateOf(t, &Cross{Primary: tc.primary, Secondary: tc.secondary})
@@ -387,7 +520,7 @@ func TestBothFailingIsAnError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when neither provider answered")
 	}
-	for _, want := range []string{"primary", "secondary", "timeout", "connection refused"} {
+	for _, want := range []string{"primary", "secondary", "unavailable", "timeout", "connection refused"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q should mention %q", err, want)
 		}
@@ -421,5 +554,540 @@ func TestNoSecondaryIsSingleSource(t *testing.T) {
 	}
 	if c.Name() != "only" {
 		t.Errorf("Name() = %s, want just the primary's name", c.Name())
+	}
+}
+
+// TestClassifyError verifies the error taxonomy classifier for every typed
+// error the project defines.
+func TestClassifyError(t *testing.T) {
+	cases := []struct {
+		name  string
+		err   error
+		want  errorClass
+		label string
+	}{
+		{
+			name:  "ErrUnavailable",
+			err:   &ErrUnavailable{Source: "test", Err: errors.New("timeout")},
+			want:  errClassUnavailable,
+			label: "unavailable",
+		},
+		{
+			name:  "ErrUnparseable",
+			err:   &ErrUnparseable{Source: "test", Err: errors.New("bad json")},
+			want:  errClassUnparseable,
+			label: "returned an unparseable response",
+		},
+		{
+			name:  "wrapped ErrUnavailable",
+			err:   fmt.Errorf("refrate: %w", &ErrUnavailable{Source: "test", Err: errors.New("timeout")}),
+			want:  errClassUnavailable,
+			label: "unavailable",
+		},
+		{
+			name:  "wrapped ErrUnparseable",
+			err:   fmt.Errorf("refrate: %w", &ErrUnparseable{Source: "test", Err: errors.New("bad json")}),
+			want:  errClassUnparseable,
+			label: "returned an unparseable response",
+		},
+		{
+			name:  "ErrNoRate is unknown",
+			err:   &ErrNoRate{Base: "USD", Quote: "NGN", Source: "test"},
+			want:  errClassUnknown,
+			label: "unavailable",
+		},
+		{
+			name:  "ErrRateLimited is unknown",
+			err:   &ErrRateLimited{Source: "test"},
+			want:  errClassUnknown,
+			label: "unavailable",
+		},
+		{
+			name:  "plain error is unknown",
+			err:   errors.New("something broke"),
+			want:  errClassUnknown,
+			label: "unavailable",
+		},
+		{
+			name:  "nil is unknown",
+			err:   nil,
+			want:  errClassUnknown,
+			label: "unavailable",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := classifyError(tc.err)
+			if got != tc.want {
+				t.Errorf("classifyError = %d, want %d", got, tc.want)
+			}
+			if got := errorDescription(tc.err); got != tc.label {
+				t.Errorf("errorDescription = %q, want %q", got, tc.label)
+			}
+		})
+	}
+}
+
+// TestDegradationNoteNamesUnavailable pins that a single-provider failure
+// using *ErrUnavailable produces a note that says "unavailable".
+func TestDegradationNoteNamesUnavailable(t *testing.T) {
+	c := &Cross{
+		Primary:   &fakeProvider{name: "primary", mid: "1348"},
+		Secondary: &fakeProvider{name: "secondary", err: &ErrUnavailable{Source: "secondary", Err: errors.New("timeout")}},
+	}
+	r := rateOf(t, c)
+
+	if r.Agreement != AgreementSingle {
+		t.Fatalf("Agreement = %s, want SINGLE", r.Agreement)
+	}
+	if !strings.Contains(r.Note, "secondary was unavailable") {
+		t.Errorf("Note = %q, want it to say 'secondary was unavailable'", r.Note)
+	}
+}
+
+// TestDegradationNoteNamesUnparseable pins that a single-provider failure
+// using *ErrUnparseable produces a note that says "unparseable response".
+func TestDegradationNoteNamesUnparseable(t *testing.T) {
+	c := &Cross{
+		Primary:   &fakeProvider{name: "primary", mid: "1348"},
+		Secondary: &fakeProvider{name: "secondary", err: &ErrUnparseable{Source: "secondary", Err: errors.New("bad json")}},
+	}
+	r := rateOf(t, c)
+
+	if r.Agreement != AgreementSingle {
+		t.Fatalf("Agreement = %s, want SINGLE", r.Agreement)
+	}
+	if !strings.Contains(r.Note, "secondary was returned an unparseable response") {
+		t.Errorf("Note = %q, want it to say 'secondary was returned an unparseable response'", r.Note)
+	}
+}
+
+// TestBothUnavailableErrorText confirms the combined error message names
+// "unavailable" when both providers fail with *ErrUnavailable.
+func TestBothUnavailableErrorText(t *testing.T) {
+	c := &Cross{
+		Primary:   &fakeProvider{name: "primary", err: &ErrUnavailable{Source: "primary", Err: errors.New("timeout")}},
+		Secondary: &fakeProvider{name: "secondary", err: &ErrUnavailable{Source: "secondary", Err: errors.New("refused")}},
+	}
+	_, err := c.Rate(context.Background(), "USD", "NGN")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "primary unavailable") {
+		t.Errorf("error %q should say 'primary unavailable'", msg)
+	}
+	if !strings.Contains(msg, "secondary unavailable") {
+		t.Errorf("error %q should say 'secondary unavailable'", msg)
+	}
+}
+
+// TestBothUnparseableErrorText confirms the combined error message names
+// "unparseable response" when both providers fail with *ErrUnparseable.
+func TestBothUnparseableErrorText(t *testing.T) {
+	c := &Cross{
+		Primary:   &fakeProvider{name: "primary", err: &ErrUnparseable{Source: "primary", Err: errors.New("bad json")}},
+		Secondary: &fakeProvider{name: "secondary", err: &ErrUnparseable{Source: "secondary", Err: errors.New("not decimal")}},
+	}
+	_, err := c.Rate(context.Background(), "USD", "NGN")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "primary was returned an unparseable response") {
+		t.Errorf("error %q should say 'primary was returned an unparseable response'", msg)
+	}
+	if !strings.Contains(msg, "secondary was returned an unparseable response") {
+		t.Errorf("error %q should say 'secondary was returned an unparseable response'", msg)
+	}
+}
+
+// TestMixedErrorClassesErrorText confirms the combined error message
+// differentiates when the two providers fail in different ways.
+func TestMixedErrorClassesErrorText(t *testing.T) {
+	c := &Cross{
+		Primary:   &fakeProvider{name: "primary", err: &ErrUnavailable{Source: "primary", Err: errors.New("timeout")}},
+		Secondary: &fakeProvider{name: "secondary", err: &ErrUnparseable{Source: "secondary", Err: errors.New("bad json")}},
+	}
+	_, err := c.Rate(context.Background(), "USD", "NGN")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "primary unavailable") {
+		t.Errorf("error %q should say 'primary unavailable'", msg)
+	}
+	if !strings.Contains(msg, "secondary was returned an unparseable response") {
+		t.Errorf("error %q should say 'secondary was returned an unparseable response'", msg)
+	}
+}
+
+// TestDegradationNoteFallbackToUnavailable covers errors that are not in the
+// taxonomy (ErrNoRate, ErrRateLimited, plain errors). The note must still say
+// "unavailable" as a safe fallback — the taxonomy enriches but never breaks.
+func TestDegradationNoteFallbackToUnavailable(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"ErrNoRate", &ErrNoRate{Base: "USD", Quote: "NGN", Source: "secondary"}},
+		{"ErrRateLimited", &ErrRateLimited{Source: "secondary"}},
+		{"plain error", errors.New("something broke")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Cross{
+				Primary:   &fakeProvider{name: "primary", mid: "1348"},
+				Secondary: &fakeProvider{name: "secondary", err: tc.err},
+			}
+			r := rateOf(t, c)
+
+			if r.Agreement != AgreementSingle {
+				t.Fatalf("Agreement = %s, want SINGLE", r.Agreement)
+			}
+			if !strings.Contains(r.Note, "secondary was unavailable") {
+				t.Errorf("Note = %q, want it to say 'secondary was unavailable' for %T",
+					r.Note, tc.err)
+			}
+		})
+	}
+}
+
+// TestPrimaryUnavailableFallsToSecondary mirrors the taxonomy on the primary
+// side: an unavailable primary degrades to the secondary's rate.
+func TestPrimaryUnavailableFallsToSecondary(t *testing.T) {
+	c := &Cross{
+		Primary:   &fakeProvider{name: "primary", err: &ErrUnavailable{Source: "primary", Err: errors.New("503")}},
+		Secondary: &fakeProvider{name: "secondary", mid: "1350"},
+	}
+	r := rateOf(t, c)
+
+	if r.Agreement != AgreementSingle {
+		t.Fatalf("Agreement = %s, want SINGLE", r.Agreement)
+	}
+	if r.Source != "secondary" || !r.Mid.Equal(decimal.RequireFromString("1350")) {
+		t.Errorf("got %s from %s, want 1350 from secondary", r.Mid, r.Source)
+	}
+	if !strings.Contains(r.Note, "primary was unavailable") {
+		t.Errorf("Note = %q, want it to say 'primary was unavailable'", r.Note)
+	}
+}
+
+// TestPrimaryUnparseableFallsToSecondary confirms an unparseable primary
+// degrades to the secondary with the correct note.
+func TestPrimaryUnparseableFallsToSecondary(t *testing.T) {
+	c := &Cross{
+		Primary:   &fakeProvider{name: "primary", err: &ErrUnparseable{Source: "primary", Err: errors.New("bad json")}},
+		Secondary: &fakeProvider{name: "secondary", mid: "1350"},
+	}
+	r := rateOf(t, c)
+
+	if r.Agreement != AgreementSingle {
+		t.Fatalf("Agreement = %s, want SINGLE", r.Agreement)
+	}
+	if r.Source != "secondary" || !r.Mid.Equal(decimal.RequireFromString("1350")) {
+		t.Errorf("got %s from %s, want 1350 from secondary", r.Mid, r.Source)
+	}
+	if !strings.Contains(r.Note, "primary was returned an unparseable response") {
+		t.Errorf("Note = %q, want it to say 'primary was returned an unparseable response'", r.Note)
+	}
+}
+
+// diagnosticProvider is a third provider that records whether it was asked.
+// It is deliberately separate from fakeProvider so a test can assert the
+// diagnostic was not consulted outside the disagreement band.
+type diagnosticProvider struct {
+	name  string
+	mid   string
+	asOf  time.Time
+	err   error
+	calls int
+}
+
+func (d *diagnosticProvider) Name() string { return d.name }
+
+func (d *diagnosticProvider) Rate(_ context.Context, base, quote string) (Rate, error) {
+	d.calls++
+	if d.err != nil {
+		return Rate{}, d.err
+	}
+	asOf := d.asOf
+	if asOf.IsZero() {
+		asOf = time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC)
+	}
+	return Rate{
+		Base: base, Quote: quote,
+		Mid:    decimal.RequireFromString(d.mid),
+		AsOf:   asOf,
+		Source: d.name,
+	}, nil
+}
+
+// TestDiagnosticAttributesTheOutlierWithoutMovingTheScoredMid is the central
+// contract of issue #597: the third provider reports which primary is farther
+// from it, and the mid chosen by the conservative rule is byte-for-byte the
+// one the same pair produces without a diagnostic. ADR 001 forbids averaging;
+// it does not forbid consulting.
+func TestDiagnosticAttributesTheOutlierWithoutMovingTheScoredMid(t *testing.T) {
+	baseline := rateOf(t, crossOf("1300", "1365"))
+
+	diag := &diagnosticProvider{name: "floatrates", mid: "1350"}
+	withDiag := rateOf(t, &Cross{
+		Primary:    &fakeProvider{name: "primary", mid: "1300"},
+		Secondary:  &fakeProvider{name: "secondary", mid: "1365"},
+		Diagnostic: diag,
+	})
+
+	if diag.calls != 1 {
+		t.Errorf("diagnostic provider was asked %d time(s), want exactly 1 on a DISAGREE", diag.calls)
+	}
+
+	// The scored decision is untouched: same mid, same source, same
+	// secondary, same divergence, same prose. The diagnostic is evidence
+	// beside the result, not an input to it.
+	if !withDiag.Mid.Equal(baseline.Mid) || withDiag.Source != baseline.Source {
+		t.Errorf("scored mid changed from %s (%s) to %s (%s); a diagnostic must never move it",
+			baseline.Mid, baseline.Source, withDiag.Mid, withDiag.Source)
+	}
+	if withDiag.Source != "secondary" || !withDiag.Mid.Equal(decimal.RequireFromString("1365")) {
+		t.Errorf("scored against %s (%s), want the conservative 1365 from secondary",
+			withDiag.Mid, withDiag.Source)
+	}
+	if !withDiag.SecondaryMid.Equal(baseline.SecondaryMid) || withDiag.SecondarySource != baseline.SecondarySource {
+		t.Errorf("secondary observation changed: got %s/%s, want %s/%s",
+			withDiag.SecondaryMid, withDiag.SecondarySource, baseline.SecondaryMid, baseline.SecondarySource)
+	}
+	if !withDiag.DivergencePct.Equal(baseline.DivergencePct) {
+		t.Errorf("DivergencePct moved from %s to %s", baseline.DivergencePct, withDiag.DivergencePct)
+	}
+	if withDiag.Note != baseline.Note {
+		t.Errorf("Note changed:\n  without diagnostic: %q\n  with diagnostic:    %q", baseline.Note, withDiag.Note)
+	}
+	if withDiag.Agreement != AgreementDisagree {
+		t.Errorf("Agreement = %s, want DISAGREE", withDiag.Agreement)
+	}
+
+	d := withDiag.Diagnostic
+	if d == nil {
+		t.Fatal("Diagnostic is nil; the third provider answered and must be attributed")
+	}
+	if d.Source != "floatrates" {
+		t.Errorf("Diagnostic.Source = %q, want the provider that answered", d.Source)
+	}
+	if !d.Mid.Equal(decimal.RequireFromString("1350")) {
+		t.Errorf("Diagnostic.Mid = %s, want 1350", d.Mid)
+	}
+	if d.Outlier != "primary" {
+		t.Errorf("Diagnostic.Outlier = %q, want primary: it is 3.846%% from 1350, while secondary is 1.111%% away",
+			d.Outlier)
+	}
+	// 50/1300 = 3.8462%, 15/1350 = 1.1111%.
+	if got := d.OutlierDistancePct.StringFixed(4); got != "3.8462" {
+		t.Errorf("OutlierDistancePct = %s, want 3.8462", got)
+	}
+	if got := d.OtherDistancePct.StringFixed(4); got != "1.1111" {
+		t.Errorf("OtherDistancePct = %s, want 1.1111", got)
+	}
+	if d.Reason != "" {
+		t.Errorf("Diagnostic.Reason = %q, want empty when an outlier was named", d.Reason)
+	}
+}
+
+// TestDiagnosticAttributesTheSameOutlierRegardlessOfPrimaryOrder keeps the
+// attribution independent of which feed happens to be configured first.
+func TestDiagnosticAttributesTheSameOutlierRegardlessOfPrimaryOrder(t *testing.T) {
+	cases := []struct {
+		name               string
+		primary, secondary *fakeProvider
+	}{
+		{"primary is the outlier",
+			&fakeProvider{name: "low", mid: "1300"},
+			&fakeProvider{name: "high", mid: "1365"}},
+		{"secondary is the outlier",
+			&fakeProvider{name: "high", mid: "1365"},
+			&fakeProvider{name: "low", mid: "1300"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := rateOf(t, &Cross{
+				Primary:    tc.primary,
+				Secondary:  tc.secondary,
+				Diagnostic: &diagnosticProvider{name: "floatrates", mid: "1350"},
+			})
+			if r.Diagnostic == nil {
+				t.Fatal("Diagnostic is nil")
+			}
+			if r.Diagnostic.Outlier != "low" {
+				t.Errorf("Outlier = %q, want low in both orderings", r.Diagnostic.Outlier)
+			}
+			if !r.Mid.Equal(decimal.RequireFromString("1365")) || r.Source != "high" {
+				t.Errorf("scored against %s (%s), want the conservative 1365 from high",
+					r.Mid, r.Source)
+			}
+		})
+	}
+}
+
+// TestDiagnosticOnlyConsultedOnDisagree pins the cost and the scope: a third
+// provider is not asked on AGREE, STALE, MALFUNCTION or SINGLE. Asking it
+// outside DISAGREE would add a request for no attribution, and could tempt a
+// later change into letting it influence a band it was never meant to see.
+func TestDiagnosticOnlyConsultedOnDisagree(t *testing.T) {
+	now := time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name string
+		c    *Cross
+	}{
+		{"AGREE", &Cross{
+			Primary:   &fakeProvider{name: "primary", mid: "1348"},
+			Secondary: &fakeProvider{name: "secondary", mid: "1350"},
+		}},
+		{"STALE", &Cross{
+			Primary:   &fakeProvider{name: "fresh", mid: "1300", asOf: now},
+			Secondary: &fakeProvider{name: "stale", mid: "1365", asOf: now.Add(-96 * time.Hour)},
+		}},
+		{"MALFUNCTION", &Cross{
+			Primary:   &fakeProvider{name: "primary", mid: "100"},
+			Secondary: &fakeProvider{name: "secondary", mid: "500"},
+		}},
+		{"SINGLE", &Cross{
+			Primary:   &fakeProvider{name: "primary", mid: "1350"},
+			Secondary: &fakeProvider{name: "secondary", err: errors.New("down")},
+		}},
+		{"no secondary", &Cross{
+			Primary: &fakeProvider{name: "primary", mid: "1350"},
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diag := &diagnosticProvider{name: "floatrates", mid: "1350"}
+			tc.c.Diagnostic = diag
+			r := rateOf(t, tc.c)
+
+			if diag.calls != 0 {
+				t.Errorf("diagnostic provider was asked %d time(s) on %s, want 0", diag.calls, r.Agreement)
+			}
+			if r.Diagnostic != nil {
+				t.Errorf("Diagnostic = %+v on %s, want nil", r.Diagnostic, r.Agreement)
+			}
+		})
+	}
+}
+
+// TestDiagnosticTieNamesNoOutlier covers the honest unattributed case: a third
+// mid exactly equidistant from both primaries cannot say which side is wrong.
+// The distances are still reported so a reader can see the tie.
+func TestDiagnosticTieNamesNoOutlier(t *testing.T) {
+	// 100 -> 104.04 is a 4.04% disagreement, inside the band. 102 is
+	// equidistant in relative terms: (102-100)/100 = (104.04-102)/102 = 2%.
+	r := rateOf(t, &Cross{
+		Primary:    &fakeProvider{name: "low", mid: "100"},
+		Secondary:  &fakeProvider{name: "high", mid: "104.04"},
+		Diagnostic: &diagnosticProvider{name: "floatrates", mid: "102"},
+	})
+
+	if r.Agreement != AgreementDisagree {
+		t.Fatalf("Agreement = %s, want DISAGREE (divergence %s%%)",
+			r.Agreement, r.DivergencePct.StringFixed(4))
+	}
+	d := r.Diagnostic
+	if d == nil {
+		t.Fatal("Diagnostic is nil; the provider answered, so the attempted attribution must be recorded")
+	}
+	if d.Outlier != "" {
+		t.Errorf("Outlier = %q, want empty when the primaries are equidistant", d.Outlier)
+	}
+	if !d.OutlierDistancePct.Equal(d.OtherDistancePct) {
+		t.Errorf("distances = %s and %s, want the equal distances that explain the missing attribution",
+			d.OutlierDistancePct, d.OtherDistancePct)
+	}
+	if !strings.Contains(d.Reason, "equidistant") {
+		t.Errorf("Reason = %q, want it to explain the tie", d.Reason)
+	}
+	// A tie must not move the scored mid either.
+	if !r.Mid.Equal(decimal.RequireFromString("104.04")) || r.Source != "high" {
+		t.Errorf("scored against %s (%s), want the conservative 104.04", r.Mid, r.Source)
+	}
+}
+
+// TestDiagnosticFailureLeavesTheRateIntact keeps a failing third provider a
+// missing diagnostic, never a failed measurement: the two primaries answered
+// and the conservative rule is still fully applicable.
+func TestDiagnosticFailureLeavesTheRateIntact(t *testing.T) {
+	baseline := rateOf(t, crossOf("1300", "1365"))
+
+	r := rateOf(t, &Cross{
+		Primary:   &fakeProvider{name: "primary", mid: "1300"},
+		Secondary: &fakeProvider{name: "secondary", mid: "1365"},
+		Diagnostic: &diagnosticProvider{
+			name: "floatrates",
+			err:  &ErrUnavailable{Source: "floatrates", Err: errors.New("timeout")},
+		},
+	})
+
+	if r.Agreement != AgreementDisagree || !r.Scorable() {
+		t.Errorf("Agreement = %s (scorable %v), want the scorable DISAGREE the primaries produced",
+			r.Agreement, r.Scorable())
+	}
+	if !r.Mid.Equal(baseline.Mid) || r.Source != baseline.Source {
+		t.Errorf("scored against %s (%s), want the unchanged %s (%s)",
+			r.Mid, r.Source, baseline.Mid, baseline.Source)
+	}
+	if r.Diagnostic == nil {
+		t.Fatal("Diagnostic is nil; the attempted provider must be named even when it failed")
+	}
+	if r.Diagnostic.Source != "floatrates" || r.Diagnostic.Outlier != "" {
+		t.Errorf("Diagnostic = %+v, want floatrates named with no outlier", r.Diagnostic)
+	}
+	if !strings.Contains(r.Diagnostic.Reason, "unavailable") {
+		t.Errorf("Reason = %q, want the failure to be reported", r.Diagnostic.Reason)
+	}
+}
+
+// TestNeverAverageTwoProviderMids pins the rule that a cross-checked mid is
+// always one provider's own figure, never the arithmetic mean of two.
+//
+// A blended mid names no provider: a reader cannot tell which source to
+// verify, and the figure is one neither provider published. The rule is
+// stated in the README and in ADR-001, so it is asserted here rather than
+// left to trust — across an agreeing pair, a disagreeing pair, and a pair
+// far enough apart to be a malfunction.
+func TestNeverAverageTwoProviderMids(t *testing.T) {
+	now := time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name               string
+		primary, secondary string
+	}{
+		{"agree", "1350", "1351"},
+		{"disagree", "1300", "1365"},
+		{"malfunction", "100", "500"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := rateOf(t, &Cross{
+				Primary:   &fakeProvider{name: "primary", mid: tc.primary, asOf: now},
+				Secondary: &fakeProvider{name: "secondary", mid: tc.secondary, asOf: now},
+			})
+
+			p := decimal.RequireFromString(tc.primary)
+			s := decimal.RequireFromString(tc.secondary)
+			mean := p.Add(s).Div(decimal.NewFromInt(2))
+
+			if r.Mid.Equal(mean) {
+				t.Errorf("Mid = %s is the arithmetic mean of %s and %s; a blended mid names no provider",
+					r.Mid, p, s)
+			}
+			if !r.Mid.Equal(p) && !r.Mid.Equal(s) {
+				t.Errorf("Mid = %s is neither provider's figure (%s, %s)", r.Mid, p, s)
+			}
+			if r.Source != "primary" && r.Source != "secondary" {
+				t.Errorf("Source = %q, want one named provider", r.Source)
+			}
+		})
 	}
 }

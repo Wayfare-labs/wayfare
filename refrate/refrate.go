@@ -63,6 +63,12 @@ type Rate struct {
 	// Note explains a non-trivial Agreement in prose, for surfaces that
 	// show a reason rather than a state.
 	Note string
+
+	// Diagnostic is the optional third-provider attribution of a DISAGREE.
+	// It is nil unless a diagnostic provider was configured and the two
+	// primaries genuinely disagreed; it never participates in choosing Mid,
+	// Source or AsOf. See Diagnostic and Cross.Diagnostic.
+	Diagnostic *Diagnostic
 }
 
 // Scorable reports whether a verdict may be derived from this rate.
@@ -97,6 +103,45 @@ type ErrNoRate struct {
 func (e *ErrNoRate) Error() string {
 	return fmt.Sprintf("refrate: %s has no rate for %s/%s", e.Source, e.Base, e.Quote)
 }
+
+// ErrUnavailable reports that a provider could not produce a rate. This
+// includes network-level failures (connection refused, timeout, DNS failure)
+// and HTTP-level errors (non-2xx status codes, API error responses).
+//
+// It is distinct from ErrUnparseable — which covers a response that arrived
+// but could not be read — and from ErrNoRate, which means the provider
+// answered but has no rate for the requested pair. The distinction matters
+// because the remedy differs: an unavailable provider may recover on retry,
+// an unparseable one is broken, and a missing pair is structural.
+type ErrUnavailable struct {
+	Source string
+	Err    error // the underlying error, for unwrapping
+}
+
+func (e *ErrUnavailable) Error() string {
+	return fmt.Sprintf("refrate: %s unavailable: %v", e.Source, e.Err)
+}
+
+func (e *ErrUnavailable) Unwrap() error { return e.Err }
+
+// ErrUnparseable reports that a provider answered with a body that could not
+// be interpreted as a rate — a JSON decode failure, a rate string that is not
+// a valid decimal, or a structurally unexpected response.
+//
+// It is distinct from ErrUnavailable, where the provider did not answer at
+// all, and from ErrNoRate, where the provider answered cleanly but has no
+// rate for the pair. An unparseable response is a provider-side defect: the
+// caller can retry, but the same response will produce the same failure.
+type ErrUnparseable struct {
+	Source string
+	Err    error // the underlying error, for unwrapping
+}
+
+func (e *ErrUnparseable) Error() string {
+	return fmt.Sprintf("refrate: %s response unparseable: %v", e.Source, e.Err)
+}
+
+func (e *ErrUnparseable) Unwrap() error { return e.Err }
 
 // ErrRateLimited reports that a provider refused because the caller has spent
 // its quota.
@@ -149,9 +194,6 @@ func (s *Static) Rate(_ context.Context, base, quote string) (Rate, error) {
 		return Rate{}, &ErrNoRate{Base: base, Quote: quote, Source: s.Name()}
 	}
 	stamp := s.Stamp
-	if stamp.IsZero() {
-		stamp = time.Now()
-	}
 	return Rate{
 		Base:   base,
 		Quote:  quote,

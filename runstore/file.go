@@ -3,6 +3,7 @@ package runstore
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Wayfare-labs/wayfare/snapshot"
 )
 
 // FileStore keeps one NDJSON file per corridor, opened for append.
@@ -100,22 +103,45 @@ func (s *FileStore) readAll(corridor string) ([]*Record, error) {
 		if raw == "" {
 			continue
 		}
-		var r Record
-		if err := json.Unmarshal([]byte(raw), &r); err != nil {
-			return nil, fmt.Errorf("runstore: %s line %d: %w", corridor, line, err)
+		r, err := decodeLine(corridor, line, []byte(raw))
+		if err != nil {
+			return nil, err
 		}
-		if r.Version != 1 && r.Version != Version {
-			return nil, fmt.Errorf(
-				"runstore: %s line %d has record version %d, this build understands %d; "+
-					"refusing to guess at a schema it does not know",
-				corridor, line, r.Version, Version)
-		}
-		out = append(out, &r)
+		out = append(out, r)
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("runstore: reading %s: %w", corridor, err)
 	}
 	return out, nil
+}
+
+// decodeLine parses one NDJSON line into a Record.
+//
+// Factored out of readAll so the fuzz target can drive it directly: the decoder
+// is what stands between a committed chain and a served measurement, so it is
+// fuzzed rather than reached only through a file on disk (FuzzDecodeRecord).
+//
+// Versions 1 through 4 are loadable: each migration added its fields with
+// omitempty after every earlier field, so older records encode byte-for-byte as
+// they did when they were written and verify unchanged (see Record and
+// docs/run-store.md). Any other version is a schema this build does not
+// understand and must be refused, never guessed at.
+func decodeLine(corridor string, line int, raw []byte) (*Record, error) {
+	var r Record
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return nil, fmt.Errorf("runstore: %s line %d: %w", corridor, line, err)
+	}
+	if r.Version < 1 || r.Version > Version {
+		return nil, fmt.Errorf(
+			"runstore: %s line %d has record version %d, this build understands %d; "+
+				"refusing to guess at a schema it does not know",
+			corridor, line, r.Version, Version)
+	}
+	if r.Version < Version && r.Snapshot != "" {
+		return nil, fmt.Errorf("runstore: %s line %d has a snapshot hash in legacy record version %d",
+			corridor, line, r.Version)
+	}
+	return &r, nil
 }
 
 // verifyChain checks every hash and every link in order.
@@ -186,11 +212,35 @@ func (s *FileStore) Append(ctx context.Context, r *Record) error {
 		return fmt.Errorf("runstore: encoding record: %w", err)
 	}
 
-	f, err := os.OpenFile(s.path(corridor), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(s.path(corridor), os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
 		return fmt.Errorf("runstore: opening %s for append: %w", corridor, err)
 	}
 	defer f.Close()
+
+	// The chain file's last line must be newline-terminated before we
+	// append. A kill between the record bytes and their newline — or a
+	// tool that omits final newlines — leaves a complete, verifiable
+	// record whose line simply lacks its terminator; appending straight
+	// onto it would fuse the new record into the previous line and
+	// corrupt the chain. The separator newline sits outside every
+	// record's preimage, so writing it changes no hash and the chain
+	// stays verifiable.
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("runstore: stat %s: %w", corridor, err)
+	}
+	if fi.Size() > 0 {
+		var last [1]byte
+		if _, err := f.ReadAt(last[:], fi.Size()-1); err != nil {
+			return fmt.Errorf("runstore: reading the tail of %s: %w", corridor, err)
+		}
+		if last[0] != '\n' {
+			if _, err := f.Write([]byte{'\n'}); err != nil {
+				return fmt.Errorf("runstore: terminating the final line of %s: %w", corridor, err)
+			}
+		}
+	}
 
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		return fmt.Errorf("runstore: appending to %s: %w", corridor, err)
@@ -217,8 +267,10 @@ func (s *FileStore) Latest(ctx context.Context, corridor string) (*Record, error
 	return s.tips[strings.ToUpper(corridor)], nil
 }
 
-// Recent returns up to n records, newest first.
-func (s *FileStore) Recent(ctx context.Context, corridor string, n int) ([]*Record, error) {
+// RecentBefore returns up to n records strictly before sequence number
+// 'before' (i.e. Seq < before), newest first. When before <= 0, it returns
+// up to n most recent records.
+func (s *FileStore) RecentBefore(ctx context.Context, corridor string, n int, before int64) ([]*Record, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -232,6 +284,15 @@ func (s *FileStore) Recent(ctx context.Context, corridor string, n int) ([]*Reco
 	if err != nil {
 		return nil, err
 	}
+	if before > 0 {
+		filtered := make([]*Record, 0, len(all))
+		for _, r := range all {
+			if r.Seq < before {
+				filtered = append(filtered, r)
+			}
+		}
+		all = filtered
+	}
 	if len(all) > n {
 		all = all[len(all)-n:]
 	}
@@ -240,6 +301,11 @@ func (s *FileStore) Recent(ctx context.Context, corridor string, n int) ([]*Reco
 		out = append(out, all[i])
 	}
 	return out, nil
+}
+
+// Recent returns up to n records, newest first.
+func (s *FileStore) Recent(ctx context.Context, corridor string, n int) ([]*Record, error) {
+	return s.RecentBefore(ctx, corridor, n, 0)
 }
 
 // All returns the complete corridor history in chronological order
@@ -274,6 +340,42 @@ func (s *FileStore) Verify(ctx context.Context, corridor string) error {
 	return verifyChain(corridor, records)
 }
 
+// VerifySnapshots checks the artifacts referenced by a corridor's records.
+// Missing artifacts are allowed; present artifacts must be valid and match
+// their recorded content hashes.
+func (s *FileStore) VerifySnapshots(ctx context.Context, corridor, snapshotsDir string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	records, err := s.readAll(strings.ToUpper(corridor))
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	for _, r := range records {
+		if r.Snapshot == "" {
+			continue
+		}
+		const prefix = "sha256:"
+		digest := strings.TrimPrefix(r.Snapshot, prefix)
+		if !strings.HasPrefix(r.Snapshot, prefix) || len(digest) != 64 {
+			return fmt.Errorf("runstore: %s: record seq %d has invalid snapshot hash %q",
+				corridor, r.Seq, r.Snapshot)
+		}
+		if _, err := hex.DecodeString(digest); err != nil {
+			return fmt.Errorf("runstore: %s: record seq %d has invalid snapshot hash %q",
+				corridor, r.Seq, r.Snapshot)
+		}
+		artifactDir := filepath.Join(snapshotsDir, digest)
+		if _, err := snapshot.VerifyContentHash(artifactDir, r.Snapshot); err != nil {
+			return fmt.Errorf("runstore: %s: record seq %d snapshot verification: %w",
+				corridor, r.Seq, err)
+		}
+	}
+	return nil
+}
+
 // Corridors lists the corridors with stored history, sorted.
 func (s *FileStore) Corridors(ctx context.Context) ([]string, error) {
 	if err := ctx.Err(); err != nil {
@@ -305,6 +407,178 @@ func (s *FileStore) VerifyAll(ctx context.Context) error {
 	if len(problems) > 0 {
 		return fmt.Errorf("runstore: %d corridor chain(s) failed verification:\n%s",
 			len(problems), strings.Join(problems, "\n"))
+	}
+	return nil
+}
+
+// MaxWindow is the ceiling on one corridor's committed chain, in records.
+//
+// The measure workflow appends every six hours, so a chain grows by four
+// records a day forever unless something bounds it — and the deployment embeds
+// `data/` at build time, so the whole chain would ride along in the image, in
+// every clone, and in every startup verification. 366 records is one calendar
+// quarter at that cadence, which is also the horizon the project's own history
+// spikes use (~1,080 records across three corridors in 90 days — backlog #135).
+// It is a ceiling enforced at rotation, never a target the store aims at:
+// chains below it are untouched and stop nowhere near it.
+//
+// This is the size side of the decision recorded in ADR 007 and the
+// `-rotate-store` flag on `wayfared`; the mechanism side is Rotate.
+const MaxWindow = 366
+
+// Rotation describes one corridor chain that Rotate trimmed.
+//
+// Only the hash fields of the surviving records change — prev_hash at the new
+// window head becomes GenesisPrevHash and every later record is re-sealed
+// against it. Nothing measured (a loss, a timestamp, a verdict) is altered,
+// and Seq numbering is kept, so the window always shows where it starts in
+// relation to the whole history even though the records before it are no
+// longer in the file.
+type Rotation struct {
+	// Corridor is the chain that was rotated.
+	Corridor string
+	// RecordsBefore and RecordsAfter are the chain lengths on either side.
+	RecordsBefore int
+	RecordsAfter  int
+	// DroppedSeqStart and DroppedSeqEnd bound the oldest records that were
+	// removed from this copy of the chain. They remain in the repository's
+	// earlier commits.
+	DroppedSeqStart int64
+	DroppedSeqEnd   int64
+	// NewHeadSeq is the seq of the oldest surviving record, which is now
+	// re-sealed against GenesisPrevHash.
+	NewHeadSeq int64
+}
+
+// Rotate trims every corridor chain that exceeds n records to its newest n,
+// re-sealing the surviving window so it still verifies.
+//
+// This is the store-half of ADR 007's decision that the committed `data/` is a
+// bounded window rather than the whole chain. Dropping the OLDEST records above
+// the ceiling is the one truncation that does not leave a gap a reader could
+// confuse with a missed measurement: what is removed predates the window, and
+// what would otherwise look like a hole is a documented cut at the head, not an
+// absent record in the middle. The dropped records are never destroyed — every
+// earlier commit of the repository still holds the chain as it stood.
+//
+// Rotate is deliberately not Append. It is the only writer that rewrites a
+// chain, and it holds the store's mutex for the whole operation, so it can
+// never race an append. It verifies the re-sealed window in memory before a
+// single byte is written; if that verification cannot be satisfied the file is
+// left exactly as it was and an error is returned, because a store that
+// silently produced a broken chain would be worse than one that refuses.
+// Chains at or below the ceiling are left byte-for-byte untouched.
+func (s *FileStore) Rotate(ctx context.Context, n int) ([]Rotation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if n <= 0 {
+		return nil, fmt.Errorf("runstore: rotation ceiling must be positive, got %d", n)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	corridors := make([]string, 0, len(s.tips))
+	for c := range s.tips {
+		corridors = append(corridors, c)
+	}
+	sort.Strings(corridors)
+
+	var out []Rotation
+	for _, c := range corridors {
+		records, err := s.readAll(c)
+		if err != nil {
+			return nil, err
+		}
+
+		// Verify the chain we are about to stand on BEFORE dropping anything.
+		//
+		// This is the part that keeps compaction from destroying the
+		// property the package exists for. Re-sealing recomputes every hash
+		// from the surviving records' contents, so rotating a chain that is
+		// already broken would launder the tampering: the re-sealed window
+		// would verify even though a record was altered, and the evidence
+		// that it ever was would be gone. A store that refuses to rotate a
+		// broken chain is strictly better than one that silently blesses it
+		// — the whole point of compaction is to preserve verifiability, not
+		// to trade it for a smaller file.
+		if err := verifyChain(c, records); err != nil {
+			return nil, fmt.Errorf(
+				"runstore: %s: refusing to rotate a chain that does not verify: %w", c, err)
+		}
+		if len(records) <= n {
+			continue
+		}
+
+		dropped := len(records) - n
+		kept := records[dropped:]
+
+		// Re-seal from the new head: its prev_hash becomes genesis, and
+		// every later record is re-hashed against the record before it so
+		// the window is a valid chain again. The measured fields are never
+		// touched — only the two hash fields move, which is the preimage
+		// doing its job: the window no longer pretends the dropped records
+		// exist, but every surviving measurement encodes exactly as it did.
+		kept[0].PrevHash = GenesisPrevHash
+		if err := kept[0].Seal(); err != nil {
+			return nil, fmt.Errorf("runstore: %s: re-sealing the window head: %w", c, err)
+		}
+		for i := 1; i < len(kept); i++ {
+			kept[i].PrevHash = kept[i-1].Hash
+			if err := kept[i].Seal(); err != nil {
+				return nil, fmt.Errorf("runstore: %s: re-sealing record seq %d: %w", c, kept[i].Seq, err)
+			}
+		}
+		if err := verifyChain(c, kept); err != nil {
+			return nil, fmt.Errorf("runstore: %s: refusing to write a window that does not verify: %w", c, err)
+		}
+
+		if err := s.writeAll(c, kept); err != nil {
+			return nil, err
+		}
+
+		s.tips[c] = kept[len(kept)-1]
+		out = append(out, Rotation{
+			Corridor:        c,
+			RecordsBefore:   len(records),
+			RecordsAfter:    len(kept),
+			DroppedSeqStart: records[0].Seq,
+			DroppedSeqEnd:   records[dropped-1].Seq,
+			NewHeadSeq:      kept[0].Seq,
+		})
+	}
+	return out, nil
+}
+
+// writeAll replaces a corridor's chain file with the given records, one JSON
+// line each, and syncs before returning.
+//
+// It is the rotate-only counterpart of Append's write path: identical record
+// encoding, identical fsync discipline, but a truncating write of the full
+// re-sealed window instead of an append onto an existing chain.
+func (s *FileStore) writeAll(corridor string, records []*Record) error {
+	var b strings.Builder
+	for _, r := range records {
+		line, err := json.Marshal(r)
+		if err != nil {
+			return fmt.Errorf("runstore: encoding %s record seq %d: %w", corridor, r.Seq, err)
+		}
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+
+	f, err := os.OpenFile(s.path(corridor), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("runstore: opening %s for rotation: %w", corridor, err)
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(b.String()); err != nil {
+		return fmt.Errorf("runstore: writing %s: %w", corridor, err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("runstore: syncing %s: %w", corridor, err)
 	}
 	return nil
 }

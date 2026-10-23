@@ -4,13 +4,18 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"math/rand"
+	"net/http"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
@@ -55,6 +60,22 @@ func schedulerOver(t *testing.T, prefix string, recv asset.Asset, quote, mid str
 	}
 }
 
+// snapshotHTTPClient loads the snapshot a schedulerOver call would use and
+// returns its replaying client, so a test can point a checks runner at the same
+// recording.
+func snapshotHTTPClient(t *testing.T, prefix string) *http.Client {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join("../testdata/snapshots", prefix+"-*"))
+	if err != nil || len(matches) == 0 {
+		t.Skipf("no snapshot matching %q", prefix)
+	}
+	snap, err := snapshot.Load(matches[0])
+	if err != nil {
+		t.Fatalf("loading snapshot: %v", err)
+	}
+	return snap.HTTPClient()
+}
+
 // TestRunOnceWritesOneRecordPerCorridor is the scheduler's basic contract.
 func TestRunOnceWritesOneRecordPerCorridor(t *testing.T) {
 	store, err := runstore.Open(t.TempDir())
@@ -91,6 +112,127 @@ func TestRunOnceWritesOneRecordPerCorridor(t *testing.T) {
 	}
 }
 
+func TestSchedulerLoadsIssuerDriftBaselineFromLatestRecord(t *testing.T) {
+	ctx := context.Background()
+	store, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := checks.IssuerDriftBaseline{
+		AuthRequired:  true,
+		AuthImmutable: true,
+		TOMLHash:      strings.Repeat("a", 64),
+	}
+	record := &runstore.Record{
+		Corridor: "USDC-NGNC",
+		Checks: []checks.CheckJSON{{
+			ID: "issuer.drift",
+			Evidence: []checks.EvidenceJSON{{
+				Source:   "https://horizon.stellar.org/accounts/issuer → drift-check",
+				Observed: "auth_required=true auth_revocable=false auth_clawback_enabled=false auth_immutable=true toml_sha256=" + want.TOMLHash,
+			}},
+		}},
+	}
+	if err := store.Append(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+
+	scheduler := &Scheduler{Store: store, Logger: quiet()}
+	got := scheduler.issuerDriftBaseline(ctx, "USDC-NGNC")
+	if got == nil || *got != want {
+		t.Fatalf("baseline = %#v, want %#v", got, want)
+	}
+}
+
+// TestRunOnceRecordsMetrics is the second acceptance criterion of #577: a
+// scheduled sweep must store its metrics, not only serve them live. The
+// snapshot these tests replay predates metrics, so the recorded set is
+// undetermined — what is asserted is that the record carries it, with a reason,
+// rather than dropping it and making "measured, could not determine"
+// indistinguishable from "never measured".
+func TestRunOnceRecordsMetrics(t *testing.T) {
+	store, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := schedulerOver(t, "usdc-ngnc", asset.NGNC(), "NGN", "1350.2568", store)
+	// The runner replays the same snapshot, so the sweep stays offline even
+	// though the default metric set reads the order book.
+	s.Checks = &checks.Runner{HTTPClient: snapshotHTTPClient(t, "usdc-ngnc")}
+
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	rec, err := store.Latest(context.Background(), "USDC-NGNC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec == nil {
+		t.Fatal("RunOnce wrote no record")
+	}
+	if len(rec.Metrics) == 0 {
+		t.Fatal("the stored record carries no metrics; a scheduled sweep measured " +
+			"nothing but still reported a findings block")
+	}
+	for _, m := range rec.Metrics {
+		if m.ID == "" {
+			t.Error("a stored metric has no ID; the record is not attributable")
+		}
+		if !m.Determined && m.Reason == "" {
+			t.Errorf("stored metric %q is undetermined with no reason", m.ID)
+		}
+	}
+}
+
+func TestRunOnceStoresSnapshotAndLinksItsHash(t *testing.T) {
+	store, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(filepath.Join("../testdata/snapshots", "usdc-ngnc-*"))
+	if err != nil || len(matches) == 0 {
+		t.Skip("no USDC-NGNC snapshot fixture")
+	}
+	snap, err := snapshot.Load(matches[0])
+	if err != nil {
+		t.Fatalf("loading snapshot: %v", err)
+	}
+	artifactDir := t.TempDir()
+	s := schedulerOver(t, "usdc-ngnc", asset.NGNC(), "NGN", "1350.2568", store)
+	s.SnapshotDir = artifactDir
+	s.SnapshotEngineFactory = func(recorder *snapshot.Recorder) *route.Engine {
+		recorder.Transport = snap.Replay()
+		client := &http.Client{Transport: recorder}
+		return &route.Engine{
+			DEX: &dex.Client{
+				HorizonURL: "https://horizon.stellar.org",
+				HTTPClient: client,
+			},
+			RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+				"USD/NGN": decimal.RequireFromString("1350.2568"),
+			}),
+		}
+	}
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	rec, err := store.Latest(context.Background(), "USDC-NGNC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec == nil || !strings.HasPrefix(rec.Snapshot, "sha256:") {
+		t.Fatalf("run record snapshot = %q, want a content hash", rec.Snapshot)
+	}
+	path := filepath.Join(artifactDir, strings.TrimPrefix(rec.Snapshot, "sha256:"))
+	if got, err := snapshot.ContentHash(path); err != nil || got != rec.Snapshot {
+		t.Errorf("stored artifact hash = %q, %v; want %q", got, err, rec.Snapshot)
+	}
+	if err := store.VerifySnapshots(context.Background(), "USDC-NGNC", artifactDir); err != nil {
+		t.Errorf("VerifySnapshots: %v", err)
+	}
+}
+
 // TestRunOnceIsIdempotentUnderReRun checks that running twice appends two
 // records that chain, rather than rewriting or duplicating history.
 func TestRunOnceIsIdempotentUnderReRun(t *testing.T) {
@@ -123,6 +265,103 @@ func TestRunOnceIsIdempotentUnderReRun(t *testing.T) {
 	}
 	if err := store.Verify(context.Background(), "USDC-NGNC"); err != nil {
 		t.Errorf("chain does not verify after repeated runs: %v", err)
+	}
+}
+
+func TestSchedulerAppendConcurrentWithFileStoreReaders(t *testing.T) {
+	store, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := schedulerOver(t, "usdc-ngnc", asset.NGNC(), "NGN", "1350.2568", store)
+
+	const readerCount = 4
+	const sweepCount = 4
+	start := make(chan struct{})
+	ready := make(chan struct{}, readerCount)
+	done := make(chan struct{})
+	var readers sync.WaitGroup
+	readers.Add(readerCount)
+	for i := 0; i < readerCount; i++ {
+		go func() {
+			defer readers.Done()
+			<-start
+			assertReadableRunstore(t, store)
+			ready <- struct{}{}
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					assertReadableRunstore(t, store)
+				}
+			}
+		}()
+	}
+	close(start)
+	for i := 0; i < readerCount; i++ {
+		<-ready
+	}
+	for i := 0; i < sweepCount; i++ {
+		if err := scheduler.RunOnce(context.Background()); err != nil {
+			t.Fatalf("RunOnce %d: %v", i, err)
+		}
+	}
+	close(done)
+	readers.Wait()
+
+	all, err := store.All(context.Background(), "USDC-NGNC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != sweepCount {
+		t.Fatalf("All returned %d records, want %d", len(all), sweepCount)
+	}
+	if err := store.Verify(context.Background(), "USDC-NGNC"); err != nil {
+		t.Errorf("chain after concurrent scheduler writes does not verify: %v", err)
+	}
+}
+
+func assertReadableRunstore(t *testing.T, store runstore.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	latest, err := store.Latest(ctx, "USDC-NGNC")
+	if err != nil {
+		t.Errorf("Latest: %v", err)
+	} else if latest != nil {
+		if err := latest.VerifySelf(); err != nil {
+			t.Errorf("Latest returned a partial record: %v", err)
+		}
+	}
+
+	recent, err := store.Recent(ctx, "USDC-NGNC", 3)
+	if err != nil {
+		t.Errorf("Recent: %v", err)
+	} else {
+		for i, record := range recent {
+			if err := record.VerifySelf(); err != nil {
+				t.Errorf("Recent record %d is partial: %v", i, err)
+			}
+			if i > 0 && (recent[i-1].Seq != record.Seq+1 || recent[i].Hash != recent[i-1].PrevHash) {
+				t.Errorf("Recent records are not a complete descending chain: seq %d then %d",
+					recent[i-1].Seq, record.Seq)
+			}
+		}
+	}
+
+	all, err := store.All(ctx, "USDC-NGNC")
+	if err != nil {
+		t.Errorf("All: %v", err)
+		return
+	}
+	for i, record := range all {
+		if err := record.VerifySelf(); err != nil {
+			t.Errorf("All record %d is partial: %v", i, err)
+		}
+		if i > 0 && record.PrevHash != all[i-1].Hash {
+			t.Errorf("All has a broken link between seq %d and %d", all[i-1].Seq, record.Seq)
+		}
 	}
 }
 
@@ -224,6 +463,7 @@ func TestRunSweepsImmediately(t *testing.T) {
 	}
 	s := schedulerOver(t, "usdc-ngnc", asset.NGNC(), "NGN", "1350.2568", store)
 	s.Interval = time.Hour
+	s.Jitter = time.Hour
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -240,6 +480,39 @@ func TestRunSweepsImmediately(t *testing.T) {
 	t.Error("no measurement recorded; the first sweep waited for the interval")
 }
 
+func TestSchedulerJitterIsDeterministicAndBounded(t *testing.T) {
+	seed := int64(42)
+	scheduler := &Scheduler{
+		Interval:   6 * time.Hour,
+		Jitter:     5 * time.Minute,
+		JitterSeed: &seed,
+	}
+	first := scheduler.randomSource()
+	second := scheduler.randomSource()
+	var varied bool
+	for i := 0; i < 10; i++ {
+		got := scheduler.nextInterval(first)
+		replay := scheduler.nextInterval(second)
+		if got != replay {
+			t.Fatalf("seeded interval %d = %s, replay = %s", i, got, replay)
+		}
+		if got < scheduler.Interval || got >= scheduler.Interval+scheduler.Jitter {
+			t.Errorf("interval %s is outside [%s, %s)", got, scheduler.Interval, scheduler.Interval+scheduler.Jitter)
+		}
+		varied = varied || got > scheduler.Interval
+	}
+	if !varied {
+		t.Fatal("seeded jitter never added an offset")
+	}
+}
+
+func TestSchedulerZeroJitterKeepsBaseInterval(t *testing.T) {
+	scheduler := &Scheduler{Interval: 3 * time.Hour}
+	if got := scheduler.nextInterval(rand.New(rand.NewSource(1))); got != scheduler.Interval {
+		t.Errorf("interval with zero jitter = %s, want %s", got, scheduler.Interval)
+	}
+}
+
 // TestSchedulerNeedsAnEngine guards the obvious misconfiguration.
 func TestSchedulerNeedsAnEngine(t *testing.T) {
 	s := &Scheduler{Logger: quiet()}
@@ -251,21 +524,23 @@ func TestSchedulerNeedsAnEngine(t *testing.T) {
 	}
 }
 
-// TestDefaultCorridorsCoverEveryState documents why three corridors are the
-// default: each exercises a different integrity state, so a deployment
-// measuring them continuously exercises the whole taxonomy.
+// TestDefaultCorridorsCoverEveryState documents why the sweep includes the
+// case-study trio: each corridor exercises a different integrity state, so a
+// deployment measuring them continuously exercises the whole taxonomy. The
+// sweep now covers every registered corridor destination; this test guards the
+// trio that anchors it.
 func TestDefaultCorridorsCoverEveryState(t *testing.T) {
 	got := DefaultCorridors()
-	if len(got) != 3 {
-		t.Fatalf("got %d default corridors, want 3", len(got))
+	if len(got) == 0 {
+		t.Fatal("no default corridors; the sweep must measure at least the case-study trio")
 	}
+	// The case-study trio is still the spine of the sweep: one corridor per
+	// integrity state (NGNC DIRECT, GHSC DERIVATIVE, KESC NO-MARKET).
 	wantKeys := map[string]bool{"USDC-NGNC": false, "USDC-GHSC": false, "USDC-KESC": false}
 	for _, c := range got {
-		if _, ok := wantKeys[c.Key()]; !ok {
-			t.Errorf("unexpected default corridor %s", c.Key())
-			continue
+		if _, ok := wantKeys[c.Key()]; ok {
+			wantKeys[c.Key()] = true
 		}
-		wantKeys[c.Key()] = true
 		if c.ReferenceQuote == "" || c.ReferenceBase == "" {
 			t.Errorf("%s has no reference pair; it could not be scored", c.Key())
 		}

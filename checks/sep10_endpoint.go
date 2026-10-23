@@ -109,7 +109,12 @@ func (c SEP10EndpointResponds) Run(ctx context.Context, s Subject) CheckResult {
 
 	endpoint := strings.TrimSpace(s.Profile.TOML.WebAuthEndpoint)
 	tomlURL := "https://" + s.Profile.Domain + "/.well-known/stellar.toml"
-	at := time.Now().UTC()
+	// Evidence about the cached document carries the time it was originally
+	// fetched, not the time this check runs.
+	at := s.Profile.FetchedAt
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
 
 	// Not declaring an endpoint is not a failure. The anchor has said it
 	// offers no programmatic authentication, which is a legitimate position

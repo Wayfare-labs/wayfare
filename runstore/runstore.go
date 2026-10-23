@@ -41,18 +41,18 @@ import (
 	"github.com/Wayfare-labs/wayfare/route"
 )
 
-// Version is the record schema version.
-//
-// It is part of the hashed preimage, so a bump invalidates existing chains by
-// construction. See the preimage rules on Record.
-// Version is the record schema version.
+// Version is the current record schema version.
 //
 // It is part of the hashed preimage, so a bump invalidates existing chains by
 // construction — unless the new fields are added with omitempty, in which case
-// a Version 1 record (whose new blocks are empty) still encodes to exactly the
-// bytes that were hashed when it was written, and still verifies. See the
-// preimage rules on Record and the migration note in docs/run-store.md.
-const Version = 2
+// a record written by an older build (whose new fields are empty) still
+// encodes to exactly the bytes that were hashed when it was written, and
+// still verifies. Version 4 adds snapshot this way after every Version 3
+// field, so older records still verify unchanged. See docs/run-store.md.
+const Version = 4
+
+// LegacyVersion is the prior record schema, retained for existing chains.
+const LegacyVersion = 1
 
 // GenesisPrevHash is the prev_hash of the first record in a chain.
 const GenesisPrevHash = "sha256:" + "0000000000000000000000000000000000000000000000000000000000000000"
@@ -79,6 +79,33 @@ type Reference struct {
 	// ScoredAgainst names which source produced the verdicts in this
 	// record, so a reader can always tell which mid they are looking at.
 	ScoredAgainst string `json:"scored_against,omitempty"`
+
+	// FetchedAt is when this project last obtained the rate from the
+	// provider, which differs from AsOf: AsOf is the upstream's own stamp,
+	// FetchedAt is when we asked. A cached rate has an older FetchedAt and
+	// an unchanged AsOf, and a reader needs both to judge how current the
+	// benchmark was when a stored reading was taken.
+	//
+	// Declared omitempty and AFTER every Version 2 field, so a Version 2
+	// record (which has no fetched_at) still encodes to byte-for-byte the
+	// same JSON — and therefore the same hash — it did before this field
+	// existed. This is the Version 3 migration; see docs/run-store.md.
+	FetchedAt string `json:"fetched_at,omitempty"`
+
+	// The diagnostic provider's attribution of a DISAGREE (issue #597).
+	//
+	// These are optional, declared omitempty and after every earlier field,
+	// on the same rule as FetchedAt: a record written before the diagnostic
+	// existed encodes to exactly the bytes it always did and still verifies.
+	// A record written when the third provider answered carries what it
+	// observed; a record written when it did not simply omits the block.
+	DiagnosticSource             string `json:"diagnostic_source,omitempty"`
+	DiagnosticMid                string `json:"diagnostic_mid,omitempty"`
+	DiagnosticAsOf               string `json:"diagnostic_as_of,omitempty"`
+	DiagnosticOutlier            string `json:"diagnostic_outlier,omitempty"`
+	DiagnosticOutlierDistancePct string `json:"diagnostic_outlier_distance_pct,omitempty"`
+	DiagnosticOtherDistancePct   string `json:"diagnostic_other_distance_pct,omitempty"`
+	DiagnosticReason             string `json:"diagnostic_reason,omitempty"`
 }
 
 // Rung is one size's stored result.
@@ -145,10 +172,14 @@ type Record struct {
 	// Version 1 field. A record with no findings therefore encodes to
 	// byte-for-byte the same JSON — same field order, same contents — as it
 	// did before they existed, so a Version 1 chain's hashes are
-	// unchanged and still verify under this (Version 2) build. See
+	// unchanged and still verify under this (Version 3) build. See
 	// docs/run-store.md for the migration.
 	Checks  []checks.CheckJSON  `json:"checks,omitempty"`
 	Metrics []checks.MetricJSON `json:"metrics,omitempty"`
+
+	// Snapshot is the content hash of the exact upstream snapshot artifact.
+	// It is optional and follows every Version 3 field to preserve old hashes.
+	Snapshot string `json:"snapshot,omitempty"`
 
 	// DependencyChain is the full dependency tree, stored word-for-word
 	// from the wire so the stale path can serve it back identically.
@@ -243,6 +274,11 @@ type Store interface {
 
 	// Recent returns up to n most recent records, newest first.
 	Recent(ctx context.Context, corridor string, n int) ([]*Record, error)
+
+	// RecentBefore returns up to n records strictly before sequence number
+	// 'before' (i.e. Seq < before), newest first. When before <= 0, it
+	// returns up to n most recent records without cursor filtering.
+	RecentBefore(ctx context.Context, corridor string, n int, before int64) ([]*Record, error)
 
 	// All returns the complete corridor history in chronological order
 	// (oldest first). Use this when the full history is needed, e.g.

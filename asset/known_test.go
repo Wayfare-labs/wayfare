@@ -2,6 +2,8 @@ package asset
 
 import (
 	"reflect"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -36,7 +38,7 @@ func TestLookup(t *testing.T) {
 // would make that output nondeterministic.
 func TestKnownCodes(t *testing.T) {
 	got := KnownCodes()
-	want := []string{"GHSC", "KESC", "NGNC", "USDC"}
+	want := []string{"EURMTL", "GHSC", "KESC", "NGNC", "NGNT", "PYUSD", "USDC", "USDZ", "ZARZ"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("KnownCodes() = %v, want %v", got, want)
 	}
@@ -56,6 +58,23 @@ func TestFiatPeg(t *testing.T) {
 		t.Errorf("FiatPeg(KESC()) = (%q, %v), want (\"KES\", true)", peg, ok)
 	}
 
+	// The expanded registry: every entry verified 2026-08-26 from the
+	// issuer's own stellar.toml.
+	for _, c := range []struct {
+		a   Asset
+		peg string
+	}{
+		{NGNT(), "NGN"},
+		{USDZ(), "USD"},
+		{ZARZ(), "ZAR"},
+		{EURMTL(), "EUR"},
+		{PYUSD(), "USD"},
+	} {
+		if peg, ok := FiatPeg(c.a); !ok || peg != c.peg {
+			t.Errorf("FiatPeg(%s) = (%q, %v), want (%q, true)", c.a, peg, ok, c.peg)
+		}
+	}
+
 	impostor := Stellar("NGNC", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF5")
 	if _, ok := FiatPeg(impostor); ok {
 		t.Error("FiatPeg must return false for the right code from the wrong issuer")
@@ -70,10 +89,52 @@ func TestFiatPeg(t *testing.T) {
 	}
 }
 
+// TestClassifyHop pins the three-way hop classification that route.classify
+// relies on: fiat-pegged tokens are dependencies, native XLM and registered
+// non-fiat tokens are bridges, and everything else is unknown — including an
+// unregistered token whose code matches a registered fiat token.
+func TestClassifyHop(t *testing.T) {
+	cases := []struct {
+		name string
+		a    Asset
+		want HopKind
+	}{
+		{"NGNC is a fiat dependency", NGNC(), HopFiat},
+		{"the expanded registry is fiat", USDZ(), HopFiat},
+		{"PYUSD is fiat", PYUSD(), HopFiat},
+		{"native XLM is a bridge", Native(), HopBridge},
+		{"USDC is a registered non-fiat bridge", USDC(), HopBridge},
+		{"an unregistered token is unknown", Stellar("BLND", "GBLNDISS1234567890123456789012345678901234567890123456789"), HopUnknown},
+		{"an impostor with a registered code is unknown", Stellar("NGNC", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF5"), HopUnknown},
+		{"off-chain fiat is unknown as a hop", NGN(), HopUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ClassifyHop(tc.a); got != tc.want {
+				t.Errorf("ClassifyHop(%s) = %v, want %v", tc.a, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClassifyHopString keeps the human forms stable for readers.
+func TestClassifyHopString(t *testing.T) {
+	cases := map[HopKind]string{
+		HopFiat:    "fiat",
+		HopBridge:  "bridge",
+		HopUnknown: "unknown",
+	}
+	for k, want := range cases {
+		if got := k.String(); got != want {
+			t.Errorf("HopKind(%d).String() = %q, want %q", k, got, want)
+		}
+	}
+}
+
 // TestIsFiatToken exercises the same cases through the boolean-only helper,
 // since callers on the hot classification path use this form directly.
 func TestIsFiatToken(t *testing.T) {
-	for _, a := range []Asset{NGNC(), GHSC(), KESC()} {
+	for _, a := range []Asset{NGNC(), GHSC(), KESC(), NGNT()} {
 		if !IsFiatToken(a) {
 			t.Errorf("IsFiatToken(%s) = false, want true", a)
 		}
@@ -101,42 +162,31 @@ func TestRegistryCompleteness(t *testing.T) {
 		if err := ValidateEntry(e); err != nil {
 			t.Errorf("ValidateEntry(%+v) failed: %v", e, err)
 		}
+	}
+}
 
-		a, ok := Lookup(e.Code)
-		if !ok {
-			t.Errorf("Lookup(%q) returned not found", e.Code)
-		}
-		if a.Issuer != e.Issuer {
-			t.Errorf("Lookup(%q).Issuer = %q, want %q", e.Code, a.Issuer, e.Issuer)
-		}
-
-		if e.Code != "USDC" {
-			if e.Peg == "" {
-				t.Errorf("corridor entry %q must have a non-empty fiat peg", e.Code)
-			}
-			if e.Status == "" {
-				t.Errorf("corridor entry %q must have a non-empty SEP-1 status", e.Code)
-			}
-			if e.VerificationDate == "" {
-				t.Errorf("corridor entry %q must have a non-empty verification date", e.Code)
-			}
-			if e.SourceURL == "" {
-				t.Errorf("corridor entry %q must have a non-empty source URL", e.Code)
-			}
-			if e.HomeDomain == "" {
-				t.Errorf("corridor entry %q must have a non-empty home domain", e.Code)
-			}
-
-			peg, ok := FiatPeg(a)
-			if !ok || peg != e.Peg {
-				t.Errorf("FiatPeg(%s) = (%q, %v), want (%q, true)", a, peg, ok, e.Peg)
-			}
-
-			domain, ok := HomeDomain(a)
-			if !ok || domain != e.HomeDomain {
-				t.Errorf("HomeDomain(%s) = (%q, %v), want (%q, true)", a, domain, ok, e.HomeDomain)
-			}
-		}
+// TestValidateEntryRequiresVerificationDate pins the field that makes a
+// registry entry auditable.
+//
+// An entry without a verification date records that somebody believed the
+// issuer, not that anybody checked it. Issuers rotate accounts, so an
+// undated claim cannot be re-verified or expired — which is why this is a
+// required field rather than a nice-to-have.
+func TestValidateEntryRequiresVerificationDate(t *testing.T) {
+	e := Entry{
+		Code:       "TEST",
+		Issuer:     "GBTEST",
+		Peg:        "TST",
+		Status:     "live",
+		SourceURL:  "https://example.com/.well-known/stellar.toml",
+		HomeDomain: "example.com",
+	}
+	err := ValidateEntry(e)
+	if err == nil {
+		t.Fatal("expected error for a missing verification date, got nil")
+	}
+	if !strings.Contains(err.Error(), "verification date is required") {
+		t.Errorf("error = %q, want it to name the missing verification date", err)
 	}
 }
 
@@ -225,6 +275,118 @@ func TestHalfRegisteredEntryFails(t *testing.T) {
 				t.Fatalf("ValidateEntry(%+v) succeeded, want error containing %q", entry, c.wantError)
 			}
 		})
+	}
+}
+
+// TestLookupNeverConflatesDifferentIssuers asserts that the current registry
+// passes validateRegistry — no two entries share a code with a different
+// issuer. The real exercise of the conflict path lives in
+// TestValidateRegistryRejectsCodeConflict.
+func TestLookupNeverConflatesDifferentIssuers(t *testing.T) {
+	if err := validateRegistry(Registry()); err != nil {
+		t.Errorf("validateRegistry(registry) failed: %v", err)
+	}
+}
+
+// TestValidateRegistryRejectsCodeConflict exercises the duplicate-code guard
+// directly: two valid entries sharing a code but differing by issuer must be
+// rejected. Removing the guard from validateRegistry causes this test to fail.
+func TestValidateRegistryRejectsCodeConflict(t *testing.T) {
+	conflict := []Entry{
+		{Code: "USDC", Issuer: USDCIssuer, Status: "unverified"},
+		{Code: "USDC", Issuer: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF5", Status: "unverified"},
+	}
+	err := validateRegistry(conflict)
+	if err == nil {
+		t.Fatal("validateRegistry accepted two entries with the same code and different issuers")
+	}
+}
+
+// TestValidateRegistryRejectsMissingFields confirms that validateRegistry
+// rejects a partially-filled entry, preventing silent misclassification.
+func TestValidateRegistryRejectsMissingFields(t *testing.T) {
+	empty := []Entry{{Code: "", Issuer: ""}}
+	err := validateRegistry(empty)
+	if err == nil {
+		t.Fatal("validateRegistry accepted an entry with empty code and issuer")
+	}
+}
+
+// TestLookupReturnsCorrectIssuerForCode verifies that Lookup resolves each
+// known code to the asset whose issuer matches the registry. If the known
+// map were keyed by code alone and a second entry overwrote the first,
+// this test would fail.
+func TestLookupReturnsCorrectIssuerForCode(t *testing.T) {
+	for _, want := range []Asset{USDC(), NGNC(), GHSC(), KESC()} {
+		got, ok := Lookup(want.Code)
+		if !ok {
+			t.Fatalf("Lookup(%q) returned not found", want.Code)
+		}
+		if got.Issuer != want.Issuer {
+			t.Errorf("Lookup(%q).Issuer = %q, want %q", want.Code, got.Issuer, want.Issuer)
+		}
+	}
+}
+
+// TestImpostorSameCodeDifferentIssuerNotFound verifies that Lookup does not
+// return an asset when the code matches but the issuer does not. An
+// unregistered issuer masquerading as a known code must not be found.
+// LookupEntry on the impostor must also return false.
+func TestImpostorSameCodeDifferentIssuerNotFound(t *testing.T) {
+	impostor := Stellar("USDC", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF5")
+
+	got, ok := Lookup(impostor.Code)
+	if !ok {
+		t.Fatalf("Lookup(%q) returned not found — code must exist", impostor.Code)
+	}
+	if got.Equal(impostor) {
+		t.Errorf("Lookup(%q) returned an asset equal to an impostor with a different issuer", impostor.Code)
+	}
+	if got.Issuer == impostor.Issuer {
+		t.Errorf("Lookup(%q) returned the impostor issuer %q instead of the registered one", impostor.Code, impostor.Issuer)
+	}
+
+	if _, ok := LookupEntry(impostor); ok {
+		t.Error("LookupEntry must return false for an impostor with the right code but wrong issuer")
+	}
+}
+
+// TestIssuerConcentration verifies that the shared issuer behind NGNC, GHSC,
+// and KESC is identified as a concentration. LinkIOIssuer backs three
+// corridors; all other issuers in the registry back at most one corridor
+// (excluding USDC, the settlement asset).
+func TestIssuerConcentration(t *testing.T) {
+	concentration := IssuerConcentration()
+
+	// LinkIOIssuer should have three corridors: NGNC, GHSC, KESC.
+	linkIOCorridors, ok := concentration[LinkIOIssuer]
+	if !ok {
+		t.Fatalf("IssuerConcentration missing LinkIOIssuer key")
+	}
+	want := []string{"GHSC", "KESC", "NGNC"} // sorted
+	if len(linkIOCorridors) != 3 {
+		t.Errorf("LinkIOIssuer corridors = %v, want 3", linkIOCorridors)
+	}
+	// Sort for deterministic comparison.
+	sorted := make([]string, len(linkIOCorridors))
+	copy(sorted, linkIOCorridors)
+	sort.Strings(sorted)
+	if !reflect.DeepEqual(sorted, want) {
+		t.Errorf("LinkIOIssuer corridors = %v, want %v", sorted, want)
+	}
+
+	// No other issuer should appear in the concentration map (all others
+	// back at most one corridor, and USDC is excluded).
+	for issuer := range concentration {
+		if issuer != LinkIOIssuer {
+			t.Errorf("unexpected issuer in concentration map: %q", issuer)
+		}
+	}
+
+	// USDC is the settlement asset, not a corridor destination, so it must
+	// never appear in the concentration result.
+	if _, ok := concentration[USDCIssuer]; ok {
+		t.Error("USDCIssuer must not appear in IssuerConcentration (it is the settlement asset)")
 	}
 }
 

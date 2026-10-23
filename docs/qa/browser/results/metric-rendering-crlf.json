@@ -1,0 +1,214 @@
+{
+  "issue": 268,
+  "ranAt": "2026-10-22T15:29:14.846Z",
+  "base": "http://127.0.0.1:8268",
+  "engine": "chromium",
+  "sourceCommit": "24f3cc04bb9b3c52067b378907cf89ef9c1dd691",
+  "harnessSHA256": "e48f03d6c660864eb45692d65281485573a995e7869e09ec216dc4bdd603b461",
+  "fixtureProvenance": "server/api_test.go:metricsSchemaFixture; comparison check is explicitly synthetic",
+  "scope": "Recorded API absence checks plus render-only schema fixtures; no live market measurement or metric-producing API integration is claimed.",
+  "fixtures": [
+    {
+      "name": "metrics-omitted",
+      "payload": {
+        "checks": []
+      },
+      "metrics": []
+    },
+    {
+      "name": "metrics-empty",
+      "payload": {
+        "checks": [],
+        "metrics": []
+      },
+      "metrics": []
+    },
+    {
+      "name": "measured-only",
+      "payload": {
+        "checks": [],
+        "metrics": [
+          {
+            "id": "spread.bid-ask",
+            "scope": "asset",
+            "subject": "NGNC",
+            "determined": true,
+            "value": "0.0004",
+            "unit": "ratio",
+            "summary": "bid-ask spread on the USDC/NGNC book",
+            "observed_at": "2026-08-21T12:00:00Z",
+            "evidence": [
+              {
+                "source": "https://horizon.stellar.org/order_book",
+                "observed": "0.0004",
+                "observed_at": "2026-08-21T12:00:00Z"
+              }
+            ]
+          }
+        ]
+      },
+      "metrics": [
+        {
+          "id": "spread.bid-ask",
+          "scope": "asset",
+          "subject": "NGNC",
+          "determined": true,
+          "value": "0.0004",
+          "unit": "ratio",
+          "summary": "bid-ask spread on the USDC/NGNC book",
+          "observed_at": "2026-08-21T12:00:00Z",
+          "evidence": [
+            {
+              "source": "https://horizon.stellar.org/order_book",
+              "observed": "0.0004",
+              "observed_at": "2026-08-21T12:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "undetermined-only",
+      "payload": {
+        "checks": [],
+        "metrics": [
+          {
+            "id": "depth.observed-executable",
+            "scope": "asset",
+            "subject": "NGNC",
+            "determined": false,
+            "reason": "no executable side at 5000 USDC",
+            "unit": "amount",
+            "summary": "could not determine: no executable side at 5000 USDC",
+            "observed_at": "2026-08-21T12:00:00Z",
+            "evidence": []
+          }
+        ]
+      },
+      "metrics": [
+        {
+          "id": "depth.observed-executable",
+          "scope": "asset",
+          "subject": "NGNC",
+          "determined": false,
+          "reason": "no executable side at 5000 USDC",
+          "unit": "amount",
+          "summary": "could not determine: no executable side at 5000 USDC",
+          "observed_at": "2026-08-21T12:00:00Z",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "mixed-with-failed-check",
+      "payload": {
+        "checks": [
+          {
+            "id": "qa.failed-check",
+            "determined": true,
+            "passed": false,
+            "severity": "warning",
+            "summary": "UI fixture: failed check for comparison",
+            "evidence": []
+          }
+        ],
+        "failed": 1,
+        "metrics": [
+          {
+            "id": "spread.bid-ask",
+            "scope": "asset",
+            "subject": "NGNC",
+            "determined": true,
+            "value": "0.0004",
+            "unit": "ratio",
+            "summary": "bid-ask spread on the USDC/NGNC book",
+            "observed_at": "2026-08-21T12:00:00Z",
+            "evidence": [
+              {
+                "source": "https://horizon.stellar.org/order_book",
+                "observed": "0.0004",
+                "observed_at": "2026-08-21T12:00:00Z"
+              }
+            ]
+          },
+          {
+            "id": "depth.observed-executable",
+            "scope": "asset",
+            "subject": "NGNC",
+            "determined": false,
+            "reason": "no executable side at 5000 USDC",
+            "unit": "amount",
+            "summary": "could not determine: no executable side at 5000 USDC",
+            "observed_at": "2026-08-21T12:00:00Z",
+            "evidence": []
+          }
+        ]
+      },
+      "metrics": [
+        {
+          "id": "spread.bid-ask",
+          "scope": "asset",
+          "subject": "NGNC",
+          "determined": true,
+          "value": "0.0004",
+          "unit": "ratio",
+          "summary": "bid-ask spread on the USDC/NGNC book",
+          "observed_at": "2026-08-21T12:00:00Z",
+          "evidence": [
+            {
+              "source": "https://horizon.stellar.org/order_book",
+              "observed": "0.0004",
+              "observed_at": "2026-08-21T12:00:00Z"
+            }
+          ]
+        },
+        {
+          "id": "depth.observed-executable",
+          "scope": "asset",
+          "subject": "NGNC",
+          "determined": false,
+          "reason": "no executable side at 5000 USDC",
+          "unit": "amount",
+          "summary": "could not determine: no executable side at 5000 USDC",
+          "observed_at": "2026-08-21T12:00:00Z",
+          "evidence": []
+        }
+      ]
+    }
+  ],
+  "history": [],
+  "rendering": [],
+  "errors": [
+    "Executing inline script violates the following Content Security Policy directive 'script-src 'self' 'sha256-OASkU4GaHf3TEZxgL0vVZO+OGTAUGW9YwKmA08cOgaA=' 'sha256-KifXzz5b4NeCJ2bX313SipBj8EytEpsmij2flQg4Nh8=''. Either the 'unsafe-inline' keyword, a hash ('sha256-QclFi3NlFBWx8LeQoyaO/EH3wGCSCc9hP7JvLuOnzzI='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked.",
+    "Executing inline script violates the following Content Security Policy directive 'script-src 'self' 'sha256-OASkU4GaHf3TEZxgL0vVZO+OGTAUGW9YwKmA08cOgaA=' 'sha256-KifXzz5b4NeCJ2bX313SipBj8EytEpsmij2flQg4Nh8=''. Either the 'unsafe-inline' keyword, a hash ('sha256-HufD5K4M6l50U8/9dQHEyqMjy9zzypPNAQWZbCOTOIM='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked."
+  ],
+  "browserVersion": "153.0.8010.12",
+  "servedHTMLSHA256": "52578add2d3085372096394e7ef429e87fe8f35c9019fc67ecd41ebb6598805b",
+  "contentSecurityPolicy": "default-src 'self'; script-src 'self' 'sha256-OASkU4GaHf3TEZxgL0vVZO+OGTAUGW9YwKmA08cOgaA=' 'sha256-KifXzz5b4NeCJ2bX313SipBj8EytEpsmij2flQg4Nh8='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+  "sourceHasCRLF": true,
+  "bootstrap": {
+    "rendererAvailable": false,
+    "corridorOptions": 0,
+    "checks": [
+      {
+        "name": "metric renderer available",
+        "pass": false,
+        "detail": null
+      },
+      {
+        "name": "corridor selector initialized",
+        "pass": false,
+        "detail": null
+      }
+    ],
+    "screenshot": "screenshots/268-bootstrap-crlf.png",
+    "limitation": "Normal navigation did not initialize. Subsequent checks call the real findings() renderer directly; they are not end-to-end navigation evidence."
+  },
+  "executionError": "Renderer unavailable; metric cases were not run. See browser errors and CSP.",
+  "summary": {
+    "checks": 2,
+    "passed": 0,
+    "failed": 2,
+    "pageErrors": 2
+  }
+}

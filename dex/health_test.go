@@ -2,11 +2,13 @@ package dex_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/dex"
@@ -58,6 +60,9 @@ func TestOrderBookParsesRecordedMarket(t *testing.T) {
 	}
 	if h.SpreadPct.IsNegative() {
 		t.Errorf("SpreadPct = %s, want non-negative", h.SpreadPct)
+	}
+	if !h.Mid.Equal(decFromString(t, "185.75851395")) {
+		t.Errorf("Mid = %s, want 185.75851395 from the recorded best prices", h.Mid)
 	}
 	if h.Selling.Code != "XLM" || h.Buying.Code != "NGNC" {
 		t.Errorf("book endpoints = %s/%s, want XLM/NGNC", h.Selling.Code, h.Buying.Code)
@@ -169,5 +174,223 @@ func TestUnparseableOfferIsSkippedNotFatal(t *testing.T) {
 	}
 	if !h.BestBid.Equal(decFromString(t, "100")) {
 		t.Errorf("BestBid = %s, want 100 with the malformed level skipped", h.BestBid)
+	}
+}
+
+// TestMalformedAmountIsNotAPricedLevel pins the amount side of "a malformed
+// level must become undetermined, never a priced level" (#589): an offer
+// whose amount could not fill — unparseable, zero, or negative — is skipped
+// exactly like an unparseable price, and never inflates the level counts or
+// reaches a best price.
+func TestMalformedAmountIsNotAPricedLevel(t *testing.T) {
+	body := `{"bids":[{"price":"100","amount":"oops"},
+	          {"price":"101","amount":"0"},
+	          {"price":"102","amount":"-5"},
+	          {"price":"103","amount":"7"}],
+	          "asks":[{"price":"200","amount":"1"}]}`
+
+	c := bookServer(t, body)
+	h, err := c.OrderBook(context.Background(), asset.Native(), asset.NGNC())
+	if err != nil {
+		t.Fatalf("OrderBook: %v", err)
+	}
+	if h.BidLevels != 1 {
+		t.Errorf("BidLevels = %d, want 1; malformed amounts were counted as levels", h.BidLevels)
+	}
+	if !h.BestBid.Equal(decFromString(t, "103")) {
+		t.Errorf("BestBid = %s, want 103 from the only level that could fill", h.BestBid)
+	}
+}
+
+// TestExtremeExponentIsNotAPricedLevel pins the guard fuzzing forced into
+// the decoder (#589): shopspring/decimal parses exponents lazily, so a level
+// priced at 1e999999999 is cheap to decode but materialises to a billion-digit
+// number the first time it is compared against the dust threshold. Such a
+// level is corrupted bytes, not a market fact, and must be dropped before
+// any arithmetic touches it — without hanging the process doing so.
+func TestExtremeExponentIsNotAPricedLevel(t *testing.T) {
+	body := `{"bids":[{"price":"1e999999999","amount":"1"},
+	          {"price":"100","amount":"1e-999999999"}],
+	          "asks":[{"price":"200","amount":"1"}]}`
+
+	c := bookServer(t, body)
+	done := make(chan struct{})
+	var (
+		h   *dex.BookHealth
+		err error
+	)
+	go func() {
+		defer close(done)
+		h, err = c.OrderBook(context.Background(), asset.Native(), asset.NGNC())
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("OrderBook materialised a billion-digit decimal; the exponent guard is missing")
+	}
+	if err != nil {
+		t.Fatalf("OrderBook: %v", err)
+	}
+	if h.BidLevels != 0 {
+		t.Errorf("BidLevels = %d, want 0; one bid carried an impossible price exponent, the other an impossible amount exponent", h.BidLevels)
+	}
+	if h.AskLevels != 1 || !h.BestAsk.Equal(decFromString(t, "200")) {
+		t.Errorf("ask side = %d levels at %s, want the one sane level at 200",
+			h.AskLevels, h.BestAsk)
+	}
+	if h.DustLevels != 0 {
+		t.Errorf("DustLevels = %d, want 0; corrupted bytes are neither priced nor dust", h.DustLevels)
+	}
+	if h.Functional() {
+		t.Error("a book whose bid side is all corrupted bytes reported a functional market")
+	}
+}
+
+// TestMalformedOrderBookJSONReturnsError ensures a successful HTTP response
+// with invalid JSON is not treated as an empty, no-market book.
+func TestMalformedOrderBookJSONReturnsError(t *testing.T) {
+	c := bookServer(t, `{"bids":[`)
+	_, err := c.OrderBook(context.Background(), asset.Native(), asset.NGNC())
+	if err == nil {
+		t.Fatal("OrderBook returned nil error for malformed JSON")
+	}
+	if !strings.Contains(err.Error(), "decoding horizon response") {
+		t.Errorf("error %q should identify response decoding", err)
+	}
+}
+
+// TestOrderBookRateLimitReturnsTypedError ensures HTTP 429 is an error and
+// remains distinguishable from a generic upstream failure.
+func TestOrderBookRateLimitReturnsTypedError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := &dex.Client{HorizonURL: srv.URL}
+	_, err := c.OrderBook(context.Background(), asset.Native(), asset.NGNC())
+	if err == nil {
+		t.Fatal("OrderBook returned nil error for HTTP 429")
+	}
+	var limited *dex.ErrRateLimited
+	if !errors.As(err, &limited) {
+		t.Fatalf("error %q does not unwrap to ErrRateLimited", err)
+	}
+	if limited.Endpoint != "/order_book" {
+		t.Errorf("Endpoint = %q, want /order_book", limited.Endpoint)
+	}
+	if limited.RetryAfter != 30*time.Second {
+		t.Errorf("RetryAfter = %s, want 30s", limited.RetryAfter)
+	}
+}
+
+// TestOrderBookTimeoutReturnsClearError verifies context cancellation is
+// surfaced rather than producing a partial BookHealth.
+func TestOrderBookTimeoutReturnsClearError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	c := &dex.Client{HorizonURL: srv.URL}
+	_, err := c.OrderBook(ctx, asset.Native(), asset.NGNC())
+	if err == nil {
+		t.Fatal("OrderBook returned nil error after context timeout")
+	}
+	if !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Errorf("error %q should identify the timeout", err)
+	}
+}
+
+// TestDustOnlyBookIsNotLiquidity ensures dust offers are removed from both
+// sides, leaving an explicit no-market health state.
+func TestDustOnlyBookIsNotLiquidity(t *testing.T) {
+	body := `{"bids":[{"price":"0.0000001","amount":"1000000000"}],
+	          "asks":[{"price":"0.0000001","amount":"1000000000"}]}`
+	c := bookServer(t, body)
+	h, err := c.OrderBook(context.Background(), asset.Native(), asset.NGNC())
+	if err != nil {
+		t.Fatalf("OrderBook: %v", err)
+	}
+	if h.DustLevels != 2 || h.BidLevels != 0 || h.AskLevels != 0 {
+		t.Errorf("health = bids %d, asks %d, dust %d; want 0/0/2", h.BidLevels, h.AskLevels, h.DustLevels)
+	}
+	if h.Functional() {
+		t.Fatal("dust-only book reported a functional market")
+	}
+	if h.Summary() != "no market: order book is empty" {
+		t.Errorf("Summary() = %q, want explicit no-market state", h.Summary())
+	}
+}
+
+// TestExtremeSpreadIsPreserved ensures a very wide spread is reported rather
+// than normalized into a healthy-looking value.
+func TestExtremeSpreadIsPreserved(t *testing.T) {
+	c := bookServer(t, `{"bids":[{"price":"0.000001","amount":"1"}],"asks":[{"price":"1000000","amount":"1"}]}`)
+	h, err := c.OrderBook(context.Background(), asset.Native(), asset.NGNC())
+	if err != nil {
+		t.Fatalf("OrderBook: %v", err)
+	}
+	if h.Functional() {
+		t.Fatal("extreme-spread book reported a functional market")
+	}
+	if !h.SpreadPct.GreaterThan(decFromString(t, "199")) {
+		t.Errorf("SpreadPct = %s, want an extreme spread near 200%%", h.SpreadPct)
+	}
+	if !strings.Contains(h.Summary(), "dysfunctional market") {
+		t.Errorf("Summary() = %q, want dysfunctional market", h.Summary())
+	}
+}
+
+// TestLargeOrderBookRetainsHealthPerformance exercises the Horizon limit of
+// 200 levels while checking that the extrema are selected correctly.
+func TestLargeOrderBookRetainsHealthPerformance(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"bids":[`)
+	for i := 0; i < 200; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(`{"price":"100","amount":"1"}`)
+	}
+	b.WriteString(`],"asks":[`)
+	for i := 0; i < 200; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(`{"price":"100.5","amount":"1"}`)
+	}
+	b.WriteString(`]}`)
+
+	c := bookServer(t, b.String())
+	start := time.Now()
+	h, err := c.OrderBook(context.Background(), asset.Native(), asset.NGNC())
+	if err != nil {
+		t.Fatalf("OrderBook: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("200-level order book took %s; want under 1s", elapsed)
+	}
+	if h.BidLevels != 200 || h.AskLevels != 200 || !h.Functional() {
+		t.Errorf("health = bids %d, asks %d, functional %v; want 200/200/true", h.BidLevels, h.AskLevels, h.Functional())
+	}
+}
+
+// TestStaleLikeOffersAreStillReportedAsBookData documents the boundary: the
+// order-book endpoint has no timestamp on levels, so health cannot invent a
+// stale classification. It still must not claim a market when the entries are
+// dust-only.
+func TestStaleLikeOffersAreStillReportedAsBookData(t *testing.T) {
+	c := bookServer(t, `{"bids":[{"price":"0.00000001","amount":"1"}],"asks":[{"price":"0.00000001","amount":"1"}]}`)
+	h, err := c.OrderBook(context.Background(), asset.Native(), asset.NGNC())
+	if err != nil {
+		t.Fatalf("OrderBook: %v", err)
+	}
+	if h.Functional() || h.BidLevels != 0 || h.AskLevels != 0 {
+		t.Fatalf("stale-like dust book = %+v; want no market", h)
 	}
 }

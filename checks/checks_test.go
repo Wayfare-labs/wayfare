@@ -95,7 +95,11 @@ func TestDescriptorRequiresItsLimits(t *testing.T) {
 		})
 	}
 
-	for _, c := range []Check{AnchorAssetISO4217{}, IssuerAuthFlags{}, SEP10EndpointResponds{}, HomeDomainRoundTrip{}} {
+	for _, c := range []Check{
+		AnchorAssetISO4217{}, SEP12ServerPublished{}, SEP31Info{}, IssuerAuthFlags{},
+		SEP10EndpointResponds{}, SEP24InfoListsAsset{}, SEP38QuoteServerPublished{},
+		IssuerFlagImmutability{}, HomeDomainRoundTrip{},
+	} {
 		d := c.Describe()
 		if err := d.Validate(); err != nil {
 			t.Errorf("%s: %v", d.ID, err)
@@ -538,6 +542,26 @@ func TestSEP10NotDeclaredIsUndetermined(t *testing.T) {
 	}
 }
 
+// TestSEP10NoProfileIsUndetermined covers the case that precedes "not
+// declared": no stellar.toml was resolved for the anchor at all, so there is
+// nothing to read WEB_AUTH_ENDPOINT from. This must produce the same
+// not-published verdict as a resolved profile with an empty endpoint field,
+// and for the reason that specific branch names — not the generic "check
+// panicked" a nil-pointer dereference would produce if the guard were
+// removed, which is what makes this test able to fail on that mutation.
+func TestSEP10NoProfileIsUndetermined(t *testing.T) {
+	r := Run(ctx(), SEP10EndpointResponds{}, Subject{Domain: "example.test"})
+
+	if r.Determined {
+		t.Error("no resolved profile must be undetermined, not a failure — there is " +
+			"nothing declared to probe, which differs from a declared endpoint that is dead")
+	}
+	if !strings.Contains(r.Reason, "no stellar.toml has been resolved for this anchor") {
+		t.Errorf("Reason = %q, want it to name the missing profile as the cause "+
+			"(a panic-recovery reason here would mean the nil check was removed)", r.Reason)
+	}
+}
+
 // TestSEP10DeclaredButDeadIsAFailure is the other half, and the more damning
 // one: publishing an address that does not answer.
 func TestSEP10DeclaredButDeadIsAFailure(t *testing.T) {
@@ -551,6 +575,51 @@ func TestSEP10DeclaredButDeadIsAFailure(t *testing.T) {
 	}
 	if !strings.Contains(r.Summary, "did not respond") {
 		t.Errorf("Summary = %q, want it to say the endpoint did not respond", r.Summary)
+	}
+}
+
+// TestSEP10ThreeStatesAreDistinct is the discipline issue #183 asks anchor
+// checks to hold: not published, published-and-dead, and published-and-live
+// are three different facts, and none of the three tests below may collapse
+// into another. Mutating sep10_endpoint.go to treat a dead endpoint as
+// undetermined, or an absent one as a failure, breaks this test even though
+// each half already has its own dedicated test above — this is the one place
+// all three are asserted pairwise distinct in a single run.
+func TestSEP10ThreeStatesAreDistinct(t *testing.T) {
+	notPublished := Run(ctx(), SEP10EndpointResponds{}, Subject{Profile: sep10Profile("")})
+	if notPublished.Determined {
+		t.Fatal("not-published must be undetermined")
+	}
+
+	dead := Run(ctx(), SEP10EndpointResponds{}, Subject{
+		Profile: sep10Profile("https://127.0.0.1:1/auth"),
+	})
+	if !dead.Failed() {
+		t.Fatal("published-and-dead must be a determined failure")
+	}
+
+	srv := flagServer(t, 200,
+		`{"transaction":"AAAAAgAAAABmocked","network_passphrase":"Public Global Stellar Network ; September 2015"}`)
+	live := Run(ctx(), SEP10EndpointResponds{HTTPClient: srv.Client()},
+		Subject{Profile: sep10Profile(srv.URL + "/auth")})
+	if !live.Determined || !live.Passed {
+		t.Fatal("published-and-live must be a determined pass")
+	}
+
+	// Pairwise: no two of the three share both Determined and Passed, which
+	// is what would let a reader mistake one state for another downstream.
+	states := []struct {
+		name string
+		r    CheckResult
+	}{{"not-published", notPublished}, {"dead", dead}, {"live", live}}
+	for i := range states {
+		for j := i + 1; j < len(states); j++ {
+			a, b := states[i], states[j]
+			if a.r.Determined == b.r.Determined && a.r.Passed == b.r.Passed {
+				t.Errorf("%s and %s collapsed into the same (determined, passed) pair: (%v, %v)",
+					a.name, b.name, a.r.Determined, a.r.Passed)
+			}
+		}
 	}
 }
 
@@ -742,7 +811,6 @@ func TestSEP24InfoListsAsset(t *testing.T) {
 		{name: "server error", status: 503, body: `{}`,
 			determined: true, passed: false, contains: "HTTP 503"},
 	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := flagServer(t, tc.status, tc.body)
@@ -767,6 +835,252 @@ func TestSEP24InfoNotDeclaredIsUndetermined(t *testing.T) {
 		t.Fatalf("result = determined=%v reason=%q, want undetermined absent server", r.Determined, r.Reason)
 	}
 }
+
+func TestSEP6InfoListsAssetFromSnapshot(t *testing.T) {
+	cases := []struct {
+		name       string
+		published  bool
+		status     int
+		body       string
+		determined bool
+		passed     bool
+		contains   string
+	}{
+		{
+			name:       "not published",
+			determined: false,
+			contains:   "declares no TRANSFER_SERVER",
+		},
+		{
+			name:      "published and lists asset",
+			published: true, status: http.StatusOK,
+			body:       `{"deposit":{"NGN":{"enabled":true}},"withdraw":{"NGN":{"enabled":false}}}`,
+			determined: true, passed: true,
+			contains: "deposit enabled; withdrawal disabled",
+		},
+		{
+			name:      "published and unavailable",
+			published: true, status: http.StatusServiceUnavailable,
+			body:       `{"error":"temporarily unavailable"}`,
+			determined: true, passed: false,
+			contains: "HTTP 503",
+		},
+		{
+			name:      "published but omits asset",
+			published: true, status: http.StatusOK,
+			body:       `{"deposit":{"USD":{"enabled":true}},"withdraw":{}}`,
+			determined: true, passed: false,
+			contains: "omits asset \"NGN\"",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := sep6SnapshotClient(t, tc.published, tc.status, tc.body)
+			runner := &Runner{
+				Checks:   []Check{SEP6InfoListsAsset{HTTPClient: client}},
+				Resolver: &anchor.Resolver{HTTPClient: client},
+			}
+			findings := runner.ForAsset(ctx(), asset.NGNC())
+			if len(findings.Checks) != 1 {
+				t.Fatalf("runner returned %d checks, want 1", len(findings.Checks))
+			}
+			result := findings.Checks[0]
+			if result.Determined != tc.determined || (tc.determined && result.Passed != tc.passed) {
+				t.Fatalf("result determined=%v passed=%v, want %v/%v (%s)",
+					result.Determined, result.Passed, tc.determined, tc.passed, result.Summary)
+			}
+			if !strings.Contains(result.Summary+" "+result.Reason, tc.contains) {
+				t.Errorf("result %q / %q does not mention %q", result.Summary, result.Reason, tc.contains)
+			}
+			if result.Determined && len(result.Evidence) == 0 {
+				t.Error("a determined result must carry evidence")
+			}
+		})
+	}
+}
+
+func TestSEP6CheckRunsInDefaultSuite(t *testing.T) {
+	for _, check := range (&Runner{}).Default() {
+		if _, ok := check.(SEP6InfoListsAsset); ok {
+			return
+		}
+	}
+	t.Error("SEP6InfoListsAsset is not in the default check set")
+}
+
+func sep6SnapshotClient(t *testing.T, published bool, infoStatus int, infoBody string) *http.Client {
+	t.Helper()
+
+	const currency = `[[CURRENCIES]]
+code="NGNC"
+issuer="GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+anchor_asset="NGN"
+`
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/stellar.toml":
+			if published {
+				_, _ = fmt.Fprintf(w, "TRANSFER_SERVER = %q\n\n%s", serverURL+"/sep6", currency)
+				return
+			}
+			_, _ = io.WriteString(w, currency)
+		case "/sep6/info":
+			w.WriteHeader(infoStatus)
+			_, _ = io.WriteString(w, infoBody)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	corridor := snapshot.Corridor{
+		Send:          snapshot.AssetRef{Code: "USDC", Issuer: asset.USDCIssuer},
+		Receive:       snapshot.AssetRef{Code: "NGNC", Issuer: asset.NGNCIssuer},
+		ReferencePair: "USD/NGN",
+	}
+	recorder := &snapshot.Recorder{
+		Corridor: corridor,
+		Sizes:    []string{"100"},
+		Notes:    []string{"Responses captured from the local SEP-6 test server."},
+	}
+	capture := &http.Client{Transport: recorder}
+	paths := []string{"/.well-known/stellar.toml"}
+	if published {
+		paths = append(paths, "/sep6/info")
+	}
+	for _, path := range paths {
+		resp, err := capture.Get(server.URL + path)
+		if err != nil {
+			t.Fatalf("capturing %s: %v", path, err)
+		}
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		if err := resp.Body.Close(); err != nil {
+			t.Fatalf("closing %s: %v", path, err)
+		}
+	}
+
+	dir := filepath.Join(t.TempDir(), snapshot.DirName(corridor, recorder.RecordedAt()))
+	if err := recorder.Save(dir); err != nil {
+		t.Fatalf("saving snapshot: %v", err)
+	}
+	manifest, err := snapshot.Load(dir)
+	if err != nil {
+		t.Fatalf("loading snapshot: %v", err)
+	}
+	return manifest.HTTPClient()
+}
+
+func TestSEP12ServerPublished(t *testing.T) {
+	cases := []struct {
+		name       string
+		profile    *anchor.Profile
+		determined bool
+		passed     bool
+	}{
+		{name: "published, without probing", profile: &anchor.Profile{
+			Domain: "example.test", TOML: anchor.TOML{KYCServer: "https://kyc.example.test"},
+		}, determined: true, passed: true},
+		{name: "not published", profile: &anchor.Profile{Domain: "example.test"}, determined: true},
+		{name: "profile missing", determined: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := Run(ctx(), SEP12ServerPublished{}, Subject{Profile: tc.profile})
+			if r.Determined != tc.determined {
+				t.Fatalf("Determined = %v, want %v", r.Determined, tc.determined)
+			}
+			if tc.determined && r.Passed != tc.passed {
+				t.Errorf("Passed = %v, want %v", r.Passed, tc.passed)
+			}
+			if tc.determined && len(r.Evidence) == 0 {
+				t.Error("determined publication result must carry evidence")
+			}
+		})
+	}
+}
+
+func TestSEP31Info(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		body       string
+		determined bool
+		passed     bool
+	}{
+		{name: "enabled asset", status: 200, body: `{"receive":{"NGNC":{"enabled":true}}}`,
+			determined: true, passed: true},
+		{name: "asset not listed", status: 200, body: `{"receive":{"OTHER":{"enabled":true}}}`,
+			determined: true},
+		{name: "asset disabled", status: 200, body: `{"receive":{"NGNC":{"enabled":false}}}`,
+			determined: true},
+		{name: "missing enabled flag", status: 200, body: `{"receive":{"NGNC":{}}}`,
+			determined: true},
+		{name: "server error", status: 503, body: `{}`, determined: true},
+		{name: "malformed info", status: 200, body: `not json`, determined: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := flagServer(t, tc.status, tc.body)
+			profile := &anchor.Profile{Domain: "example.test", TOML: anchor.TOML{
+				DirectPaymentServer: srv.URL + "/sep31/",
+			}}
+			var gotPath string
+			client := srv.Client()
+			originalTransport := client.Transport
+			client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				gotPath = req.URL.Path
+				return originalTransport.RoundTrip(req)
+			})
+			r := Run(ctx(), SEP31Info{HTTPClient: client}, Subject{
+				Profile: profile, Asset: asset.NGNC(),
+			})
+			if gotPath != "/sep31/info" {
+				t.Errorf("request path = %q, want /sep31/info", gotPath)
+			}
+			if r.Determined != tc.determined {
+				t.Fatalf("Determined = %v, want %v (summary %q, reason %q)",
+					r.Determined, tc.determined, r.Summary, r.Reason)
+			}
+			if tc.determined && r.Passed != tc.passed {
+				t.Errorf("Passed = %v, want %v (summary %q)", r.Passed, tc.passed, r.Summary)
+			}
+			if len(r.Evidence) == 0 {
+				t.Error("SEP-31 result must carry evidence")
+			}
+		})
+	}
+}
+
+func TestSEP31InfoUndeterminedInputs(t *testing.T) {
+	t.Run("profile missing", func(t *testing.T) {
+		r := Run(ctx(), SEP31Info{}, Subject{Asset: asset.NGNC()})
+		if r.Determined {
+			t.Error("missing profile must be undetermined")
+		}
+	})
+	t.Run("asset missing", func(t *testing.T) {
+		r := Run(ctx(), SEP31Info{}, Subject{Profile: &anchor.Profile{}})
+		if r.Determined {
+			t.Error("missing asset must be undetermined")
+		}
+	})
+	t.Run("server not published", func(t *testing.T) {
+		r := Run(ctx(), SEP31Info{}, Subject{Profile: &anchor.Profile{Domain: "example.test"}, Asset: asset.NGNC()})
+		if !r.Failed() {
+			t.Errorf("an anchor with no declared SEP-31 server should fail, got determined=%v passed=%v",
+				r.Determined, r.Passed)
+		}
+	})
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 // SSRF guard ------------------------------------------------------------------
 
@@ -894,6 +1208,9 @@ func TestSpreadMetricFromRecordedBook(t *testing.T) {
 	}
 	if !r.Value.IsPositive() {
 		t.Errorf("spread = %s, want positive on a real book", r.Value)
+	}
+	if len(r.Evidence) == 0 || !strings.Contains(r.Evidence[0].Observed, "mid=") {
+		t.Errorf("spread evidence = %+v, want the independently useful book mid", r.Evidence)
 	}
 	if len(r.Evidence) == 0 {
 		t.Error("no evidence recorded")
@@ -1026,7 +1343,11 @@ func TestDepthExecutableMetric(t *testing.T) {
 	}
 }
 
-func TestDepthNoPathsProducesUndetermined(t *testing.T) {
+// TestDepthExhaustedProducesDeterminedZero pins that a book that runs out
+// at every probed size produces a determined result with zero, not an
+// undetermined one. This is the core distinction of issue #158: a measured
+// absence of liquidity is not the same as an unmeasurable one.
+func TestDepthExhaustedProducesDeterminedZero(t *testing.T) {
 	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend-empty")
 	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
 
@@ -1039,19 +1360,21 @@ func TestDepthNoPathsProducesUndetermined(t *testing.T) {
 		Receive: asset.NGNC(),
 	})
 
-	if r.Determined {
-		t.Error("no paths must produce an undetermined result")
+	if !r.Determined {
+		t.Fatalf("depth exhausted must be determined, got undetermined: %s", r.Reason)
 	}
-	want := "no path found at any of the 1 sizes probed"
-	if r.Reason != want {
-		t.Errorf("Reason = %q, want %q", r.Reason, want)
+	if !r.Value.IsZero() {
+		t.Errorf("depth exhausted value = %s, want zero", r.Value)
+	}
+	if r.Unit != UnitAmount {
+		t.Errorf("unit = %s, want amount", r.Unit)
 	}
 	if len(r.Evidence) == 0 {
-		t.Error("expected at least one evidence entry explaining the failure")
+		t.Error("expected at least one evidence entry explaining the exhaustion")
 	} else {
 		e := r.Evidence[0]
-		if !strings.Contains(e.Observed, "probed 1 sizes, no path found") {
-			t.Errorf("Evidence[0].Observed = %q, want it to contain 'probed 1 sizes, no path found'", e.Observed)
+		if !strings.Contains(e.Observed, "no path found at any size") {
+			t.Errorf("Evidence[0].Observed = %q, want it to note exhaustion", e.Observed)
 		}
 		if e.Source == "" {
 			t.Error("Evidence[0].Source is blank — a metric must name its data source")
@@ -1062,10 +1385,127 @@ func TestDepthNoPathsProducesUndetermined(t *testing.T) {
 	}
 }
 
+// TestDepthExhaustedMultipleSizes pins that exhaustion across multiple sizes
+// is still a determined result — each size was successfully queried, and the
+// answer was consistently "no path".
+func TestDepthExhaustedMultipleSizes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Every size returns an empty path list — the book is exhausted.
+		_, _ = w.Write([]byte(`{"_embedded":{"records":[]}}`))
+	}))
+	defer srv.Close()
+
+	c := &dex.Client{HorizonURL: srv.URL}
+	depth := DepthMetric{
+		DEX:   c,
+		Sizes: []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(100)},
+	}
+	r := depth.RunExecutable(ctx(), Subject{
+		Send:    asset.USDC(),
+		Receive: asset.NGNC(),
+	})
+
+	if !r.Determined {
+		t.Fatalf("depth exhausted across sizes must be determined, got undetermined: %s", r.Reason)
+	}
+	if !r.Value.IsZero() {
+		t.Errorf("depth exhausted value = %s, want zero", r.Value)
+	}
+}
+
+// TestDepthProbeErrorsRemainUndetermined pins that probe failures — the
+// request never reached an upstream — produce undetermined, not exhausted.
+func TestDepthProbeErrorsRemainUndetermined(t *testing.T) {
+	// A client pointed at nothing: every probe will fail before reaching
+	// an upstream. The result must be undetermined, not determined-zero
+	// (which would read as "measured no liquidity" rather than "could not
+	// measure at all").
+	c := &dex.Client{HorizonURL: "http://127.0.0.1:1"}
+
+	depth := DepthMetric{
+		DEX:   c,
+		Sizes: []decimal.Decimal{decimal.NewFromInt(1)},
+	}
+	r := depth.RunExecutable(ctx(), Subject{
+		Send:    asset.USDC(),
+		Receive: asset.NGNC(),
+	})
+
+	if r.Determined {
+		t.Error("probe errors must produce an undetermined result, not a determined one")
+	}
+	if r.Reason == "" {
+		t.Error("undetermined result must carry a reason")
+	}
+}
+
+// TestDepthMixedExhaustedAndErrored covers the case where some sizes priced
+// and others hit probe errors. The measured sizes give real data; the failed
+// sizes are unknown, never zero.
+func TestDepthMixedExhaustedAndErrored(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		amount := r.URL.Query().Get("source_amount")
+		d, err := decimal.NewFromString(amount)
+		if err != nil {
+			http.Error(w, "bad amount", http.StatusBadRequest)
+			return
+		}
+		// Small sizes succeed, large sizes fail
+		if d.GreaterThanOrEqual(decimal.NewFromInt(100)) {
+			http.Error(w, "internal", http.StatusInternalServerError)
+			return
+		}
+		dest := d.Mul(decimal.RequireFromString("1300"))
+		_, _ = w.Write([]byte(`{"_embedded":{"records":[{
+			"source_asset_type":"credit_alphanum4","source_asset_code":"USDC",
+			"source_amount":"` + amount + `",
+			"destination_asset_type":"credit_alphanum4","destination_asset_code":"NGNC",
+			"destination_amount":"` + dest.String() + `","path":[]}]}}`))
+	}))
+	defer srv.Close()
+
+	c := &dex.Client{HorizonURL: srv.URL}
+	depth := DepthMetric{
+		DEX:   c,
+		Sizes: []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(100)},
+	}
+	r := depth.RunExecutable(ctx(), Subject{
+		Send:    asset.USDC(),
+		Receive: asset.NGNC(),
+	})
+
+	if !r.Determined {
+		t.Fatalf("mixed exhausted+errored must be determined with measured sizes, got undetermined: %s", r.Reason)
+	}
+	if !r.Value.IsPositive() {
+		t.Errorf("executable amount = %s, want positive from the measured size", r.Value)
+	}
+	if !strings.Contains(r.Summary, "1 of 2 sizes measured") {
+		t.Errorf("Summary = %q, want it to note partial measurement", r.Summary)
+	}
+}
+
 func TestDepthMetricDescriptorIsValid(t *testing.T) {
 	d := DepthMetric{}.Describe()
 	if err := d.Validate(); err != nil {
 		t.Errorf("depth metric descriptor: %v", err)
+	}
+}
+
+// TestDepthDefaultSizesMatchLadder verifies that the depth metric's default
+// sizes are the same as dex.DefaultSizes (the shared ladder), so both the
+// route ladder and the depth metric measure the same corridor at the same
+// sizes.
+func TestDepthDefaultSizesMatchLadder(t *testing.T) {
+	if len(defaultDepthSizes) != len(dex.DefaultSizes) {
+		t.Fatalf("defaultDepthSizes has %d sizes, dex.DefaultSizes has %d",
+			len(defaultDepthSizes), len(dex.DefaultSizes))
+	}
+	for i := range defaultDepthSizes {
+		if !defaultDepthSizes[i].Equal(dex.DefaultSizes[i]) {
+			t.Errorf("defaultDepthSizes[%d] = %s, dex.DefaultSizes[%d] = %s",
+				i, defaultDepthSizes[i], i, dex.DefaultSizes[i])
+		}
 	}
 }
 
@@ -1125,7 +1565,8 @@ type depthExecutable struct{ DepthMetric }
 
 func (m depthExecutable) Describe() Descriptor {
 	return Descriptor{
-		ID: "depth.executable", Title: "executable depth",
+		ID: "depth.executable", Scope: ScopeCorridor, Venue: VenuePathfinding,
+		Title:        "executable depth",
 		CanDetermine: "see DepthMetric", CannotDetermine: "see DepthMetric",
 	}
 }
@@ -1360,6 +1801,386 @@ func TestPriceImpactMetricDescriptorIsValid(t *testing.T) {
 	d := PriceImpactMetric{}.Describe()
 	if err := d.Validate(); err != nil {
 		t.Errorf("price impact metric descriptor: %v", err)
+	}
+}
+
+// TestPriceImpactMetricMalfunctionReferenceIsUndetermined guards issue #161:
+// when the reference cross-check is MALFUNCTION, no derived quantity may be
+// computed because the benchmark itself is suspect. Price impact is one such
+// derived quantity — a precise-looking percentage would misrepresent a
+// measurement that cannot be validated.
+func TestPriceImpactMetricMalfunctionReferenceIsUndetermined(t *testing.T) {
+	poisoned := &dex.Client{HorizonURL: "http://127.0.0.1:1"} // must never be dialed
+
+	subject := Subject{
+		Send:               asset.USDC(),
+		Receive:            asset.NGNC(),
+		ReferenceAgreement: "MALFUNCTION",
+	}
+
+	impact := PriceImpactMetric{
+		DEX:       poisoned,
+		ProbeSize: decimal.NewFromInt(1),
+		FullSize:  decimal.NewFromInt(100),
+	}
+	r := RunMetric(ctx(), impact, subject)
+
+	if r.Determined {
+		t.Error("a MALFUNCTION reference must not produce a determined price impact")
+	}
+	if !strings.Contains(r.Reason, "MALFUNCTION") {
+		t.Errorf("reason = %q, want it to name MALFUNCTION as the cause", r.Reason)
+	}
+	if !strings.Contains(r.Reason, "unscorable") {
+		t.Errorf("reason = %q, want it to name the unscorable reference", r.Reason)
+	}
+}
+
+// TestPriceImpactMetricMalfunctionShortCircuitsBeforeNetwork guards that the
+// MALFUNCTION check runs before any network call. The poisoned client above
+// must never be dialed — this test would hang or fail if the guard were
+// placed after the pathfinding calls.
+func TestPriceImpactMetricMalfunctionShortCircuitsBeforeNetwork(t *testing.T) {
+	poisoned := &dex.Client{HorizonURL: "http://127.0.0.1:1"}
+
+	subject := Subject{
+		Send:               asset.USDC(),
+		Receive:            asset.NGNC(),
+		ReferenceAgreement: "MALFUNCTION",
+	}
+
+	start := time.Now()
+	r := RunMetric(ctx(), PriceImpactMetric{DEX: poisoned}, subject)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("took %s; a MALFUNCTION short-circuit should return immediately, "+
+			"without attempting to dial %s", elapsed, poisoned.HorizonURL)
+	}
+	if r.Determined {
+		t.Fatal("expected an undetermined result")
+	}
+}
+
+// TestPriceImpactMetricEmptyReferenceAgreementProceeds pins that an empty
+// (unknown) ReferenceAgreement does not suppress the metric. Absent
+// information is not evidence of malfunction — the metric proceeds when the
+// caller has not supplied a reference agreement state.
+func TestPriceImpactMetricEmptyReferenceAgreementProceeds(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	impact := PriceImpactMetric{
+		DEX: c,
+		Sizes: []decimal.Decimal{
+			decimal.NewFromInt(1),
+			decimal.NewFromInt(100),
+		},
+	}
+
+	// Empty ReferenceAgreement — the caller did not supply one.
+	r := RunMetric(ctx(), impact, Subject{
+		Send:    asset.USDC(),
+		Receive: asset.NGNC(),
+	})
+
+	if !r.Determined {
+		t.Fatalf("price impact with empty ReferenceAgreement should still determine, got: %s", r.Reason)
+	}
+}
+
+// price impact curve -----------------------------------------------------------
+//
+// GitHub issue #159: PriceImpactMetric should report the full curve shape
+// across multiple sizes, not just a single degradation figure.
+
+func TestPriceImpactCurveFromRecordedPaths(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend-curve")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	impact := PriceImpactMetric{
+		DEX: c,
+		Sizes: []decimal.Decimal{
+			decimal.NewFromInt(1),
+			decimal.NewFromInt(10),
+			decimal.NewFromInt(100),
+			decimal.NewFromInt(1000),
+			decimal.NewFromInt(5000),
+		},
+	}
+	curve, r := impact.RunCurve(ctx(), Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+
+	if !r.Determined {
+		t.Fatalf("price impact curve undetermined: %s", r.Reason)
+	}
+	if curve == nil {
+		t.Fatal("RunCurve returned nil curve for a determined result")
+	}
+	if r.Unit != UnitPercent {
+		t.Errorf("unit = %s, want percent", r.Unit)
+	}
+	if r.Value.IsNegative() {
+		t.Errorf("max impact = %s, must never be negative", r.Value)
+	}
+
+	// The curve should have 5 points (all 5 sizes found paths).
+	if got := len(curve.Points); got != 5 {
+		t.Fatalf("curve points = %d, want 5", got)
+	}
+
+	// The reference rate should be the rate at the smallest size.
+	if curve.ReferenceRate.IsZero() {
+		t.Error("reference rate must not be zero")
+	}
+
+	// The first point (smallest size) should have zero impact.
+	if !curve.Points[0].ImpactPct.IsZero() {
+		t.Errorf("first point impact = %s, want 0 (reference point)", curve.Points[0].ImpactPct)
+	}
+
+	// Impact should be non-decreasing (later sizes degrade at least as
+	// much as earlier ones — the fixture is monotonic).
+	var prevImpact decimal.Decimal
+	for i, p := range curve.Points {
+		if p.ImpactPct.LessThan(prevImpact) {
+			t.Errorf("point %d impact %s < previous %s, curve is not monotonic",
+				i, p.ImpactPct, prevImpact)
+		}
+		prevImpact = p.ImpactPct
+	}
+
+	// The last point should have positive impact (the fixture degrades).
+	if curve.Points[len(curve.Points)-1].ImpactPct.IsZero() {
+		t.Error("last point has zero impact; the fixture should show degradation")
+	}
+
+	// Evidence should contain each point.
+	if len(r.Evidence) == 0 {
+		t.Error("no evidence recorded")
+	}
+	for _, p := range curve.Points {
+		if !strings.Contains(r.Evidence[0].Observed, "size="+p.Size.StringFixed(1)) {
+			t.Errorf("evidence does not mention size %s", p.Size)
+		}
+	}
+
+	if r.Summary == "" {
+		t.Error("summary is empty")
+	}
+}
+
+func TestPriceImpactCurveBackwardCompatibleProbeFull(t *testing.T) {
+	// When only ProbeSize and FullSize are set (no Sizes), the metric
+	// should behave exactly as before — a two-point comparison.
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	impact := PriceImpactMetric{
+		DEX:       c,
+		ProbeSize: decimal.NewFromInt(1),
+		FullSize:  decimal.NewFromInt(100),
+	}
+
+	// Empty ReferenceAgreement — the caller did not supply one.
+	r := RunMetric(ctx(), impact, Subject{
+		Send:    asset.USDC(),
+		Receive: asset.NGNC(),
+	})
+
+	if !r.Determined {
+		t.Fatalf("price impact with empty ReferenceAgreement should still determine, got: %s", r.Reason)
+	}
+}
+
+// TestPriceImpactMetricScorableReferenceAgreementsProceeds pins that
+// non-MALFUNCTION agreement states (AGREE, DISAGREE, SINGLE, STALE) do not
+// suppress the metric. Only MALFUNCTION does.
+func TestPriceImpactMetricScorableReferenceAgreementsProceeds(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	impact := PriceImpactMetric{
+		DEX: c,
+		Sizes: []decimal.Decimal{
+			decimal.NewFromInt(1),
+			decimal.NewFromInt(100),
+		},
+	}
+
+	for _, agree := range []string{"AGREE", "DISAGREE", "SINGLE", "STALE"} {
+		r := RunMetric(ctx(), impact, Subject{
+			Send:               asset.USDC(),
+			Receive:            asset.NGNC(),
+			ReferenceAgreement: agree,
+		})
+		if !r.Determined {
+			t.Errorf("ReferenceAgreement=%s should not suppress price impact, got undetermined: %s",
+				agree, r.Reason)
+		}
+	}
+}
+
+func TestPriceImpactCurveFlatWhenRatesIdentical(t *testing.T) {
+	// The usdc-ngnc-strictsend snapshot returns the same body for both
+	// sizes → the curve should be flat (zero impact at every point).
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	impact := PriceImpactMetric{
+		DEX: c,
+		Sizes: []decimal.Decimal{
+			decimal.NewFromInt(1),
+			decimal.NewFromInt(100),
+		},
+	}
+
+	curve, r := impact.RunCurve(ctx(), Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+
+	if !r.Determined {
+		t.Fatalf("price impact undetermined: %s", r.Reason)
+	}
+	if curve == nil {
+		t.Fatal("RunCurve returned nil curve for a determined result")
+	}
+	if got := len(curve.Points); got != 2 {
+		t.Fatalf("curve points = %d, want 2 (probe + full)", got)
+	}
+	// Both points use the same fixture → same rate → zero impact.
+	if !curve.Points[1].ImpactPct.IsZero() {
+		t.Errorf("impact = %s, want 0 when both sizes return the same rate",
+			curve.Points[1].ImpactPct)
+	}
+}
+
+func TestPriceImpactCurveReportsImprovingRates(t *testing.T) {
+	// The second size deliberately has a better rate than the reference. The
+	// metric must preserve that observation as a negative impact rather than
+	// flattening it to zero and making the curve appear monotonic.
+	bodies := map[string]string{
+		"1":   "100",
+		"10":  "1100",
+		"100": "9000",
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		destination, ok := bodies[r.URL.Query().Get("source_amount")]
+		if !ok {
+			http.Error(w, "unrecorded size", http.StatusNotFound)
+			return
+		}
+		fmt.Fprintf(w, `{"_embedded":{"records":[{
+      "source_asset_type":"credit_alphanum4","source_asset_code":"USDC",
+      "source_amount":%q,
+      "destination_asset_type":"credit_alphanum4","destination_asset_code":"NGNC",
+      "destination_amount":%q,"path":[]}]}}`, r.URL.Query().Get("source_amount"), destination)
+	}))
+	defer srv.Close()
+
+	impact := PriceImpactMetric{
+		DEX:   &dex.Client{HorizonURL: srv.URL},
+		Sizes: []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(10), decimal.NewFromInt(100)},
+	}
+	curve, result := impact.RunCurve(ctx(), Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+	if !result.Determined {
+		t.Fatalf("improving curve was undetermined: %s", result.Reason)
+	}
+	if curve == nil {
+		t.Fatal("RunCurve returned no curve for a determined result")
+	}
+	if got, want := curve.Points[1].ImpactPct.StringFixed(2), "-10.00"; got != want {
+		t.Errorf("improving point impact = %s, want %s", got, want)
+	}
+	if !strings.Contains(result.Evidence[0].Observed, "impact=-10.0000%") {
+		t.Errorf("evidence = %q, want the improving point to remain reportable", result.Evidence[0].Observed)
+	}
+}
+
+func TestPriceImpactCurveAllSizesFail(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend-empty")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	impact := PriceImpactMetric{
+		DEX:   c,
+		Sizes: []decimal.Decimal{decimal.NewFromInt(1), decimal.NewFromInt(100)},
+	}
+	curve, r := impact.RunCurve(ctx(), Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+
+	if r.Determined {
+		t.Error("all sizes failing must produce an undetermined result")
+	}
+	if curve != nil {
+		t.Error("all sizes failing must return a nil curve")
+	}
+}
+
+func TestPriceImpactCurveNilDEX(t *testing.T) {
+	impact := PriceImpactMetric{}
+	curve, r := impact.RunCurve(ctx(), Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+	if r.Determined {
+		t.Error("nil DEX client must produce an undetermined result")
+	}
+	if curve != nil {
+		t.Error("nil DEX must return a nil curve")
+	}
+}
+
+func TestPriceImpactCurveEmptySubject(t *testing.T) {
+	impact := PriceImpactMetric{DEX: &dex.Client{HorizonURL: "http://example.invalid"}}
+	curve, r := impact.RunCurve(ctx(), Subject{})
+	if r.Determined {
+		t.Error("empty subject must produce an undetermined result")
+	}
+	if curve != nil {
+		t.Error("empty subject must return a nil curve")
+	}
+}
+
+func TestPriceImpactCurveNoMarket(t *testing.T) {
+	poisoned := &dex.Client{HorizonURL: "http://127.0.0.1:1"}
+	impact := PriceImpactMetric{DEX: poisoned}
+	curve, r := impact.RunCurve(ctx(), Subject{
+		Send: asset.USDC(), Receive: asset.KESC(), Integrity: "NO-MARKET",
+	})
+	if r.Determined {
+		t.Error("NO-MARKET corridor must not produce a determined result")
+	}
+	if curve != nil {
+		t.Error("NO-MARKET must return a nil curve")
+	}
+	if !strings.Contains(r.Reason, "NO-MARKET") {
+		t.Errorf("reason = %q, want it to name NO-MARKET", r.Reason)
+	}
+}
+
+func TestPriceImpactCurveRunMatchesRunCurve(t *testing.T) {
+	m := loadOrderBookSnapshot(t, "usdc-ngnc-strictsend-curve")
+	c := &dex.Client{HorizonURL: "https://horizon.stellar.org", HTTPClient: m.HTTPClient()}
+
+	impact := PriceImpactMetric{
+		DEX: c,
+		Sizes: []decimal.Decimal{
+			decimal.NewFromInt(1),
+			decimal.NewFromInt(100),
+		},
+	}
+
+	runResult := RunMetric(ctx(), impact, Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+	curve, curveResult := impact.RunCurve(ctx(), Subject{Send: asset.USDC(), Receive: asset.NGNC()})
+
+	if runResult.Determined != curveResult.Determined {
+		t.Errorf("Run determined=%v, RunCurve determined=%v", runResult.Determined, curveResult.Determined)
+	}
+	if runResult.Value.Equal(curveResult.Value) {
+		// Values should match.
+	} else {
+		t.Errorf("Run value=%s, RunCurve value=%s", runResult.Value, curveResult.Value)
+	}
+	if curve == nil && runResult.Determined {
+		t.Error("RunCurve returned nil curve but Run was determined")
+	}
+}
+
+func TestPriceImpactCurveDescriptorIsValid(t *testing.T) {
+	d := PriceImpactMetric{}.Describe()
+	if err := d.Validate(); err != nil {
+		t.Errorf("price impact curve descriptor: %v", err)
 	}
 }
 

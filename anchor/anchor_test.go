@@ -1,8 +1,16 @@
 package anchor
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -112,8 +120,9 @@ func TestReferenceAnchorIsPriceable(t *testing.T) {
 	if !p.Priceable {
 		t.Fatal("expected testanchor to be priceable")
 	}
-	if !p.SEP31 || !p.SEP6 || !p.SEP24 {
-		t.Errorf("expected all transfer flows: sep24=%v sep31=%v sep6=%v", p.SEP24, p.SEP31, p.SEP6)
+	if !p.SEP12 || !p.SEP31 || !p.SEP6 || !p.SEP24 {
+		t.Errorf("expected SEP-12 and all transfer flows: sep12=%v sep24=%v sep31=%v sep6=%v",
+			p.SEP12, p.SEP24, p.SEP31, p.SEP6)
 	}
 	if p.Mainnet {
 		t.Error("testanchor declares the test network, must not be reported as mainnet")
@@ -140,6 +149,124 @@ func TestExplainStatesTheGap(t *testing.T) {
 	if !strings.Contains(out, "ANCHOR_QUOTE_SERVER") {
 		t.Errorf("Explain() should name the missing field so the claim is checkable:\n%s", out)
 	}
+}
+
+// TestNairaAnchorSEPInventory pins the capability inventory issue #184
+// introduces against the same real fixture TestNairaAnchorIsNotPriceable
+// uses: ngnc.online publishes only WEB_AUTH_ENDPOINT and
+// TRANSFER_SERVER_SEP0024, so it must advertise exactly SEP-1, SEP-10 and
+// SEP-24 — no more (no KYC_SERVER, TRANSFER_SERVER, DIRECT_PAYMENT_SERVER or
+// ANCHOR_QUOTE_SERVER in the fixture) and no less.
+func TestNairaAnchorSEPInventory(t *testing.T) {
+	p := parseProfile(t, "ngnc.online", ngncTOML)
+
+	if !p.SEP10 {
+		t.Error("expected SEP-10 support: the fixture declares WEB_AUTH_ENDPOINT")
+	}
+	if p.SEP12 {
+		t.Error("SEP-12 reported, but the fixture declares no KYC_SERVER")
+	}
+
+	got := p.SEPs()
+	want := []int{1, 10, 24}
+	if !slicesEqual(got, want) {
+		t.Errorf("SEPs() = %v, want %v", got, want)
+	}
+}
+
+// TestReferenceAnchorSEPInventory covers the positive control: SDF's test
+// anchor declares every field this package reads, so it must advertise every
+// SEP number this package knows about.
+func TestReferenceAnchorSEPInventory(t *testing.T) {
+	p := parseProfile(t, "testanchor.stellar.org", testanchorTOML)
+
+	if !p.SEP10 || !p.SEP12 {
+		t.Errorf("expected SEP-10 and SEP-12: sep10=%v sep12=%v", p.SEP10, p.SEP12)
+	}
+
+	got := p.SEPs()
+	want := []int{1, 6, 10, 12, 24, 31, 38}
+	if !slicesEqual(got, want) {
+		t.Errorf("SEPs() = %v, want %v", got, want)
+	}
+
+	caps := p.SEPCapabilities()
+	if len(caps) != len(want) {
+		t.Fatalf("SEPCapabilities() has %d entries, want %d: %v", len(caps), len(want), caps)
+	}
+	for _, want := range []string{"SEP-1 ", "SEP-10 ", "SEP-38 "} {
+		found := false
+		for _, c := range caps {
+			if strings.HasPrefix(c, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("SEPCapabilities() = %v, want an entry starting with %q", caps, want)
+		}
+	}
+}
+
+// TestSEPsIsAscendingAndDeterministic guards the ordering claim: two calls
+// against the same profile must agree, and the result must already be
+// sorted, so a caller never needs to sort it again or worry a rebuild
+// reordered the map this is derived from.
+func TestSEPsIsAscendingAndDeterministic(t *testing.T) {
+	p := parseProfile(t, "testanchor.stellar.org", testanchorTOML)
+
+	first := p.SEPs()
+	for i := 0; i < 5; i++ {
+		again := p.SEPs()
+		if !slicesEqual(first, again) {
+			t.Fatalf("SEPs() is not deterministic: %v then %v", first, again)
+		}
+	}
+	for i := 1; i < len(first); i++ {
+		if first[i-1] >= first[i] {
+			t.Errorf("SEPs() = %v is not strictly ascending at index %d", first, i)
+		}
+	}
+}
+
+// TestSEPsOnEmptyProfileIsJustSEP1 covers the floor: an anchor that declares
+// nothing this package reads beyond the document itself still gets credit
+// for SEP-1, because a Profile only exists when a stellar.toml was fetched.
+func TestSEPsOnEmptyProfileIsJustSEP1(t *testing.T) {
+	p := parseProfile(t, "bare.example", `ORG_NAME="Bare"`)
+
+	got := p.SEPs()
+	want := []int{1}
+	if !slicesEqual(got, want) {
+		t.Errorf("SEPs() = %v, want %v", got, want)
+	}
+}
+
+// TestExplainListsSEPCapabilities pins that the human-readable summary and
+// the machine-readable inventory cannot drift apart: Explain must mention
+// every SEP SEPs() reports, by number.
+func TestExplainListsSEPCapabilities(t *testing.T) {
+	p := parseProfile(t, "ngnc.online", ngncTOML)
+	out := p.Explain()
+
+	for _, n := range p.SEPs() {
+		tag := fmt.Sprintf("SEP-%d", n)
+		if !strings.Contains(out, tag) {
+			t.Errorf("Explain() does not mention %s, which SEPs() reports advertised:\n%s", tag, out)
+		}
+	}
+}
+
+func slicesEqual(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // TestDeadCurrenciesAreExcluded ensures a retired asset is not routed to.
@@ -241,10 +368,158 @@ func TestSalvageHandlesTrailingJunkValues(t *testing.T) {
 	}
 }
 
+func TestSalvageIgnoresUnknownSectionsAndKeepsCurrencyBoundaries(t *testing.T) {
+	raw := `
+NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015" trailing
+
+[DOCUMENTATION]
+ORG_NAME="not a currency"
+
+[[CURRENCIES]]
+code="AAA" junk
+issuer="GAAA"
+status="live"
+
+[[CURRENCIES]]
+code="BBB"
+status="pending"
+`
+	got := salvageTOML(raw)
+	if got.NetworkPassphrase == "" {
+		t.Fatal("salvage lost top-level fields after an unknown section")
+	}
+	if len(got.Currencies) != 2 {
+		t.Fatalf("salvaged %d currencies, want 2", len(got.Currencies))
+	}
+	if got.Currencies[0].Code != "AAA" || got.Currencies[1].Code != "BBB" {
+		t.Fatalf("currency boundaries were not preserved: %+v", got.Currencies)
+	}
+}
+
 func TestTOMLURL(t *testing.T) {
 	for _, in := range []string{"ngnc.online", "https://ngnc.online", "ngnc.online/"} {
 		if got, want := TOMLURL(in), "https://ngnc.online/.well-known/stellar.toml"; got != want {
 			t.Errorf("TOMLURL(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+func TestResolverFingerprintsRawTOML(t *testing.T) {
+	raw := "ORG_NAME = \"Anchor\"\n"
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, raw)
+	}))
+	defer server.Close()
+
+	profile, err := (&Resolver{HTTPClient: server.Client()}).Resolve(context.Background(), strings.TrimPrefix(server.URL, "https://"))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := sha256.Sum256([]byte(raw))
+	if profile.TOMLHash != hex.EncodeToString(want[:]) {
+		t.Errorf("TOMLHash = %q, want SHA-256 %q", profile.TOMLHash, hex.EncodeToString(want[:]))
+	}
+}
+
+func TestResolverRejectsOversizedTOML(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, strings.Repeat("x", maxTOMLBytes+1024))
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	body := &countedBody{}
+	client.Transport = countingTransport{base: client.Transport, body: body}
+	domain := strings.TrimPrefix(server.URL, "https://")
+
+	profile, err := (&Resolver{HTTPClient: client}).Resolve(context.Background(), domain)
+	if err == nil {
+		t.Fatalf("Resolve returned profile %+v for an oversized stellar.toml", profile)
+	}
+	if profile != nil {
+		t.Errorf("Resolve returned a partial profile after rejecting the response: %+v", profile)
+	}
+	if body.read != maxTOMLBytes+1 {
+		t.Errorf("Resolve read %d bytes, want exactly the %d-byte limit plus one", body.read, maxTOMLBytes+1)
+	}
+}
+
+func TestResolverBoundsStreamingTOML(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher := w.(http.Flusher)
+		chunk := strings.Repeat("x", 4096)
+		for r.Context().Err() == nil {
+			if _, err := io.WriteString(w, chunk); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	body := &countedBody{}
+	client.Transport = countingTransport{base: client.Transport, body: body}
+	domain := strings.TrimPrefix(server.URL, "https://")
+
+	profile, err := (&Resolver{HTTPClient: client}).Resolve(context.Background(), domain)
+	if err == nil {
+		t.Fatalf("Resolve returned profile %+v for an unbounded stellar.toml stream", profile)
+	}
+	if body.read != maxTOMLBytes+1 {
+		t.Errorf("Resolve read %d streaming bytes, want exactly the %d-byte limit plus one", body.read, maxTOMLBytes+1)
+	}
+}
+
+func TestResolverTimesOutSlowTOML(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher := w.(http.Flusher)
+		for r.Context().Err() == nil {
+			if _, err := io.WriteString(w, "x"); err != nil {
+				return
+			}
+			flusher.Flush()
+			time.Sleep(20 * time.Millisecond)
+		}
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	client.Timeout = 100 * time.Millisecond
+	domain := strings.TrimPrefix(server.URL, "https://")
+	started := time.Now()
+
+	profile, err := (&Resolver{HTTPClient: client}).Resolve(context.Background(), domain)
+	if err == nil {
+		t.Fatalf("Resolve returned profile %+v for a slow stellar.toml response", profile)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Errorf("Resolve took %s to time out, want less than one second", elapsed)
+	}
+}
+
+type countedBody struct {
+	io.ReadCloser
+	read int
+}
+
+func (b *countedBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	b.read += n
+	return n, err
+}
+
+type countingTransport struct {
+	base http.RoundTripper
+	body *countedBody
+}
+
+func (t countingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	t.body.ReadCloser = resp.Body
+	resp.Body = t.body
+	return resp, nil
 }

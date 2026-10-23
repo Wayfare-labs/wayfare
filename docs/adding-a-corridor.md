@@ -118,9 +118,94 @@ referenced directly across packages and tests:
 func GHSC() Asset { return Stellar("GHSC", LinkIOIssuer) }
 ```
 
+### The fiat-peg registry and bridge assets
+
+The `Peg` field of a registry entry is what makes a token count as a fiat
+*dependency* in `route.classify` (via `asset.ClassifyHop`, which splits hops
+into fiat / bridge / unknown). A corridor whose every path traverses a
+registered fiat token is classified `DERIVATIVE`; a token that is not in the
+registry is not a dependency, whatever its code looks like. That makes the
+registry the boundary between `DIRECT` and `DERIVATIVE`, so its rules matter:
+
+- **A peg is added only after it is read from the issuer's own published
+  stellar.toml** — same bar as the issuer account, per SEP-1. Never from a
+  block explorer, an aggregator, or a blog post. Record `SourceURL` and
+  `VerificationDate` exactly as the existing entries do.
+- **`status` that is not `live` is a finding, not an invitation to skip the
+  entry.** GHSC and KESC are `pending` and are registered; the status is
+  carried on the entry and reported. A token whose issuer declares it wound
+  down or dead is *not* registered as tradeable.
+- **The identity key is `CODE:ISSUER`.** Asset code alone identifies
+  nothing; anyone can issue a token called `USDC`. The registry lookups that
+  decide classification (`entries`, and therefore `fiatPegs`) are keyed by
+  `Code` + `Issuer`. Two convenience maps are derived differently and must
+  not be mistaken for identity: `known` is keyed by `Code` alone (a
+  pre-verification lookup that is only safe because the registry has one
+  entry per code), and `homeDomains` is keyed by `Issuer`.
+
+**Bridge assets** are tokens a path routes through that are deliberately
+*not* fiat dependencies: native XLM by construction, and any issued token
+registered without a peg. The category is a stated decision — see the
+"Bridge assets" section of `asset/known.go` — not an absence from a map.
+
+**Unknown hops** are the known, bounded false-negative this registry exists to
+shrink: a hop that is neither native nor registered is treated as evidence of
+an independent market, because an unrecognised fiat stablecoin is
+indistinguishable from XLM. The gap is never silent — `route.classify`
+surfaces every unregistered hop it sees as an `Unregistered hop asset(s) …`
+note on the result and the wire. When you record a corridor, check those
+notes: each name is a candidate for the registry, verified by the same bar as
+anything else.
+
 ---
 
-## Step 3 — Measure it
+## Step 3 — Confirm both providers serve the fiat
+
+A corridor's verdict is scored against an independent reference mid, and that
+mid comes from cross-checking **two** reference providers — `exchangerate-api`
+(primary) and `currency-api` (secondary), reconciled by
+`refrate.Cross` (`refrate/cross.go`). The cross-check is what makes an `AGREE`
+verdict mean anything: one feed alone cannot corroborate itself.
+
+So a fiat that only one provider publishes is a corridor that can *never*
+reach `AGREE`. `refrate.Cross` degrades it to `SINGLE` on every measurement —
+the mid still gets scored, but uncorroborated, silently, and permanently. That
+is not a transient failure anyone gets paged for; it is a structural property
+of the corridor, so it should surface when the corridor is **registered**, not
+in production.
+
+Ask both providers directly:
+
+```bash
+./scripts/check-provider-coverage.sh
+```
+
+It reads the corridor list from `asset/known.go` (the same registry the
+monitor classifies paths with), asks both providers for `USD/<peg>` for every
+registered corridor's fiat, and prints one row per fiat with each provider's
+answer. It reports three outcomes, and keeps them apart on purpose:
+
+| Cell | Meaning |
+|:---|:---|
+| `ok <mid>` | The provider publishes the fiat. |
+| `GAP` | The provider answered and has **no rate** for the fiat. A structural fact about the corridor. |
+| `ERROR` / `RATE-LIMITED` | The provider did not answer. Coverage is **unknown**, not absent — re-run. |
+
+Absence and failure are different findings, so the exit codes separate them:
+`0` all covered, `1` at least one gap, `2` inconclusive (a provider did not
+answer). A gap means the corridor can never reach `AGREE`; it is worth
+recording in the PR the same way any other finding is — but a gap on its own
+is not a reason to drop the corridor, and the guide does not treat it as one.
+
+This script is deliberately **not** part of the offline suite. It queries the
+live providers, which is exactly the egress `make offline-test` and the CI
+blackout exist to forbid — see [`docs/offline-testing.md`](offline-testing.md).
+Run it yourself when you add or change a corridor; nothing in CI will run it
+for you.
+
+---
+
+## Step 4 — Measure it
 
 ```bash
 go run ./cmd/ladder -to GHSC
@@ -158,7 +243,7 @@ go run ./cmd/ladder -to GHSC -sizes 0.1,1,10,100,1000
 
 ---
 
-## Step 4 — Record what you measured
+## Step 5 — Record what you measured
 
 If you are adding a corridor to the repository, add its figures to
 [`docs/corridor-measurements.md`](corridor-measurements.md) in the same form as
@@ -176,7 +261,7 @@ from what you inferred.
 
 ---
 
-## Step 5 — Test and open the PR
+## Step 6 — Test and open the PR
 
 ```bash
 make fmt vet test race
@@ -199,6 +284,7 @@ issuer's `stellar.toml` status for the asset.
 - [ ] Issuer account read live from the issuer's own `stellar.toml`, not copied
 - [ ] `NETWORK_PASSPHRASE` confirmed as public mainnet
 - [ ] Registered in `asset/known.go` `registry` with `Code`, `Issuer`, `Peg`, `Status`, `VerificationDate`, `SourceURL`, and `HomeDomain`
+- [ ] `./scripts/check-provider-coverage.sh` exits `0` — both providers serve the corridor's fiat (a `GAP` is recorded, not hidden)
 - [ ] `go run ./cmd/ladder -to CODE` produces a sane curve
 - [ ] Integrity state is what you expect, and you can say why
 - [ ] Figures recorded in `docs/corridor-measurements.md` with a timestamp

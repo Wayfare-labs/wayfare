@@ -77,7 +77,7 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.baseURL()+base, nil)
 	if err != nil {
-		return Rate{}, fmt.Errorf("refrate: building request: %w", err)
+		return Rate{}, &ErrUnavailable{Source: e.Name(), Err: fmt.Errorf("building request: %w", err)}
 	}
 	req.Header.Set("Accept", "application/json")
 
@@ -88,7 +88,7 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
 			"error", transport.SanitizeTransportError(err))
-		return Rate{}, fmt.Errorf("refrate: fetching %s rates: %w", base, err)
+		return Rate{}, &ErrUnavailable{Source: e.Name(), Err: err}
 	}
 	defer resp.Body.Close()
 
@@ -105,7 +105,7 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 			"pair", base+"/"+quote,
 			"status", resp.StatusCode,
 			"duration", time.Since(started).Round(time.Millisecond).String())
-		return Rate{}, fmt.Errorf("refrate: %s returned HTTP %d", e.Name(), resp.StatusCode)
+		return Rate{}, &ErrUnavailable{Source: e.Name(), Err: fmt.Errorf("HTTP %d", resp.StatusCode)}
 	}
 
 	var body erAPIResponse
@@ -115,7 +115,7 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
 			"error", err)
-		return Rate{}, fmt.Errorf("refrate: decoding response: %w", err)
+		return Rate{}, &ErrUnparseable{Source: e.Name(), Err: fmt.Errorf("decoding response: %w", err)}
 	}
 	if body.Result != "" && body.Result != "success" {
 		log().Error("exchangerate-api error result",
@@ -123,7 +123,7 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
 			"error_type", body.ErrorType)
-		return Rate{}, fmt.Errorf("refrate: %s error: %s", e.Name(), body.ErrorType)
+		return Rate{}, &ErrUnavailable{Source: e.Name(), Err: fmt.Errorf("API error: %s", body.ErrorType)}
 	}
 
 	raw, ok := body.Rates[quote]
@@ -141,22 +141,21 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
 			"error", err)
-		return Rate{}, fmt.Errorf("refrate: parsing %s/%s rate %q: %w", base, quote, raw, err)
+		return Rate{}, &ErrUnparseable{Source: e.Name(), Err: fmt.Errorf("parsing %s/%s rate %q: %w", base, quote, raw, err)}
 	}
-	// A rate of exactly zero is treated as absent rather than as a real
-	// quote. Taking it at face value would make the spread calculation
-	// divide by zero, or worse, report a route as infinitely good.
-	if mid.IsZero() {
-		log().Error("exchangerate-api zero rate",
+	// A non-positive rate is not a usable quote. Zero divides by zero in
+	// spread calculations, and a negative rate would invert the economics.
+	if !mid.IsPositive() {
+		log().Error("exchangerate-api non-positive rate",
 			"service", e.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String())
 		return Rate{}, &ErrNoRate{Base: base, Quote: quote, Source: e.Name()}
 	}
 
-	asOf := time.Now()
+	var asOf time.Time
 	if body.TimeLastUpdateUnix > 0 {
-		asOf = time.Unix(body.TimeLastUpdateUnix, 0)
+		asOf = time.Unix(body.TimeLastUpdateUnix, 0).UTC()
 	}
 
 	log().Debug("exchangerate-api rate fetched",
