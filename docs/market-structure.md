@@ -1,6 +1,6 @@
 # Market structure
 
-**Status: vocabulary for the current implementation. Checked: 2026-09-25.**
+**Status: vocabulary for the current implementation. Checked: 2026-09-25; fragmentation updated 2026-10-23.**
 
 In Wayfare, *market structure* means the observable arrangement and
 accessibility of liquidity for one send/receive corridor. It describes what
@@ -74,10 +74,23 @@ specified sizes; it does not publish a depth-distribution curve or histogram.
 ### Fragmentation
 
 *Fragmentation* would describe liquidity split across independently identified
-venues, accounts, paths, or time periods. Wayfare does not currently measure
-that quantity. A list of paths from Horizon is not, by itself, a fragmentation
+venues, accounts, paths, or time periods. Wayfare does not measure that
+quantity. A list of paths from Horizon is not, by itself, a fragmentation
 measurement: the implementation does not attribute liquidity or volume shares
 to those paths and does not infer independent venues from them.
+
+What it does measure is narrower and is named for what it is: *path
+concentration*, the metric `fragmentation.paths`. At one send size, each
+distinct path Horizon's strict-send pathfinding returns is an alternative way
+to send the same amount; the metric is the HHI of each path's destination
+amount as a share of their sum. A high value says the best path pays far more
+than any alternative, so losing it would move the price; a value near `1/n`
+says `n` alternatives pay about the same. It is a share of the alternatives'
+outcomes — the paths may draw on the same offers or pool — and not a
+liquidity, volume, or venue share. Recorded per run, its change across a
+corridor's history is the "concentrating into fewer paths" signal; see
+[metrics.md](metrics.md#fragmentationpaths--concentration-of-executable-value-across-paths)
+and [run-store.md](run-store.md#path-concentration-over-time).
 
 ## What can be said today
 
@@ -90,6 +103,7 @@ corridor:
 | How wide is the direct book's top-of-book spread? | The bid/ask spread can be measured when both sides exist. | [`SpreadMetric`](../checks/metric_spread.go); checked 2026-09-25 |
 | How does a route respond to selected trade sizes? | Price impact and executable depth can be probed through strict-send pathfinding. | [`PriceImpactMetric`](../checks/metric_price_impact.go), [`DepthMetric.RunExecutable`](../checks/metric_depth.go); checked 2026-09-25 |
 | Is liquidity concentrated by account, venue, or path share? | No conclusion. Those dimensions are not exposed or calculated by the current code. | [`ConcentrationMetric`](../checks/metric_concentration.go), [`dex.Client`](../dex/dex.go); checked 2026-09-25 |
+| Is executable value at one size concentrated in one path, and is that changing? | Yes, when the metric is registered: the HHI of the alternatives' destination amounts, and the change between the first and last comparable stored readings. Not a liquidity or venue share. | [`FragmentationMetric`](../checks/metric_fragmentation.go), [`runstore.FragmentationOf`](../runstore/fragmentation.go), Horizon `/paths/strict-send`; checked 2026-10-23 |
 
 These observations are measurements, not judgements. The repository has no
 threshold for spread, depth, concentration, or price impact. An undetermined
@@ -100,7 +114,9 @@ measurement did not establish the requested fact.
 
 The following are deliberately not described as implemented:
 
-- fragmentation across venues, accounts, paths, or time;
+- fragmentation across venues or accounts, or liquidity shares by path (path
+  concentration at one size, and its change over time, is measured — see
+  above);
 - a depth-distribution curve or amount-weighted concentration;
 - venue attribution, venue comparison, or liquidity-share accounting;
 - **published** historical market-structure change or regime labels. The

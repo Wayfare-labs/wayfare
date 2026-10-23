@@ -103,32 +103,45 @@ func (s *FileStore) readAll(corridor string) ([]*Record, error) {
 		if raw == "" {
 			continue
 		}
-		var r Record
-		if err := json.Unmarshal([]byte(raw), &r); err != nil {
-			return nil, fmt.Errorf("runstore: %s line %d: %w", corridor, line, err)
+		r, err := decodeLine(corridor, line, []byte(raw))
+		if err != nil {
+			return nil, err
 		}
-		// Versions 1 through 4 are loadable: each migration added its
-		// fields with omitempty after every earlier field, so older records
-		// encode byte-for-byte as they did when they were written and
-		// verify unchanged (see Record and docs/run-store.md). Any other
-		// version is a schema this build does not understand and must be
-		// refused, never guessed at.
-		if r.Version < 1 || r.Version > Version {
-			return nil, fmt.Errorf(
-				"runstore: %s line %d has record version %d, this build understands %d; "+
-					"refusing to guess at a schema it does not know",
-				corridor, line, r.Version, Version)
-		}
-		if r.Version < Version && r.Snapshot != "" {
-			return nil, fmt.Errorf("runstore: %s line %d has a snapshot hash in legacy record version %d",
-				corridor, line, r.Version)
-		}
-		out = append(out, &r)
+		out = append(out, r)
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("runstore: reading %s: %w", corridor, err)
 	}
 	return out, nil
+}
+
+// decodeLine parses one NDJSON line into a Record.
+//
+// Factored out of readAll so the fuzz target can drive it directly: the decoder
+// is what stands between a committed chain and a served measurement, so it is
+// fuzzed rather than reached only through a file on disk (FuzzDecodeRecord).
+//
+// Versions 1 through 4 are loadable: each migration added its fields with
+// omitempty after every earlier field, so older records encode byte-for-byte as
+// they did when they were written and verify unchanged (see Record and
+// docs/run-store.md). Any other version is a schema this build does not
+// understand and must be refused, never guessed at.
+func decodeLine(corridor string, line int, raw []byte) (*Record, error) {
+	var r Record
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return nil, fmt.Errorf("runstore: %s line %d: %w", corridor, line, err)
+	}
+	if r.Version < 1 || r.Version > Version {
+		return nil, fmt.Errorf(
+			"runstore: %s line %d has record version %d, this build understands %d; "+
+				"refusing to guess at a schema it does not know",
+			corridor, line, r.Version, Version)
+	}
+	if r.Version < Version && r.Snapshot != "" {
+		return nil, fmt.Errorf("runstore: %s line %d has a snapshot hash in legacy record version %d",
+			corridor, line, r.Version)
+	}
+	return &r, nil
 }
 
 // verifyChain checks every hash and every link in order.

@@ -296,8 +296,8 @@ and the line in `Runner.Default()` that makes it reach a reader.
 
 - [adding-a-check.md](adding-a-check.md) — the worked example: writing a new
   check from an empty file to a registered one
-- [adding-a-metric.md](adding-a-metric.md) — the same, for quantities, and why
-  a metric is not reachable yet
+- [adding-a-metric.md](adding-a-metric.md) — the same, for quantities, and what
+  registering one costs on the default metric set
 - [glossary.md](glossary.md) — every state a reader can meet, including the
   three-valued check result and severity levels
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — project invariants

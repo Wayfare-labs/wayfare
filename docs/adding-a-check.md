@@ -129,7 +129,7 @@ It orders what a reader sees first:
 | `Domain` | the asset has a **verified** home domain in `asset/known.go` | a guessed domain would send your check at somebody else's document |
 | `Profile` | that domain's `stellar.toml` resolved | shared, read-only, and the reason a `CostFree` check costs nothing |
 | `Asset` | always, for `ScopeAsset` | code **and** issuer; the code alone identifies nothing |
-| `Send`, `Receive` | only for corridor-scoped work | never populated by `Runner.ForAsset` today |
+| `Send`, `Receive` | only for corridor-scoped work | populated by `Runner.ForCorridor`, never by the single-asset `Runner.ForAsset` |
 | `Integrity`, `Underlying`, `ReferenceAgreement` | when the caller has one to give | corridor metrics, not checks |
 
 **Missing input is not evidence of a problem with the subject.** A field your

@@ -26,6 +26,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -171,7 +172,8 @@ const stellarMaxScale = -7
 // Strict-send matches the remittance question exactly: the sender has a fixed
 // amount of USDC and wants to know what arrives at the other end. The
 // alternative, strict-receive, answers "what must I send to deliver exactly
-// X", which is the wrong shape for a comparison tool.
+// X" — see StrictReceivePaths, which exists to cross-check this one, not to
+// replace it: pricing goes through strict-send.
 //
 // Results are returned in Horizon's order, best first.
 func (c *Client) StrictSendPaths(ctx context.Context, source asset.Asset, amount decimal.Decimal, dest asset.Asset) ([]Path, error) {
@@ -189,15 +191,63 @@ func (c *Client) StrictSendPaths(ctx context.Context, source asset.Asset, amount
 	if err := c.get(ctx, "/paths/strict-send", q, &body); err != nil {
 		return nil, err
 	}
+	return parsePathRecords("strict-send", body.Embedded.Records, source, dest)
+}
 
-	paths := make([]Path, 0, len(body.Embedded.Records))
-	for _, raw := range body.Embedded.Records {
+// StrictReceivePaths asks Horizon what it costs to deliver a fixed amount.
+//
+// Strict-receive fixes the delivered amount and reports the source amount
+// required to deliver it — the question a sender who has promised an exact
+// payout actually faces. It is the mirror of StrictSendPaths: the same wire
+// records, validated by the same rules, on the sibling endpoint.
+//
+// It exists as the asymmetry cross-check of #595, not as a pricing input.
+// The two directions are compared only by the research tooling, and the
+// write-up lands before any wire change is proposed.
+//
+// Results are returned in Horizon's order, cheapest first.
+func (c *Client) StrictReceivePaths(ctx context.Context, source asset.Asset, amount decimal.Decimal, dest asset.Asset) ([]Path, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	q := url.Values{}
+	for k, v := range dest.HorizonParams("destination") {
+		q.Set(k, v)
+	}
+	q.Set("destination_amount", amount.String())
+	q.Set("source_assets", horizonAsset(source))
+
+	var body wirePathsResponse
+	if err := c.get(ctx, "/paths/strict-receive", q, &body); err != nil {
+		return nil, err
+	}
+	return parsePathRecords("strict-receive", body.Embedded.Records, source, dest)
+}
+
+// parsePathRecords decodes the shared /paths wire shape for either direction.
+//
+// Both endpoints return the same record shape; what differs is which side
+// the request fixed. In strict-send the destination_amount is Horizon's
+// computation, and it is the field validated for positivity and for Stellar's
+// 7-decimal ceiling; in strict-receive the source_amount is. The fixed side
+// is parsed — a record whose fixed amount does not parse is still a
+// corrupted response — but it carries no computed value to validate.
+//
+// direction names the endpoint ("strict-send" or "strict-receive") so every
+// error says which direction produced it.
+func parsePathRecords(direction string, records []json.RawMessage, source, dest asset.Asset) ([]Path, error) {
+	// The computed side is the one the request did not fix: Horizon's answer.
+	var computedField, computedText string
+	var computed decimal.Decimal
+
+	paths := make([]Path, 0, len(records))
+	for _, raw := range records {
 		// A null record is the payload's way of saying "a path was expected
 		// here and there is nothing", which is a corruption, not a zero price.
 		// It must surface as a corrupted response rather than decode into a
 		// zero-valued path that parses as a plausible "0".
 		if strings.TrimSpace(string(raw)) == "null" {
-			return nil, fmt.Errorf("dex: strict-send response lists a null path record")
+			return nil, fmt.Errorf("dex: %s response lists a null path record", direction)
 		}
 		var r wirePathRecord
 		if err := json.Unmarshal(raw, &r); err != nil {
@@ -212,22 +262,45 @@ func (c *Client) StrictSendPaths(ctx context.Context, source asset.Asset, amount
 		if err != nil {
 			return nil, fmt.Errorf("dex: parsing destination_amount %q: %w", r.DestinationAmount, err)
 		}
-		// A non-positive destination amount is a broken answer, not a bad
+
+		// A wire amount whose exponent is beyond what any Stellar asset can
+		// carry is corrupted bytes, not a price. shopspring/decimal parses
+		// exponents lazily, and materialising one such value for arithmetic
+		// can expand it to billions of digits — the same guard the order
+		// book decoder applies to its levels (#589).
+		if absExponent(srcAmt) > maxDecimalExponent {
+			return nil, fmt.Errorf(
+				"dex: source_amount %q has an exponent beyond ±%d; a Stellar asset "+
+					"cannot carry it, so this is a corrupted response",
+				r.SourceAmount, maxDecimalExponent)
+		}
+		if absExponent(dstAmt) > maxDecimalExponent {
+			return nil, fmt.Errorf(
+				"dex: destination_amount %q has an exponent beyond ±%d; a Stellar asset "+
+					"cannot carry it, so this is a corrupted response",
+				r.DestinationAmount, maxDecimalExponent)
+		}
+
+		computedField, computedText, computed = "source_amount", r.SourceAmount, srcAmt
+		if direction == "strict-send" {
+			computedField, computedText, computed = "destination_amount", r.DestinationAmount, dstAmt
+		}
+		// A non-positive computed amount is a broken answer, not a bad
 		// price. Horizon never returns "you get zero or less"; when it does,
 		// pricing it against mid would render a plausible-looking 100% loss
 		// from a response that meant "no path" or "corrupted".
-		if !dstAmt.IsPositive() {
+		if !computed.IsPositive() {
 			return nil, fmt.Errorf(
-				"dex: destination_amount %q must be positive; a non-positive amount is a "+
-					"corrupted response, not a price", r.DestinationAmount)
+				"dex: %s %q must be positive; a non-positive amount is a "+
+					"corrupted response, not a price", computedField, computedText)
 		}
 		// More decimal places than a Stellar asset can carry means the amount
 		// was invented or mangled upstream. Trimming it would manufacture a
 		// price no recorded liquidity supports.
-		if dstAmt.Exponent() < stellarMaxScale {
+		if computed.Exponent() < stellarMaxScale {
 			return nil, fmt.Errorf(
-				"dex: destination_amount %q has %d decimal places, more than the 7 a "+
-					"Stellar asset supports", r.DestinationAmount, -dstAmt.Exponent())
+				"dex: %s %q has %d decimal places, more than the 7 a "+
+					"Stellar asset supports", computedField, computedText, -computed.Exponent())
 		}
 
 		p := Path{
@@ -368,13 +441,23 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 		}
 		return fmt.Errorf("dex: horizon returned HTTP %d for %s", resp.StatusCode, path)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	dec := json.NewDecoder(resp.Body)
+	if err := dec.Decode(out); err != nil {
 		log().Error("horizon response decode failed",
 			"service", "horizon",
 			"endpoint", path,
 			"duration", time.Since(started).Round(time.Millisecond).String(),
 			"error", err)
 		return fmt.Errorf("dex: decoding horizon response: %w", err)
+	}
+	// A second decode must find the stream exhausted. Decode reads one JSON
+	// value and stops, so a body of "{}00" — a valid document followed by
+	// garbage — would otherwise be accepted as an empty answer. Fuzzing the
+	// order-book path found exactly that (#589); trailing bytes are
+	// malformed upstream, not a smaller answer.
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
+		return fmt.Errorf(
+			"dex: horizon response for %s carries data after the JSON document", path)
 	}
 
 	log().Debug("horizon request succeeded",

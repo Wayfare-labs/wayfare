@@ -60,6 +60,22 @@ func schedulerOver(t *testing.T, prefix string, recv asset.Asset, quote, mid str
 	}
 }
 
+// snapshotHTTPClient loads the snapshot a schedulerOver call would use and
+// returns its replaying client, so a test can point a checks runner at the same
+// recording.
+func snapshotHTTPClient(t *testing.T, prefix string) *http.Client {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join("../testdata/snapshots", prefix+"-*"))
+	if err != nil || len(matches) == 0 {
+		t.Skipf("no snapshot matching %q", prefix)
+	}
+	snap, err := snapshot.Load(matches[0])
+	if err != nil {
+		t.Fatalf("loading snapshot: %v", err)
+	}
+	return snap.HTTPClient()
+}
+
 // TestRunOnceWritesOneRecordPerCorridor is the scheduler's basic contract.
 func TestRunOnceWritesOneRecordPerCorridor(t *testing.T) {
 	store, err := runstore.Open(t.TempDir())
@@ -125,6 +141,47 @@ func TestSchedulerLoadsIssuerDriftBaselineFromLatestRecord(t *testing.T) {
 	got := scheduler.issuerDriftBaseline(ctx, "USDC-NGNC")
 	if got == nil || *got != want {
 		t.Fatalf("baseline = %#v, want %#v", got, want)
+	}
+}
+
+// TestRunOnceRecordsMetrics is the second acceptance criterion of #577: a
+// scheduled sweep must store its metrics, not only serve them live. The
+// snapshot these tests replay predates metrics, so the recorded set is
+// undetermined — what is asserted is that the record carries it, with a reason,
+// rather than dropping it and making "measured, could not determine"
+// indistinguishable from "never measured".
+func TestRunOnceRecordsMetrics(t *testing.T) {
+	store, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := schedulerOver(t, "usdc-ngnc", asset.NGNC(), "NGN", "1350.2568", store)
+	// The runner replays the same snapshot, so the sweep stays offline even
+	// though the default metric set reads the order book.
+	s.Checks = &checks.Runner{HTTPClient: snapshotHTTPClient(t, "usdc-ngnc")}
+
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	rec, err := store.Latest(context.Background(), "USDC-NGNC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec == nil {
+		t.Fatal("RunOnce wrote no record")
+	}
+	if len(rec.Metrics) == 0 {
+		t.Fatal("the stored record carries no metrics; a scheduled sweep measured " +
+			"nothing but still reported a findings block")
+	}
+	for _, m := range rec.Metrics {
+		if m.ID == "" {
+			t.Error("a stored metric has no ID; the record is not attributable")
+		}
+		if !m.Determined && m.Reason == "" {
+			t.Errorf("stored metric %q is undetermined with no reason", m.ID)
+		}
 	}
 }
 

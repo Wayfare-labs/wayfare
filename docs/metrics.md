@@ -1,6 +1,6 @@
 # Metrics methodology
 
-**Status: v1, current as of 2026-08-27.** One page per metric: definition, unit,
+**Status: v1, current as of 2026-10-23.** One page per metric: definition, unit,
 data source, what it cannot determine, and what undetermined means for it.
 
 Every claim about the code is checked against the code at time of writing. Future
@@ -9,10 +9,23 @@ result and is reported as one.
 
 **Adding a metric** is a separate document:
 [docs/adding-a-metric.md](adding-a-metric.md) walks the interface, the evidence
-rules, the tests, and the one thing this page states in prose and nowhere else —
-that a metric is measurable but **not yet reachable** from `/api/corridor`. A
-metric's page belongs here once it is measured: this document is the figure's
-provenance, the guide is the implementation's.
+rules, the tests and how a metric reaches the wire. A metric's page belongs here
+once it is measured: this document is the figure's provenance, the guide is the
+implementation's.
+
+**Where these are measured.** Since 2026-10-22 every corridor sweep runs metrics
+beside its checks (`checks.Runner.ForCorridor`, [#577](https://github.com/Wayfare-labs/wayfare/issues/577)),
+so a measured corridor's `findings.metrics` block is non-empty. The default set
+is the four order-book metrics below — `spread.bid-ask`,
+`concentration.liquidity`, `depth.observed`, and `deviation.book-vs-reference` —
+because the ladder has already spent its pathfinding budget by the time they
+run. `price-impact.size` and `depth.executable` are reachable but not in the
+default set: each sweeps pathfinding at every probed size. `fragmentation.paths`
+is reachable and not in the default set either: it costs one pathfinding
+request per corridor, and adding it is the budget decision described in
+[maintainer-owned-areas.md](maintainer-owned-areas.md#5-check-engine-and-composition). A metric reported as
+undetermined was run and could not be measured; a metric absent from the block
+was not run at all, and the two are different facts.
 
 ---
 
@@ -234,6 +247,11 @@ direct pair by construction (NO-MARKET, or DERIVATIVE without an Underlying).
 
 ### depth.observed-executable — Order book depth
 
+> **On the wire as two metrics.** A registered `DepthMetric` publishes
+> `depth.observed` from `RunObserved`; the default set runs that half only.
+> `depth.executable` is produced by `RunExecutable` and is not in the default
+> set, because it sweeps pathfinding.
+
 **Definition.** Two measurements of depth:
 - **Observed:** the number of bid and ask levels on the direct order book.
 - **Executable:** the maximum destination amount reachable via pathfinding
@@ -324,6 +342,65 @@ back unscorable.
 
 ---
 
+## Route structure metrics
+
+### fragmentation.paths — Concentration of executable value across paths
+
+**Definition.** At one send size, how unevenly the distinct paths Horizon's
+strict-send pathfinding returned would pay. Each path is an alternative way to
+send the same amount, so a path's share is its destination amount over the sum
+of every distinct path's destination amount, and the figure is the
+Herfindahl-Hirschman index over those shares:
+
+```
+hhi = Σ destᵢ² / (Σ destᵢ)²
+```
+
+computed as one division of exact decimal sums and rounded once, to 16 places.
+The evidence also carries the path count, the sum, the best path's amount and
+its share (`top_share = max(dest) / Σ dest`), and every destination amount.
+
+**Unit.** Ratio, in (0, 1]. `1` is all executable value on one path — a single
+path is a measured `1`, not an unknown; `1/n` is `n` paths paying exactly the
+same. Higher is more concentrated.
+
+**Data source.** Horizon `/paths/strict-send` for the corridor's pair, at
+`Size` (default 100 send units). One request.
+
+**Distinct paths.** A path is identified by its hops with their issuers, not by
+the code-only display string, so `AQUA` from two issuers is two paths. An exact
+repeat in the response is one path and is counted in `duplicates_dropped`; the
+same path listed twice with different amounts makes the reading undetermined,
+because choosing either amount would be a guess.
+
+**What it cannot determine.** Whether the paths are independent. Alternatives
+can draw on the same offers or the same pool, so a share is of the
+alternatives' outcomes — not of liquidity, not of volume, and not a venue
+split. It says nothing about paths Horizon did not return, or about any size
+other than the one probed.
+
+**Over time.** The metric is measured per run and stored in the run record's
+existing `metrics` block, so a corridor's history is its series:
+`runstore.FragmentationHistory` and `runstore.FragmentationOf` read it back and
+say whether the figure rose (`CONCENTRATING`) or fell (`DISPERSING`) between
+the first and last comparable reading. See
+[run-store.md](run-store.md#path-concentration-over-time).
+
+**Undetermined.** When the corridor is NO-MARKET, Horizon returns no path at
+the probed size, the request fails, no DEX client or pair is configured, or the
+response contradicts itself. No paths is **unknown, never zero**: a zero would
+read as perfectly dispersed. DERIVATIVE corridors are measured — their paths
+exist, they route through an intermediate.
+
+On the recorded USDC → NGNC ladder of 2026-08-21
+(`testdata/snapshots/usdc-ngnc-20260821T223040Z`) the figure is 0.2500 at 1
+USDC (four paths within 3% of each other), 0.3877 at 100 and 0.7675 at 5000,
+where the XLM-bridged path delivers 86.6% of the alternatives' combined value.
+
+**Source checked:** `checks/metric_fragmentation.go`.
+
+---
+
 ## What is not yet measured
 
 The following capabilities are described in the backlog but are not yet
@@ -340,13 +417,15 @@ repository supports today and what is planned.
 
 - **Historical trend metrics** — how loss, spread, or depth change over time.
   The run store records per-run data, but trend analysis is not yet computed.
+  The one cross-run reader that exists, `runstore.FragmentationOf`, compares
+  two stored `fragmentation.paths` readings and fits no trend.
 
 ---
 
 ## Related
 
-- [adding-a-metric.md](adding-a-metric.md) — how to add a metric, and the
-  reachability gap every metric currently sits behind
+- [adding-a-metric.md](adding-a-metric.md) — how to add a metric, and how one
+  reaches the wire
 - [checks.md](checks.md) — the two-shape contract metrics and checks share
 - [adding-a-check.md](adding-a-check.md) — the other shape, for facts
 - [liquidity-venues.md](liquidity-venues.md) — why two venues cannot be

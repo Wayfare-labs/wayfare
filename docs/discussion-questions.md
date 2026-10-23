@@ -57,16 +57,21 @@ Asked in [#481](https://github.com/Wayfare-labs/wayfare/issues/481), 2026-09-24.
 **Still open.** Two places in the tree state a count and neither matches the
 other, let alone the measurement:
 
-`server/api.go:52-53` says:
+`server/api.go:54-57` says:
 
-> // Timeout bounds a single corridor measurement. A full ladder is a
-> // dozen round trips to Horizon, so this is generous by HTTP standards.
+> // Timeout bounds a single corridor measurement. One Horizon call per
+> // rung, plus a two-call slippage probe on each rung above the probe
+> // threshold, so the count scales with route.DefaultSizes rather than
+> // staying a fixed dozen; this is still generous by HTTP standards.
 
-`docs/deployment.md:201-203` says:
+`docs/deployment.md:301-306` says:
 
-> One sweep is roughly three dozen Horizon calls per corridor — twelve sizes,
-> each with pathfinding plus a slippage probe — across three corridors, so about
-> 110 requests every six hours.
+> One sweep is roughly sixty-eight Horizon calls across the three corridors —
+> NGNC and GHSC each run twelve rungs with pathfinding plus a slippage probe on
+> rungs above the probe threshold (28 calls each); KESC short-circuits as
+> NO-MARKET after twelve pathfinding calls (12) — plus about twelve counterparty
+> requests and two reference-provider calls, near eighty requests every six
+> hours.
 
 The reporter measured **28** calls for a priced corridor, not 12: twelve
 `/paths/strict-send` requests for the ladder, plus a two-call slippage probe

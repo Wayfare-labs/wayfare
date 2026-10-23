@@ -53,7 +53,12 @@ func (c SEP31Info) Run(ctx context.Context, s Subject) CheckResult {
 
 	declared := strings.TrimSpace(s.Profile.TOML.DirectPaymentServer)
 	tomlURL := "https://" + s.Profile.Domain + "/.well-known/stellar.toml"
-	at := time.Now().UTC()
+	// Evidence about the cached document carries the time it was originally
+	// fetched, not the time this check runs.
+	at := s.Profile.FetchedAt
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
 	if declared == "" {
 		return Fail(d, s, "the anchor does not publish a DIRECT_PAYMENT_SERVER for SEP-31",
 			Evidence{Source: tomlURL + " -> DIRECT_PAYMENT_SERVER",

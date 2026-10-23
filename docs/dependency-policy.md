@@ -16,7 +16,7 @@ The module has exactly two direct dependencies:
 
 | Module | Pinned version | Why it exists |
 |:---|:---|:---|
-| `github.com/shopspring/decimal` | `v1.4.0` | All money. Binary floating point cannot represent decimal fractions exactly, and rounding drift in a tool whose entire purpose is measuring small differences is a correctness bug, not a style issue. |
+| `github.com/shopspring/decimal` | `v1.5.0` | All money. Binary floating point cannot represent decimal fractions exactly, and rounding drift in a tool whose entire purpose is measuring small differences is a correctness bug, not a style issue. |
 | `github.com/BurntSushi/toml` | `v1.6.0` | Asset identity. Issuers publish `stellar.toml` per SEP-1, and every measurement depends on parsing that document correctly. A hand-rolled TOML parser would put identity behind unreviewed code. |
 
 Everything else is the Go standard library. Neither direct dependency has

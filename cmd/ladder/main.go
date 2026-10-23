@@ -10,6 +10,8 @@
 //	go run ./cmd/ladder -to GHSC -json   # same, as JSON on stdout
 //	go run ./cmd/ladder -checks=false    # same, without counterparty checks
 //
+//	go run ./cmd/ladder -from NGNC -to USDC   # reverse corridor: the exit leg
+//
 //	go run ./cmd/ladder -record testdata/snapshots   # also keep the bytes
 //
 // Recording is opt-in and writes the verbatim upstream responses to a new
@@ -71,9 +73,11 @@ var corridors = defaultCorridors()
 
 func main() {
 	var (
+		from      = flag.String("from", "USDC", fromHelp())
 		to        = flag.String("to", "NGNC", toHelp())
-		sizesFlag = flag.String("sizes", defaultSizesFlag(),
-			"comma-separated send amounts in USDC")
+		sizesFlag = flag.String("sizes", "",
+			"comma-separated send amounts in the send asset (default: the shared USD ladder, "+
+				"or its NGN-scaled reverse ladder when -from names a fiat token)")
 		jsonOut = flag.Bool("json", false, "emit JSON on stdout instead of the text table")
 		record  = flag.String("record", "",
 			"record upstream responses as a snapshot in a new directory under this parent")
@@ -87,13 +91,17 @@ func main() {
 	)
 	flag.Parse()
 
-	c, ok := corridors[strings.ToUpper(*to)]
-	if !ok {
-		fmt.Fprintf(os.Stderr, "unknown destination %q; known: %s\n", *to, strings.Join(corridorCodes(), ", "))
+	run, err := resolveDirection(*from, *to)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
 
-	sizes, err := parseSizes(*sizesFlag)
+	sizesRaw := *sizesFlag
+	if strings.TrimSpace(sizesRaw) == "" {
+		sizesRaw = run.defaultSizesFlag()
+	}
+	sizes, err := parseSizes(sizesRaw)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -122,9 +130,9 @@ func main() {
 		recorder = &snapshot.Recorder{
 			Dirty: dirty,
 			Corridor: snapshot.Corridor{
-				Send:          snapshot.AssetRef{Code: asset.USDC().Code, Issuer: asset.USDC().Issuer},
-				Receive:       snapshot.AssetRef{Code: c.dest.Code, Issuer: c.dest.Issuer},
-				ReferencePair: "USD/" + c.refPair,
+				Send:          snapshot.AssetRef{Code: run.send.Code, Issuer: run.send.Issuer},
+				Receive:       snapshot.AssetRef{Code: run.recv.Code, Issuer: run.recv.Issuer},
+				ReferencePair: run.pair(),
 			},
 			Sizes: sizeStrings(sizes),
 			Sources: snapshot.Sources{
@@ -165,11 +173,11 @@ func main() {
 	defer cancel()
 
 	result, err := eng.Ladder(ctx, route.LadderRequest{
-		SendAsset:      asset.USDC(),
-		ReceiveAsset:   c.dest,
+		SendAsset:      run.send,
+		ReceiveAsset:   run.recv,
 		Sizes:          sizes,
-		ReferenceBase:  "USD",
-		ReferenceQuote: c.refPair,
+		ReferenceBase:  run.refBase,
+		ReferenceQuote: run.refQuote,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "measuring corridor: %v\n", err)
@@ -182,13 +190,16 @@ func main() {
 	// "not checked", never "checked, nothing found".
 	var findings *checks.Findings
 	if checkRunner != nil {
-		findings = checkRunner.ForAsset(ctx, c.dest)
+		// The checks describe the corridor's fiat-token counterparty, which
+		// is the destination of a forward corridor and the source of a
+		// reverse one.
+		findings = checkRunner.ForAsset(ctx, run.fiatToken())
 	}
 
 	if *jsonOut {
-		printJSON(result, "USD/"+c.refPair, findings)
+		printJSON(result, run.pair(), findings)
 	} else {
-		printTable(ctx, result, c, refProvider, findings)
+		printTable(ctx, result, refProvider, findings)
 	}
 
 	// Saved after the run so a snapshot only ever exists for a measurement
@@ -504,8 +515,11 @@ func encodeCorridorJSON(w io.Writer, result *route.LadderResult, pair string, fi
 // constructed here: a second construction is a second HTTP client, which
 // would bypass a recorder and leave the snapshot missing the very rate the
 // table prints.
-func printTable(ctx context.Context, result *route.LadderResult, c corridor, ref refrate.Provider, findings *checks.Findings) {
-	fmt.Printf("corridor USDC -> %s, benchmarked against USD/%s\n", c.dest.Code, c.refPair)
+func printTable(ctx context.Context, result *route.LadderResult, ref refrate.Provider, findings *checks.Findings) {
+	sendCode := result.Request.SendAsset.Code
+	recvCode := result.Request.ReceiveAsset.Code
+	pair := result.Request.ReferenceBase + "/" + result.Request.ReferenceQuote
+	fmt.Printf("corridor %s -> %s, benchmarked against %s\n", sendCode, recvCode, pair)
 	fmt.Printf("run at %s\n\n", time.Now().UTC().Format(time.RFC3339))
 	fmt.Printf("%-8s %14s %12s %9s %-10s %-11s %s\n",
 		"SEND", "RECEIVE", "RATE", "LOSS%", "VERDICT", "INTEGRITY", "PATH")
@@ -548,9 +562,9 @@ func printTable(ctx context.Context, result *route.LadderResult, c corridor, ref
 		}
 	}
 
-	if r, err := ref.Rate(ctx, "USD", c.refPair); err == nil {
-		fmt.Printf("\nreference mid: %s USD/%s via %s, as of %s\n",
-			r.Mid.StringFixed(4), c.refPair, r.Source, r.AsOf.UTC().Format(time.RFC3339))
+	if r, err := ref.Rate(ctx, result.Request.ReferenceBase, result.Request.ReferenceQuote); err == nil {
+		fmt.Printf("\nreference mid: %s %s via %s, as of %s\n",
+			r.Mid.StringFixed(4), pair, r.Source, r.AsOf.UTC().Format(time.RFC3339))
 	}
 	if findings != nil {
 		passed, failed, undetermined := findings.Counts()
@@ -583,6 +597,123 @@ func printTable(ctx context.Context, result *route.LadderResult, c corridor, ref
 		}
 	}
 	if priced == 0 {
-		fmt.Printf("no size could be priced for USDC -> %s\n", c.dest.Code)
+		fmt.Printf("no size could be priced for %s -> %s\n", sendCode, recvCode)
 	}
+}
+
+// direction is one corridor resolved to the assets it actually measures:
+// which asset is sent, which is received, and which reference pair benchmarks
+// it. A forward corridor runs USDC -> token against USD/peg; a reverse
+// corridor runs token -> USDC against peg/USD, with its own integrity state
+// (issue #596).
+type direction struct {
+	send     asset.Asset
+	recv     asset.Asset
+	refBase  string
+	refQuote string
+	reverse  bool
+}
+
+// pair renders the reference pair for display and snapshot manifests.
+func (d direction) pair() string { return d.refBase + "/" + d.refQuote }
+
+// fiatToken is the corridor's token side — the counterparty the checks
+// describe — regardless of which way the corridor is measured.
+func (d direction) fiatToken() asset.Asset {
+	if d.send.Code == "USDC" {
+		return d.recv
+	}
+	return d.send
+}
+
+// defaultSizesFlag renders the default ladder for this direction.
+func (d direction) defaultSizesFlag() string {
+	sizes := route.DefaultSizes
+	if d.reverse {
+		sizes = reverseSizes()
+	}
+	parts := make([]string, 0, len(sizes))
+	for _, s := range sizes {
+		parts = append(parts, s.String())
+	}
+	return strings.Join(parts, ",")
+}
+
+// resolveDirection maps -from/-to onto the corridor to measure.
+//
+// With -from USDC (the default) this is the historical forward corridor, and
+// -to selects a registered destination token. With -from naming a fiat token,
+// this is a reverse corridor — the exit leg — and -to must be USDC: measuring
+// "NGNC -> GHSC" is a different corridor nobody asked for, and inventing one
+// by taking the argument literally would publish a number under the wrong
+// name.
+func resolveDirection(from, to string) (direction, error) {
+	fromClean := strings.ToUpper(strings.TrimSpace(from))
+	toClean := strings.ToUpper(strings.TrimSpace(to))
+
+	if fromClean == "" || fromClean == "USDC" {
+		c, ok := corridors[toClean]
+		if !ok {
+			return direction{}, fmt.Errorf("unknown destination %q; known: %s",
+				to, strings.Join(corridorCodes(), ", "))
+		}
+		return direction{
+			send:     asset.USDC(),
+			recv:     c.dest,
+			refBase:  "USD",
+			refQuote: c.refPair,
+		}, nil
+	}
+
+	send, ok := asset.Lookup(fromClean)
+	if !ok {
+		return direction{}, fmt.Errorf("unknown -from %q; known: USDC, %s",
+			from, strings.Join(asset.KnownCodes(), ", "))
+	}
+	peg, isFiat := asset.FiatPeg(send)
+	if !isFiat {
+		return direction{}, fmt.Errorf(
+			"-from %q is not a registered fiat-pegged token; a reverse corridor starts "+
+				"from a token with a published peg", from)
+	}
+	if toClean != "USDC" {
+		return direction{}, fmt.Errorf(
+			"a reverse corridor measures %s -> USDC; got -from %s -to %s",
+			send.Code, send.Code, to)
+	}
+	return direction{
+		send:     send,
+		recv:     asset.USDC(),
+		refBase:  peg,
+		refQuote: "USD",
+		reverse:  true,
+	}, nil
+}
+
+// reverseScale is the NGN-per-USD factor the reverse ladder is scaled by.
+//
+// No FX mid is consulted: the constant only chooses rung sizes, and the
+// measurement's own benchmark comes from the reference provider. 1500 is the
+// rough late-2026 mid (the recorded forward ladder measured 1516.39 NGN/USD on
+// 2026-10-22), so the reverse ladder covers the same notional range as the
+// forward one while staying a fixed input rather than furniture that moves
+// between runs.
+var reverseScale = decimal.NewFromInt(1500)
+
+// reverseSizes scales the shared USD ladder into the send asset of a reverse
+// corridor. Scaling rather than inventing rungs preserves the shared ladder's
+// design: the smallest rung still isolates the structural floor, the largest
+// still exposes exhaustion.
+func reverseSizes() []decimal.Decimal {
+	out := make([]decimal.Decimal, 0, len(route.DefaultSizes))
+	for _, s := range route.DefaultSizes {
+		out = append(out, s.Mul(reverseScale).Truncate(0))
+	}
+	return out
+}
+
+// fromHelp describes -from for the flag usage text.
+func fromHelp() string {
+	return "settlement asset the sender starts from (USDC, the default), or a registered " +
+		"fiat token to measure back out of (e.g. NGNC); a reverse corridor always measures <from> -> USDC"
 }

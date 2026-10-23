@@ -20,6 +20,12 @@ All endpoints are read-only. The service does not hold funds, issue tokens, sign
 
 Unsupported methods return `405`. Requests beyond the per-client rate limit return `429` with a `Retry-After` header (seconds) and the error code `rate_limited` (see [Rate limiting](#rate-limiting)). JSON errors have the shape `{ "error": "...", "code": "..." }`; the machine-readable codes are the contract and are enumerated in [errors.md](errors.md).
 
+### Error codes
+
+Every endpoint emits one spelling: a lower-case `snake_case` token drawn from a single constant block in `server/api.go`, so the same cause carries the same code wherever it occurs (`invalid_query` for an unsupported query parameter on any endpoint, for example).
+
+**Change for consumers.** `/api/corridor/trend` previously emitted upper-case twins of causes the rest of the API named in lower case — `METHOD_NOT_ALLOWED`, `INVALID_QUERY_PARAM`, `BAD_LIMIT`, `STORE_READ_ERROR`, `UNKNOWN_ASSET`. Those spellings were replaced, not emitted alongside the new ones: a client switching on the old tokens must switch on `method_not_allowed`, `invalid_query`, `invalid_limit`, `store_read_error`, `unknown_send_asset` / `unknown_receive_asset` instead. The replacement was made once, deliberately, because a code is a contract rather than a label ([errors.md](errors.md)).
+
 ## `GET /api/corridor`
 
 Query parameters:

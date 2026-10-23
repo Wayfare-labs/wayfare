@@ -17,6 +17,16 @@ on:
     - cron: '0 9 * * 1'
   workflow_dispatch:
 
+# A new push to a pull request supersedes the scan of the head it replaced;
+# without a shared group both scans run to completion and the older one can
+# finish last, reporting on a commit nobody is reviewing (#574).
+#
+# The group is the pull request number for pull request events and the ref
+# otherwise, so runs on different branches never cancel each other.
+concurrency:
+  group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

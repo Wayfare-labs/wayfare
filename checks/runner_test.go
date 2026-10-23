@@ -10,8 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/Wayfare-labs/wayfare/anchor"
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/refrate"
 )
 
 // unregistered is an asset with no verified home domain, so ForAsset does not
@@ -457,6 +460,148 @@ func TestRunnerHandsTheClientToDefaultChecks(t *testing.T) {
 	}
 }
 
+// stubMetric is a corridor metric whose result the test controls. It records
+// the subjects it saw so a test can assert what the runner populated.
+type stubMetric struct {
+	id     string
+	result MetricResult
+	saw    *[]Subject
+}
+
+func (m stubMetric) Describe() Descriptor {
+	return Descriptor{
+		ID: m.id, Scope: ScopeCorridor, Venue: VenueOrderBook, Title: m.id,
+		CanDetermine: "the stub decides", CannotDetermine: "the stub decides not to",
+	}
+}
+
+func (m stubMetric) Run(_ context.Context, s Subject) MetricResult {
+	if m.saw != nil {
+		*m.saw = append(*m.saw, s)
+	}
+	res := m.result
+	res.ID = m.id
+	return res
+}
+
+// TestRunnerForCorridorRunsMetrics covers the wiring #577 was filed about: a
+// corridor sweep must reach a Metric, and findings.metrics must be non-empty.
+func TestRunnerForCorridorRunsMetrics(t *testing.T) {
+	var saw []Subject
+	r := &Runner{
+		Checks: []Check{stubCheck{id: "test.check", result: Pass(Descriptor{ID: "test.check"}, Subject{}, "ok")}},
+		Metrics: []Metric{stubMetric{
+			id:  "test.metric",
+			saw: &saw,
+			result: MetricValue(Descriptor{ID: "test.metric"}, Subject{},
+				decimal.NewFromInt(7), UnitCount, "seven"),
+		}},
+	}
+
+	f := r.ForCorridor(ctx(), Corridor{Send: asset.USDC(), Receive: unregistered()})
+
+	if len(f.Metrics) != 1 || f.Metrics[0].ID != "test.metric" {
+		t.Fatalf("ForCorridor produced %d metrics; a corridor sweep must run the "+
+			"configured metric", len(f.Metrics))
+	}
+	if !f.Metrics[0].Determined || f.Metrics[0].Value.IntPart() != 7 {
+		t.Errorf("metric result = %+v, want determined 7", f.Metrics[0])
+	}
+	if len(f.Checks) != 1 {
+		t.Errorf("ForCorridor produced %d checks, want 1 — checks still run", len(f.Checks))
+	}
+
+	// The subject a corridor metric receives is the pair, not the receive
+	// asset alone: the metric layer was unusable until Send/Receive were
+	// populated.
+	if len(saw) != 1 {
+		t.Fatalf("metric saw %d subjects, want 1", len(saw))
+	}
+	if saw[0].Send.Code != "USDC" || saw[0].Receive.Code != "TESTC" {
+		t.Errorf("metric subject pair = %s -> %s, want USDC -> TESTC",
+			saw[0].Send.Code, saw[0].Receive.Code)
+	}
+}
+
+// TestRunnerForCorridorDefaultsToAMetricSet pins the fallback: a runner with no
+// metrics configured measures the default set, so an unconfigured deployment
+// still publishes quantities rather than an empty block.
+func TestRunnerForCorridorDefaultsToAMetricSet(t *testing.T) {
+	r := &Runner{}
+	got := r.DefaultMetrics(Corridor{})
+	if len(got) == 0 {
+		t.Fatal("a runner with no metrics must fall back to the default set")
+	}
+	for _, m := range got {
+		if err := m.Describe().ValidateAsMetric(); err != nil {
+			t.Errorf("default metric %q is invalid: %v", m.Describe().ID, err)
+		}
+	}
+}
+
+// TestRunnerForAssetDoesNotMeasureMetrics keeps the single-asset path
+// checks-only. A corridor metric needs a pair, and ForAsset has none, so it
+// must not invent one or silently run a metric against a half-populated
+// subject.
+func TestRunnerForAssetDoesNotMeasureMetrics(t *testing.T) {
+	r := &Runner{
+		Checks:  []Check{stubCheck{id: "test.check", result: Pass(Descriptor{ID: "test.check"}, Subject{}, "ok")}},
+		Metrics: []Metric{stubMetric{id: "test.metric", result: MetricValue(Descriptor{ID: "test.metric"}, Subject{}, decimal.Zero, UnitCount, "zero")}},
+	}
+	if f := r.ForAsset(ctx(), unregistered()); len(f.Metrics) != 0 {
+		t.Errorf("ForAsset ran %d metrics; the single-asset path must stay "+
+			"checks-only", len(f.Metrics))
+	}
+}
+
+// TestRunnerMetricsAreOptOutable covers the explicit empty slice: a caller that
+// has its own request budget must be able to measure no metrics at all, and
+// that is distinct from "use the defaults".
+func TestRunnerMetricsAreOptOutable(t *testing.T) {
+	r := &Runner{
+		Checks:  []Check{stubCheck{id: "test.check", result: Pass(Descriptor{ID: "test.check"}, Subject{}, "ok")}},
+		Metrics: []Metric{},
+	}
+	if f := r.ForCorridor(ctx(), Corridor{Send: asset.USDC(), Receive: unregistered()}); len(f.Metrics) != 0 {
+		t.Errorf("an explicitly empty metric set produced %d metrics", len(f.Metrics))
+	}
+}
+
+// TestRunnerForCorridorPassesTheLadderContext pins the fields the metrics were
+// written against. A book metric cannot tell a structural absence from an idle
+// market without Integrity, and a reference-derived metric must not score
+// against a malfunctioning benchmark.
+func TestRunnerForCorridorPassesTheLadderContext(t *testing.T) {
+	var saw []Subject
+	r := &Runner{
+		Checks: []Check{stubCheck{id: "test.check", result: Pass(Descriptor{ID: "test.check"}, Subject{}, "ok")}},
+		Metrics: []Metric{stubMetric{
+			id: "test.metric", saw: &saw,
+			result: MetricValue(Descriptor{ID: "test.metric"}, Subject{}, decimal.Zero, UnitCount, "zero"),
+		}},
+	}
+	r.ForCorridor(ctx(), Corridor{
+		Send:       asset.USDC(),
+		Receive:    unregistered(),
+		Integrity:  "DERIVATIVE",
+		Underlying: asset.NGNC(),
+		Reference:  refrate.Rate{Agreement: refrate.AgreementMalfunction},
+	})
+
+	if len(saw) != 1 {
+		t.Fatalf("metric saw %d subjects, want 1", len(saw))
+	}
+	if saw[0].Integrity != "DERIVATIVE" {
+		t.Errorf("Integrity = %q, want DERIVATIVE", saw[0].Integrity)
+	}
+	if saw[0].Underlying.Code != "NGNC" {
+		t.Errorf("Underlying = %q, want NGNC", saw[0].Underlying.Code)
+	}
+	if saw[0].ReferenceAgreement != "MALFUNCTION" {
+		t.Errorf("ReferenceAgreement = %q, want MALFUNCTION", saw[0].ReferenceAgreement)
+	}
+}
+
 // idsOf is a helper for failure messages.
 func idsOf(f *Findings) []string {
 	out := make([]string, len(f.Checks))
@@ -464,4 +609,96 @@ func idsOf(f *Findings) []string {
 		out[i] = r.ID
 	}
 	return out
+}
+
+// nairaTOML is a minimal valid stellar.toml for ngnc.online, the single home
+// domain shared by NGNC, GHSC and KESC (one issuer, one domain).
+const nairaTOML = `NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
+
+[[CURRENCIES]]
+code="NGNC"
+issuer="GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+status="live"
+anchor_asset="NGN"
+`
+
+// TestRunnerCachesProfileAcrossSharedDomain is issue #600: NGNC, GHSC and
+// KESC share one issuer and domain, so a sweep measuring all three must
+// resolve the stellar.toml once instead of once per asset.
+func TestRunnerCachesProfileAcrossSharedDomain(t *testing.T) {
+	responses := &countingTransport{recordedTransport: recordedTransport{
+		http.MethodGet + " https://ngnc.online/.well-known/stellar.toml": recordedResponse{
+			body: nairaTOML,
+		},
+	}}
+
+	r := &Runner{
+		Resolver: &anchor.Resolver{HTTPClient: &http.Client{Transport: responses}},
+	}
+
+	// Capture the subjects each asset's check saw, via a shared slice.
+	var saw []Subject
+	r.Checks = []Check{stubCheck{id: "test.sees-profile", saw: &saw}}
+
+	for _, a := range []asset.Asset{asset.NGNC(), asset.GHSC(), asset.KESC()} {
+		f := r.ForAsset(ctx(), a)
+		if len(f.Checks) != 1 {
+			t.Fatalf("ForAsset(%s) produced %d results, want 1", a.Code, len(f.Checks))
+		}
+	}
+
+	if len(saw) != 3 {
+		t.Fatalf("check ran %d times, want 3 (once per asset)", len(saw))
+	}
+	if responses.calls != 1 {
+		t.Errorf("stellar.toml fetched %d times, want exactly once per domain per sweep",
+			responses.calls)
+	}
+	for _, s := range saw {
+		if s.Profile == nil || s.Profile.Domain != "ngnc.online" {
+			t.Error("subject did not carry the resolved ngnc.online profile")
+		}
+	}
+}
+
+// TestRunnerCachedProfilePreservesFetchTime is issue #600: when a profile is
+// served from the sweep cache, the evidence it produces carries the original
+// fetch time rather than being re-timestamped to now.
+func TestRunnerCachedProfilePreservesFetchTime(t *testing.T) {
+	responses := &countingTransport{recordedTransport: recordedTransport{
+		http.MethodGet + " https://ngnc.online/.well-known/stellar.toml": recordedResponse{
+			body: nairaTOML,
+		},
+	}}
+
+	r := &Runner{
+		Checks:   []Check{AnchorAssetISO4217{}},
+		Resolver: &anchor.Resolver{HTTPClient: &http.Client{Transport: responses}},
+	}
+
+	// First asset on the domain: fetch happens and the profile is cached.
+	first := r.ForAsset(ctx(), asset.NGNC())
+	// Second asset on the same domain: cache hit, no additional fetch.
+	second := r.ForAsset(ctx(), asset.GHSC())
+
+	if responses.calls != 1 {
+		t.Errorf("stellar.toml fetched %d times, want exactly once", responses.calls)
+	}
+
+	evidenceOf := func(f *Findings) time.Time {
+		for _, res := range f.Checks {
+			if len(res.Evidence) > 0 {
+				return res.Evidence[0].ObservedAt
+			}
+		}
+		return time.Time{}
+	}
+
+	firstAt, secondAt := evidenceOf(first), evidenceOf(second)
+	if firstAt.IsZero() {
+		t.Fatal("first result carried no evidence timestamp")
+	}
+	if !secondAt.Equal(firstAt) {
+		t.Errorf("cached profile evidence = %v, want original fetch time %v", secondAt, firstAt)
+	}
 }

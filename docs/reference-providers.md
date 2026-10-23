@@ -129,6 +129,25 @@ fields are `omitempty` and were added after every existing field, so records
 written before the diagnostic existed still encode — and verify — byte for
 byte as they did before.
 
+## Terms of use, free-tier limits and attribution
+
+The table below records each reference provider's terms of use, free-tier limits
+and attribution requirements, with the date each entry was checked against the
+provider's own pages. Entries are dated because provider terms change; a stale
+entry is not a license to keep consuming a provider past its limits.
+
+| Provider | Role | Terms of use | Free-tier limits | Attribution required? | Date checked |
+|:---|:---|:---|:---|:---|:---|
+| `exchangerate-api` (`open.er-api.com`) | Primary scored | Terms of Service & Privacy Policy at exchangerate-api.com/terms; free plan requires a signup (no credit card); data are "indicative midpoint rates", unsuitable for forex trading or cross-currency settlement | 1,500 requests/month, updates once per day, relaxed quota enforcement; Pro $10/mo (30k req/mo), Business $30/mo (125k req/mo) | Not stated as required on the free-plan homepage | 2026-10-21 |
+| `currency-api` (`latest.currency-api.pages.dev`) | Secondary cross-check | CC0-1.0 (public domain dedication) per fawazahmed0/exchange-api LICENSE | Free, no rate limits, daily updated, 200+ currencies | No — CC0 dedicates the data to the public domain | 2026-10-21 |
+| `floatrates` (`www.floatrates.com`) | Diagnostic only | Free service; no separate terms page linked from the homepage | Free, keyless, daily JSON feed per base currency, refreshes twice daily (12 AM/PM GMT) | Not stated on the homepage | 2026-10-21 |
+
+A note on accuracy: the code configures `exchangerate-api` against the open
+`open.er-api.com/v6/latest/` endpoint (refrate/exchangerate.go), while the
+provider's current free-plan page describes a keyed `exchangerate-api.com`
+product. If a maintainer rotates the endpoint, this table should be re-checked
+against whichever endpoint is actually called, and the date bumped.
+
 ## Related
 
 - [`refrate/cross.go`](../refrate/cross.go) — the band rule and `Diagnostic`

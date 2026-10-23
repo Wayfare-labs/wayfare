@@ -289,8 +289,14 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 		return fmt.Errorf("monitor: snapshot checks require a recorder-backed checks factory")
 	}
 	if checkRunner != nil {
-		baseline := s.issuerDriftBaseline(ctx, c.Key())
-		live = route.WithFindings(live, checkRunner.ForAssetWithBaseline(ctx, c.Receive, baseline))
+		live = route.WithFindings(live, checkRunner.ForCorridor(ctx, checks.Corridor{
+			Send:       c.Send,
+			Receive:    c.Receive,
+			Integrity:  result.Integrity.String(),
+			Underlying: underlyingPair(result),
+			Reference:  result.Reference,
+			Baseline:   s.issuerDriftBaseline(ctx, c.Key()),
+		}))
 	}
 	record := runstore.FromCorridorJSON(live)
 	record.RecordedAt = started
@@ -365,6 +371,18 @@ func (s *Scheduler) issuerDriftBaseline(ctx context.Context, corridor string) *c
 		return nil
 	}
 	return checks.IssuerDriftBaselineFromChecks(record.Checks)
+}
+
+// underlyingPair names the pair a DERIVATIVE corridor's paths traverse, when
+// the ladder identified exactly one. It mirrors the server's helper: a book
+// metric should measure the market that exists rather than report "no book" for
+// a corridor whose liquidity sits one hop away, and more than one dependency
+// stays empty because there is no single pair to measure.
+func underlyingPair(res *route.LadderResult) asset.Asset {
+	if res == nil || res.Integrity != route.IntegrityDerivative || len(res.DependsOn) != 1 {
+		return asset.Asset{}
+	}
+	return res.DependsOn[0]
 }
 
 // reportTransition logs the corridor's most recent structural change, when

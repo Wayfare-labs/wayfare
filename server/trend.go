@@ -68,6 +68,14 @@ type TrendJSON struct {
 	// integrity state or verdict.
 	LatestTransition *IntegrityTransitionJSON `json:"latest_transition"`
 
+	// Movements is the benchmark-vs-corridor movement decomposition over the
+	// same window (issue #637): one entry per consecutive pair that
+	// established any movement, oldest pair first. Empty array, never null,
+	// so a client can iterate without a nil check. Empty means no pair
+	// established a movement — fewer than two runs, or no pair with both a
+	// scorable benchmark and a priced rung — never "no movement happened".
+	Movements []MovementJSON `json:"movements"`
+
 	// DivergenceStats summarises how far the corridor's two reference
 	// providers have disagreed across the runs above — a fact about the
 	// benchmark, not the corridor. Always present, never omitted: a benchmark
@@ -200,6 +208,46 @@ type TrendRungJSON struct {
 
 // toTrendJSON renders stored records in the wire shape, preserving their
 // stored (oldest first) order.
+// MovementJSON is one consecutive-pair movement decomposition on the wire
+// (issue #637): how much of the headline change came from the benchmark and
+// how much from the corridor itself. Empty percentage fields are the
+// explicit unknown — a pair where neither side could be measured is absent
+// from the movements array, never a zero.
+type MovementJSON struct {
+	PreviousRunAt string `json:"previous_run_at"`
+	CurrentRunAt  string `json:"current_run_at"`
+
+	// BenchmarkFrom/BenchmarkTo are the mids the two runs were scored
+	// against; CorridorFrom/CorridorTo are their floor-size effective rates.
+	BenchmarkFrom string `json:"benchmark_from,omitempty"`
+	BenchmarkTo   string `json:"benchmark_to,omitempty"`
+	CorridorFrom  string `json:"corridor_from,omitempty"`
+	CorridorTo    string `json:"corridor_to,omitempty"`
+
+	// Signed decimal strings in percent. BenchmarkPct is corridor-free;
+	// CorridorPct is benchmark-free; LossPctChange is the headline move in
+	// percentage points.
+	BenchmarkPct  string `json:"benchmark_pct,omitempty"`
+	CorridorPct   string `json:"corridor_pct,omitempty"`
+	LossPctChange string `json:"loss_pct_change,omitempty"`
+}
+
+// toMovementJSON renders a runstore.Movement for the wire, dropping the
+// corridor key the envelope already carries.
+func toMovementJSON(m *runstore.Movement) MovementJSON {
+	return MovementJSON{
+		PreviousRunAt: m.PreviousRunAt.UTC().Format(time.RFC3339),
+		CurrentRunAt:  m.CurrentRunAt.UTC().Format(time.RFC3339),
+		BenchmarkFrom: m.BenchmarkFrom,
+		BenchmarkTo:   m.BenchmarkTo,
+		CorridorFrom:  m.CorridorFrom,
+		CorridorTo:    m.CorridorTo,
+		BenchmarkPct:  m.BenchmarkPct,
+		CorridorPct:   m.CorridorPct,
+		LossPctChange: m.LossPctChange,
+	}
+}
+
 func toTrendJSON(recs []*runstore.Record, key, pair string, send, recv asset.Asset, next int64) TrendJSON {
 	out := TrendJSON{
 		Corridor:             key,
@@ -210,6 +258,7 @@ func toTrendJSON(recs []*runstore.Record, key, pair string, send, recv asset.Ass
 		Next:                 next,
 		Runs:                 make([]TrendRunJSON, 0, len(recs)),
 		IntegrityTransitions: make([]IntegrityTransitionJSON, 0),
+		Movements:            make([]MovementJSON, 0),
 	}
 	for _, rec := range recs {
 		out.Runs = append(out.Runs, toTrendRunJSON(rec))
@@ -227,6 +276,9 @@ func toTrendJSON(recs []*runstore.Record, key, pair string, send, recv asset.Ass
 	if len(transitions) > 0 {
 		latest := toIntegrityTransitionJSON(transitions[len(transitions)-1])
 		out.LatestTransition = &latest
+	}
+	for _, movement := range runstore.MovementsFromRecords(recs) {
+		out.Movements = append(out.Movements, toMovementJSON(movement))
 	}
 	return out
 }
