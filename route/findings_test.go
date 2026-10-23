@@ -24,8 +24,10 @@ import (
 // looks like an improvement right up until a published figure changes for a
 // reason no measurement supports.
 
-// failingFindings builds the worst possible check set: every check failed, one
-// of them critical.
+// failingFindings builds the worst possible findings block: every check
+// failed, one of them critical, and a metric reporting a value so extreme it
+// would be the first thing a careless implementation thresholded into the
+// verdict.
 func failingFindings() *checks.Findings {
 	s := checks.Subject{Domain: "example.test", Asset: asset.NGNC()}
 	crit := checks.IssuerAuthFlags{}.Describe()
@@ -36,6 +38,13 @@ func failingFindings() *checks.Findings {
 	f.Add(checks.Fail(crit, s, "the issuer can claw the asset back"))
 	f.Add(checks.Fail(warn, s, "the declared SEP-10 endpoint did not respond"))
 	f.Add(checks.Fail(note, s, "anchor_asset repeats the token's own code"))
+
+	// Metrics joined the wire in #577. A spread of 500% is a determined
+	// quantity no reading of the composition rule permits a verdict to
+	// notice, which is what makes it the right probe here.
+	book := checks.SpreadMetric{}.Describe()
+	f.AddMetric(checks.MetricValue(book, checks.Subject{Send: asset.USDC(), Receive: asset.NGNC()},
+		decimal.NewFromInt(500), checks.UnitPercent, "spread 500% of mid"))
 	return &f
 }
 
@@ -81,6 +90,11 @@ func TestFindingsDoNotMoveTheHeadline(t *testing.T) {
 	if withFindings.Findings.WorstSeverity != "critical" {
 		t.Fatalf("test setup is wrong: worst severity is %q, want critical",
 			withFindings.Findings.WorstSeverity)
+	}
+	// The metric has to reach the wire for this test to cover metrics at all.
+	if len(withFindings.Findings.Metrics) != 1 || !withFindings.Findings.Metrics[0].Determined {
+		t.Fatalf("test setup is wrong: %d metrics reached the findings block, "+
+			"want one determined metric", len(withFindings.Findings.Metrics))
 	}
 
 	// Every field that states what the corridor *is*.

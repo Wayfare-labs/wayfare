@@ -1,0 +1,58 @@
+name: Feature or Hardening Issue
+description: Propose a new feature, improvement, refactoring, or hardening task.
+title: ""
+labels: ["area:ecosystem"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please structure feature and hardening issues according to repository conventions.
+        Include a backlog reference from `docs/backlog.md` if applicable.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: Describe the work to be done. Link to the relevant backlog entry in `docs/backlog.md` if applicable.
+      placeholder: "> Backlog entry `#<entry>`, from **[docs/backlog.md](https://github.com/Wayfare-labs/wayfare/blob/main/docs/backlog.md)** — Initiative ...\n\n## What\n..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: roadmap_impact
+    attributes:
+      label: Roadmap impact
+      description: Which roadmap milestone does this issue target?
+      options:
+        - "**V1 — Hardening**"
+        - "**V2 — Execution economics**"
+        - "**V3 — Multi-corridor & multi-hop**"
+        - "**V4+ — Future (not active)**"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints that apply
+      description: Check each box to confirm compliance with repository measurement constraints.
+      options:
+        - label: "assert nothing the repository does not currently support; check claims against the code as it is, not as it is described"
+          required: true
+        - label: "every measurement cited carries its source and the date it was checked"
+          required: true
+        - label: "mark future capabilities as future — do not describe roadmap items as though they are built"
+          required: true
+        - label: "a negative or inconclusive finding is a valid result and should be reported as one"
+          required: true
+
+  - type: textarea
+    id: done_when
+    attributes:
+      label: Done when
+      description: Clear acceptance criteria (checklist items).
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true

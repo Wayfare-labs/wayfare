@@ -41,17 +41,18 @@ import (
 	"github.com/Wayfare-labs/wayfare/route"
 )
 
-// Version is the record schema version.
+// Version is the current record schema version.
 //
 // It is part of the hashed preimage, so a bump invalidates existing chains by
 // construction — unless the new fields are added with omitempty, in which case
 // a record written by an older build (whose new fields are empty) still
 // encodes to exactly the bytes that were hashed when it was written, and
-// still verifies. Version 3 adds reference.fetched_at this way: a Version 2
-// record has no fetched_at, encodes byte-for-byte as it always did, and so
-// still verifies under this build. See the preimage rules on Record and the
-// migration note in docs/run-store.md.
-const Version = 3
+// still verifies. Version 4 adds snapshot this way after every Version 3
+// field, so older records still verify unchanged. See docs/run-store.md.
+const Version = 4
+
+// LegacyVersion is the prior record schema, retained for existing chains.
+const LegacyVersion = 1
 
 // GenesisPrevHash is the prev_hash of the first record in a chain.
 const GenesisPrevHash = "sha256:" + "0000000000000000000000000000000000000000000000000000000000000000"
@@ -90,6 +91,21 @@ type Reference struct {
 	// same JSON — and therefore the same hash — it did before this field
 	// existed. This is the Version 3 migration; see docs/run-store.md.
 	FetchedAt string `json:"fetched_at,omitempty"`
+
+	// The diagnostic provider's attribution of a DISAGREE (issue #597).
+	//
+	// These are optional, declared omitempty and after every earlier field,
+	// on the same rule as FetchedAt: a record written before the diagnostic
+	// existed encodes to exactly the bytes it always did and still verifies.
+	// A record written when the third provider answered carries what it
+	// observed; a record written when it did not simply omits the block.
+	DiagnosticSource             string `json:"diagnostic_source,omitempty"`
+	DiagnosticMid                string `json:"diagnostic_mid,omitempty"`
+	DiagnosticAsOf               string `json:"diagnostic_as_of,omitempty"`
+	DiagnosticOutlier            string `json:"diagnostic_outlier,omitempty"`
+	DiagnosticOutlierDistancePct string `json:"diagnostic_outlier_distance_pct,omitempty"`
+	DiagnosticOtherDistancePct   string `json:"diagnostic_other_distance_pct,omitempty"`
+	DiagnosticReason             string `json:"diagnostic_reason,omitempty"`
 }
 
 // Rung is one size's stored result.
@@ -160,6 +176,10 @@ type Record struct {
 	// docs/run-store.md for the migration.
 	Checks  []checks.CheckJSON  `json:"checks,omitempty"`
 	Metrics []checks.MetricJSON `json:"metrics,omitempty"`
+
+	// Snapshot is the content hash of the exact upstream snapshot artifact.
+	// It is optional and follows every Version 3 field to preserve old hashes.
+	Snapshot string `json:"snapshot,omitempty"`
 
 	// DependencyChain is the full dependency tree, stored word-for-word
 	// from the wire so the stale path can serve it back identically.
@@ -254,6 +274,11 @@ type Store interface {
 
 	// Recent returns up to n most recent records, newest first.
 	Recent(ctx context.Context, corridor string, n int) ([]*Record, error)
+
+	// RecentBefore returns up to n records strictly before sequence number
+	// 'before' (i.e. Seq < before), newest first. When before <= 0, it
+	// returns up to n most recent records without cursor filtering.
+	RecentBefore(ctx context.Context, corridor string, n int, before int64) ([]*Record, error)
 
 	// All returns the complete corridor history in chronological order
 	// (oldest first). Use this when the full history is needed, e.g.

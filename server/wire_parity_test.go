@@ -97,6 +97,7 @@ func wellPopulatedLadderResult() *route.LadderResult {
 			FetchedAt:       quotedAt,
 			SecondaryMid:    decimal.RequireFromString("1348.9000"),
 			SecondarySource: "currency-api",
+			SecondaryAsOf:   quotedAt,
 			DivergencePct:   decimal.RequireFromString("0.0931"),
 			Agreement:       refrate.AgreementAgree,
 			Note:            "both providers agree within tolerance",
@@ -381,6 +382,38 @@ func checkResult(id string, sev checks.Severity, passed, determined bool, summar
 	return r
 }
 
+// TestLiveAndStaleAgreeOnDependsOnIdentity is the value-level complement to
+// the field-set test for depends_on (backlog #8). The field-set test only
+// proves both documents carry a depends_on key; this one proves the stale
+// document carries the same dependency identity the live document did —
+// code, issuer and peg — instead of rebuilding the list from stored codes
+// alone, which would strip the issuer from every history-served reading.
+func TestLiveAndStaleAgreeOnDependsOnIdentity(t *testing.T) {
+	lr := wellPopulatedLadderResult()
+	lr.Integrity = route.IntegrityDerivative
+	lr.DependsOn = []asset.Asset{asset.NGNC()}
+	pair := "USD/GHS"
+
+	live := route.ToCorridorJSON(lr, pair)
+	if len(live.DependsOn) != 1 || live.DependsOn[0].Issuer == "" {
+		t.Fatalf("test setup is wrong: live depends_on = %+v, want one dependency "+
+			"carrying an issuer", live.DependsOn)
+	}
+
+	rec := runstore.FromCorridorJSON(live)
+	stale := staleJSON(rec, pair, time.Now().UTC())
+
+	if len(stale.DependsOn) != len(live.DependsOn) {
+		t.Fatalf("stale depends_on = %v, want %v", stale.DependsOn, live.DependsOn)
+	}
+	for i := range live.DependsOn {
+		if stale.DependsOn[i] != live.DependsOn[i] {
+			t.Errorf("stale depends_on[%d] = %+v, want the live identity %+v",
+				i, stale.DependsOn[i], live.DependsOn[i])
+		}
+	}
+}
+
 // TestLiveAndStaleAgreeOnReferenceCrossCheckValues goes one step further than
 // the field set: for the fields that do round-trip, the values must survive
 // too. A field present on both sides with a silently different value is a
@@ -394,6 +427,10 @@ func TestLiveAndStaleAgreeOnReferenceCrossCheckValues(t *testing.T) {
 	rec := runstore.FromCorridorJSON(live)
 	stale := staleJSON(rec, pair, time.Now().UTC())
 
+	if stale.ReferenceAsOf != live.ReferenceAsOf {
+		t.Errorf("stale ReferenceAsOf = %q, want %q",
+			stale.ReferenceAsOf, live.ReferenceAsOf)
+	}
 	if stale.ReferenceSecondaryMid != live.ReferenceSecondaryMid {
 		t.Errorf("stale ReferenceSecondaryMid = %q, want %q (the live value)",
 			stale.ReferenceSecondaryMid, live.ReferenceSecondaryMid)
@@ -402,6 +439,10 @@ func TestLiveAndStaleAgreeOnReferenceCrossCheckValues(t *testing.T) {
 		t.Errorf("stale ReferenceSecondarySource = %q, want %q",
 			stale.ReferenceSecondarySource, live.ReferenceSecondarySource)
 	}
+	if stale.ReferenceSecondaryAsOf != live.ReferenceSecondaryAsOf {
+		t.Errorf("stale ReferenceSecondaryAsOf = %q, want %q",
+			stale.ReferenceSecondaryAsOf, live.ReferenceSecondaryAsOf)
+	}
 	if stale.ReferenceDivergencePct != live.ReferenceDivergencePct {
 		t.Errorf("stale ReferenceDivergencePct = %q, want %q",
 			stale.ReferenceDivergencePct, live.ReferenceDivergencePct)
@@ -409,5 +450,42 @@ func TestLiveAndStaleAgreeOnReferenceCrossCheckValues(t *testing.T) {
 	if stale.ReferenceFetchedAt != live.ReferenceFetchedAt {
 		t.Errorf("stale ReferenceFetchedAt = %q, want %q (the live value, carried through storage)",
 			stale.ReferenceFetchedAt, live.ReferenceFetchedAt)
+	}
+}
+
+// TestLiveAndStaleAgreeOnReferenceDiagnostic is the value-level check for the
+// third-provider attribution: a DISAGREE diagnostic must survive storage and
+// come back on the stale path with the same source, outlier and figures. It is
+// provenance, so dropping it on replay would silently turn an attributed
+// disagreement into an anonymous one.
+func TestLiveAndStaleAgreeOnReferenceDiagnostic(t *testing.T) {
+	lr := wellPopulatedLadderResult()
+	lr.Reference.Agreement = refrate.AgreementDisagree
+	lr.Reference.Diagnostic = &refrate.Diagnostic{
+		Source:             "floatrates",
+		Mid:                decimal.RequireFromString("1340"),
+		AsOf:               time.Date(2026, 10, 19, 7, 55, 4, 0, time.UTC),
+		Outlier:            "exchangerate-api",
+		OutlierDistancePct: decimal.RequireFromString("0.7653"),
+		OtherDistancePct:   decimal.RequireFromString("0.6612"),
+	}
+	pair := "USD/NGN"
+
+	live := route.ToCorridorJSON(lr, pair)
+	rec := runstore.FromCorridorJSON(live)
+	stale := staleJSON(rec, pair, time.Now().UTC())
+
+	if live.ReferenceDiagnostic == nil || stale.ReferenceDiagnostic == nil {
+		t.Fatalf("diagnostic missing: live=%+v stale=%+v", live.ReferenceDiagnostic, stale.ReferenceDiagnostic)
+	}
+	if *stale.ReferenceDiagnostic != *live.ReferenceDiagnostic {
+		t.Errorf("stale diagnostic = %+v, want the live value %+v",
+			*stale.ReferenceDiagnostic, *live.ReferenceDiagnostic)
+	}
+	if rec.Reference.DiagnosticSource != "floatrates" {
+		t.Errorf("stored DiagnosticSource = %q, want floatrates", rec.Reference.DiagnosticSource)
+	}
+	if rec.Reference.DiagnosticOutlier != "exchangerate-api" {
+		t.Errorf("stored DiagnosticOutlier = %q, want exchangerate-api", rec.Reference.DiagnosticOutlier)
 	}
 }

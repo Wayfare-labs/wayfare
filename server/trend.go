@@ -43,9 +43,38 @@ type TrendJSON struct {
 	// history from a failed request without inspecting the array.
 	Count int `json:"count"`
 
+	// Next is the sequence cursor to fetch the next older page of runs
+	// via ?before=seq. Omitted when there are no older runs.
+	Next int64 `json:"next,omitempty"`
+
 	// Runs is oldest first. An array, never null, so a client can iterate
 	// it without a nil check when the history is empty.
 	Runs []TrendRunJSON `json:"runs"`
+
+	// IntegrityTransitions is the ordered series of determined structural
+	// changes between consecutive runs in Runs. Transitions involving UNKNOWN
+	// are omitted by runstore's integrity-transition contract.
+	IntegrityTransitions []IntegrityTransitionJSON `json:"integrity_transitions"`
+
+	// LatestTransition is the most recent structural change in the window
+	// above — the same event as the last element of IntegrityTransitions,
+	// named on its own because "this corridor changed kind" is the one fact
+	// a reader should not have to diff two records to find.
+	//
+	// Null when the window establishes no transition: a history of one run
+	// has nothing to compare, and two runs that agree are not a change. It
+	// is null rather than absent, so a client can tell "no transition" from
+	// "this build does not report transitions". It never alters a run's
+	// integrity state or verdict.
+	LatestTransition *IntegrityTransitionJSON `json:"latest_transition"`
+
+	// Movements is the benchmark-vs-corridor movement decomposition over the
+	// same window (issue #637): one entry per consecutive pair that
+	// established any movement, oldest pair first. Empty array, never null,
+	// so a client can iterate without a nil check. Empty means no pair
+	// established a movement — fewer than two runs, or no pair with both a
+	// scorable benchmark and a priced rung — never "no movement happened".
+	Movements []MovementJSON `json:"movements"`
 
 	// DivergenceStats summarises how far the corridor's two reference
 	// providers have disagreed across the runs above — a fact about the
@@ -54,6 +83,17 @@ type TrendJSON struct {
 	// explicitly rather than left for a client to infer from an absent key.
 	// Never feeds back into any run's verdict or integrity state above.
 	DivergenceStats DivergenceStatsJSON `json:"divergence_stats"`
+}
+
+// IntegrityTransitionJSON is one structural change in a trend window.
+type IntegrityTransitionJSON struct {
+	PreviousIntegrity string   `json:"previous_integrity"`
+	CurrentIntegrity  string   `json:"current_integrity"`
+	PreviousRunAt     string   `json:"previous_run_at"`
+	CurrentRunAt      string   `json:"current_run_at"`
+	PreviousDependsOn []string `json:"previous_depends_on"`
+	CurrentDependsOn  []string `json:"current_depends_on"`
+	TransitionType    string   `json:"transition_type"`
 }
 
 // DivergenceStatsJSON is a corridor benchmark's own longitudinal divergence:
@@ -168,19 +208,91 @@ type TrendRungJSON struct {
 
 // toTrendJSON renders stored records in the wire shape, preserving their
 // stored (oldest first) order.
-func toTrendJSON(recs []*runstore.Record, key, pair string, send, recv asset.Asset) TrendJSON {
+// MovementJSON is one consecutive-pair movement decomposition on the wire
+// (issue #637): how much of the headline change came from the benchmark and
+// how much from the corridor itself. Empty percentage fields are the
+// explicit unknown — a pair where neither side could be measured is absent
+// from the movements array, never a zero.
+type MovementJSON struct {
+	PreviousRunAt string `json:"previous_run_at"`
+	CurrentRunAt  string `json:"current_run_at"`
+
+	// BenchmarkFrom/BenchmarkTo are the mids the two runs were scored
+	// against; CorridorFrom/CorridorTo are their floor-size effective rates.
+	BenchmarkFrom string `json:"benchmark_from,omitempty"`
+	BenchmarkTo   string `json:"benchmark_to,omitempty"`
+	CorridorFrom  string `json:"corridor_from,omitempty"`
+	CorridorTo    string `json:"corridor_to,omitempty"`
+
+	// Signed decimal strings in percent. BenchmarkPct is corridor-free;
+	// CorridorPct is benchmark-free; LossPctChange is the headline move in
+	// percentage points.
+	BenchmarkPct  string `json:"benchmark_pct,omitempty"`
+	CorridorPct   string `json:"corridor_pct,omitempty"`
+	LossPctChange string `json:"loss_pct_change,omitempty"`
+}
+
+// toMovementJSON renders a runstore.Movement for the wire, dropping the
+// corridor key the envelope already carries.
+func toMovementJSON(m *runstore.Movement) MovementJSON {
+	return MovementJSON{
+		PreviousRunAt: m.PreviousRunAt.UTC().Format(time.RFC3339),
+		CurrentRunAt:  m.CurrentRunAt.UTC().Format(time.RFC3339),
+		BenchmarkFrom: m.BenchmarkFrom,
+		BenchmarkTo:   m.BenchmarkTo,
+		CorridorFrom:  m.CorridorFrom,
+		CorridorTo:    m.CorridorTo,
+		BenchmarkPct:  m.BenchmarkPct,
+		CorridorPct:   m.CorridorPct,
+		LossPctChange: m.LossPctChange,
+	}
+}
+
+func toTrendJSON(recs []*runstore.Record, key, pair string, send, recv asset.Asset, next int64) TrendJSON {
 	out := TrendJSON{
-		Corridor:      key,
-		SendAsset:     route.ToAssetJSON(send),
-		ReceiveAsset:  route.ToAssetJSON(recv),
-		ReferencePair: pair,
-		Count:         len(recs),
-		Runs:          make([]TrendRunJSON, 0, len(recs)),
+		Corridor:             key,
+		SendAsset:            route.ToAssetJSON(send),
+		ReceiveAsset:         route.ToAssetJSON(recv),
+		ReferencePair:        pair,
+		Count:                len(recs),
+		Next:                 next,
+		Runs:                 make([]TrendRunJSON, 0, len(recs)),
+		IntegrityTransitions: make([]IntegrityTransitionJSON, 0),
+		Movements:            make([]MovementJSON, 0),
 	}
 	for _, rec := range recs {
 		out.Runs = append(out.Runs, toTrendRunJSON(rec))
 	}
+	transitions := runstore.TransitionsFromRecords(recs)
+	for _, transition := range transitions {
+		out.IntegrityTransitions = append(out.IntegrityTransitions, toIntegrityTransitionJSON(transition))
+	}
+	// The last transition in the window is the corridor's latest one: the
+	// window ends at the newest stored run, so — as long as it holds at
+	// least two runs — the pair the detector itself compares (the two most
+	// recent) is the pair this series ends with. A window of one run has
+	// nothing to compare and reports no transition, which is why the field
+	// is null rather than absent.
+	if len(transitions) > 0 {
+		latest := toIntegrityTransitionJSON(transitions[len(transitions)-1])
+		out.LatestTransition = &latest
+	}
+	for _, movement := range runstore.MovementsFromRecords(recs) {
+		out.Movements = append(out.Movements, toMovementJSON(movement))
+	}
 	return out
+}
+
+func toIntegrityTransitionJSON(transition *runstore.IntegrityTransition) IntegrityTransitionJSON {
+	return IntegrityTransitionJSON{
+		PreviousIntegrity: transition.PreviousIntegrity,
+		CurrentIntegrity:  transition.CurrentIntegrity,
+		PreviousRunAt:     transition.PreviousRunAt.UTC().Format(time.RFC3339),
+		CurrentRunAt:      transition.CurrentRunAt.UTC().Format(time.RFC3339),
+		PreviousDependsOn: append([]string{}, transition.PreviousDependsOn...),
+		CurrentDependsOn:  append([]string{}, transition.CurrentDependsOn...),
+		TransitionType:    transition.TransitionType.String(),
+	}
 }
 
 func toTrendRunJSON(rec *runstore.Record) TrendRunJSON {
@@ -227,7 +339,11 @@ func toTrendRunJSON(rec *runstore.Record) TrendRunJSON {
 // deployment.
 func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "only GET is supported")
+		writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET is supported")
+		return
+	}
+	if err := checkParams(r, "from", "to", "limit", "before", "pretty"); err != nil {
+		writeError(w, r, http.StatusBadRequest, codeInvalidQuery, err.Error())
 		return
 	}
 
@@ -236,20 +352,20 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 
 	sendAsset, ok := asset.Lookup(from)
 	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, codeUnknownSendAsset, fmt.Sprintf(
 			"unknown send asset %q; verified assets are %s",
 			from, strings.Join(asset.KnownCodes(), ", ")))
 		return
 	}
 	recvAsset, ok := asset.Lookup(to)
 	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, codeUnknownReceiveAsset, fmt.Sprintf(
 			"unknown receive asset %q; verified assets are %s",
 			to, strings.Join(asset.KnownCodes(), ", ")))
 		return
 	}
 	if _, ok := asset.FiatPeg(recvAsset); !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+		writeError(w, r, http.StatusBadRequest, codeNoFiatPeg, fmt.Sprintf(
 			"no verified fiat peg for %s, so there is no independent rate to score it against",
 			recvAsset.Code))
 		return
@@ -257,7 +373,13 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 
 	limit, err := parseTrendLimit(r.URL.Query().Get("limit"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, r, http.StatusBadRequest, codeInvalidLimit, err.Error())
+		return
+	}
+
+	before, err := parseTrendBefore(r)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, codeInvalidCursor, err.Error())
 		return
 	}
 
@@ -272,34 +394,43 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 	key := runstore.CorridorKey(from, to)
 
 	var recs []*runstore.Record
+	var nextCursor int64
 	if s.Store != nil {
-		recent, err := s.Store.Recent(r.Context(), key, limit)
+		// Read limit + 1 to detect whether an older page exists.
+		recent, err := s.Store.RecentBefore(r.Context(), key, limit+1, before)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "reading stored history: "+err.Error())
+			writeError(w, r, http.StatusInternalServerError, codeStoreRead, "reading stored history: "+err.Error())
 			return
 		}
-		// Recent is newest first because its callers want the latest
+		hasMore := len(recent) > limit
+		if hasMore {
+			recent = recent[:limit]
+		}
+		// RecentBefore is newest first because its callers want the latest
 		// record; a timeline reads oldest first, so reverse.
 		recs = make([]*runstore.Record, 0, len(recent))
 		for i := len(recent) - 1; i >= 0; i-- {
 			recs = append(recs, recent[i])
 		}
+		if hasMore && len(recs) > 0 {
+			nextCursor = recs[0].Seq
+		}
 	}
 
-	trend := toTrendJSON(recs, key, pair, sendAsset, recvAsset)
+	trend := toTrendJSON(recs, key, pair, sendAsset, recvAsset, nextCursor)
 
 	stats, err := analysis.DivergenceHistory(recs)
 	if err != nil {
 		// A stored divergence_pct that fails to parse is a corrupt record,
 		// not an absent observation — the correct output is an error, not a
 		// history that silently omits the bad run.
-		writeError(w, http.StatusInternalServerError,
+		writeError(w, r, http.StatusInternalServerError, codeDivergenceHistory,
 			"computing reference-divergence history: "+err.Error())
 		return
 	}
 	trend.DivergenceStats = toDivergenceStatsJSON(stats)
 
-	writeJSON(w, http.StatusOK, trend)
+	writeJSON(w, r, http.StatusOK, trend)
 }
 
 // parseTrendLimit bounds how much history one request may read.
@@ -321,6 +452,28 @@ func parseTrendLimit(raw string) (int, error) {
 	}
 	if n > maxTrendLimit {
 		n = maxTrendLimit
+	}
+	return n, nil
+}
+
+// parseTrendBefore validates the sequence cursor for backwards pagination.
+//
+// If before is not provided, it returns 0 and no cursor filter is applied.
+// An invalid, non-integer, or non-positive cursor is a client error (400).
+func parseTrendBefore(r *http.Request) (int64, error) {
+	if !r.URL.Query().Has("before") {
+		return 0, nil
+	}
+	raw := strings.TrimSpace(r.URL.Query().Get("before"))
+	if raw == "" {
+		return 0, fmt.Errorf("bad cursor %q: must be a whole number", raw)
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("bad cursor %q: must be a whole number", raw)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("bad cursor %q: must be positive", raw)
 	}
 	return n, nil
 }

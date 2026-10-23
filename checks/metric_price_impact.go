@@ -43,9 +43,9 @@ type PriceImpactPoint struct {
 	// Rate is the effective rate: DestAmount / Size.
 	Rate decimal.Decimal
 
-	// ImpactPct is the degradation relative to the reference rate (the rate
-	// at the smallest size), expressed as a percentage.  Zero at the
-	// reference size itself.
+	// ImpactPct is the signed change relative to the reference rate (the rate
+	// at the smallest size), expressed as a percentage. Zero at the reference
+	// size; a negative value means the effective rate improved at that size.
 	ImpactPct decimal.Decimal
 }
 
@@ -93,9 +93,7 @@ func (PriceImpactMetric) Describe() Descriptor {
 			"probed sizes.",
 		CannotDetermine: "The complete price-impact shape — this reports the " +
 			"observed curve across the probed sizes, which is a sample of " +
-			"the full behaviour. The venue is pathfinding (order book plus " +
-			"AMM), so this and a book-only spread observe different markets " +
-			"— see docs/liquidity-venues.md.",
+			"the full behaviour.",
 	}
 }
 
@@ -144,6 +142,18 @@ func (m PriceImpactMetric) RunCurve(ctx context.Context, s Subject) (*PriceImpac
 			"%s has no path to %s by construction (NO-MARKET): there is no rate at "+
 				"any size for a curve of probe sizes to measure degradation between",
 			s.Send.Code, s.Receive.Code))
+	}
+	// A reference the providers cannot agree on is not a reference. Price
+	// impact is a derived quantity — its value only matters when the corridor
+	// can be scored against a trustworthy benchmark. When the cross-check is
+	// MALFUNCTION the benchmark itself is suspect, and producing a precise-
+	// looking percentage would misrepresent a measurement that cannot be
+	// validated. See issue #161.
+	if s.ReferenceAgreement == referenceAgreementMalfunction {
+		return nil, MetricUndetermined(d, s, fmt.Sprintf(
+			"reference cross-check is MALFUNCTION: the two providers disagreed "+
+				"too far apart to trust either, so no derived quantity (including "+
+				"price impact) may be computed against an unscorable reference"))
 	}
 	if m.DEX == nil {
 		return nil, MetricUndetermined(d, s, "no DEX client available to price paths")
@@ -242,10 +252,10 @@ func (m PriceImpactMetric) RunCurve(ctx context.Context, s Subject) (*PriceImpac
 			points[i].ImpactPct = decimal.Zero
 			continue
 		}
+		// Keep improvements negative. A path that gets better at a larger size
+		// is an observed finding, not noise to smooth away, so consumers can
+		// report the measured non-monotonic curve accurately.
 		impact := refRate.Sub(points[i].Rate).Div(refRate).Mul(decimal.NewFromInt(100))
-		if impact.IsNegative() {
-			impact = decimal.Zero
-		}
 		points[i].ImpactPct = impact
 		if impact.GreaterThan(maxImpact) {
 			maxImpact = impact

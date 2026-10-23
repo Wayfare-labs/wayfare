@@ -3,10 +3,12 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/shopspring/decimal"
 
+	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/route"
 )
 
@@ -169,6 +171,63 @@ func TestReferenceProviderUnknown(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown provider, got nil")
 	}
+	wantPrefix := `unknown reference provider "bogus"; known: `
+	if !strings.HasPrefix(err.Error(), wantPrefix) {
+		t.Errorf("error %q should start with %q", err.Error(), wantPrefix)
+	}
+	for _, name := range refProviderNames() {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("error %q should list known provider %q", err.Error(), name)
+		}
+	}
+}
+
+func TestReferenceProviderCaseAndWhitespace(t *testing.T) {
+	ref, err := referenceProvider("  ExChAnGeRaTe-ApI  ")
+	if err != nil {
+		t.Fatalf("referenceProvider with mixed case/whitespace: %v", err)
+	}
+	if ref.provider == nil || ref.provider.Name() != "exchangerate-api" {
+		t.Fatalf("unexpected provider: %v", ref.provider)
+	}
+}
+
+func TestRefProviderNames(t *testing.T) {
+	names := refProviderNames()
+	if len(names) == 0 {
+		t.Fatal("refProviderNames() returned no providers")
+	}
+	expected := []string{"exchangerate-api", "currency-api"}
+	if len(names) != len(expected) {
+		t.Fatalf("got %d providers, want %d", len(names), len(expected))
+	}
+	for i, want := range expected {
+		if names[i] != want {
+			t.Errorf("refProviderNames()[%d] = %q, want %q", i, names[i], want)
+		}
+	}
+	for _, name := range names {
+		ref, err := referenceProvider(name)
+		if err != nil {
+			t.Errorf("referenceProvider(%q) failed: %v", name, err)
+		}
+		if ref.provider == nil {
+			t.Errorf("referenceProvider(%q) returned nil provider", name)
+		}
+	}
+}
+
+func TestRefHelp(t *testing.T) {
+	help := refHelp()
+	wantPrefix := "reference rate provider: "
+	if !strings.HasPrefix(help, wantPrefix) {
+		t.Errorf("refHelp() = %q, want prefix %q", help, wantPrefix)
+	}
+	for _, name := range refProviderNames() {
+		if !strings.Contains(help, name) {
+			t.Errorf("refHelp() = %q should contain provider %q", help, name)
+		}
+	}
 }
 
 func TestReferenceProviderEmptyDefaults(t *testing.T) {
@@ -179,6 +238,88 @@ func TestReferenceProviderEmptyDefaults(t *testing.T) {
 	}
 	if ref.provider == nil {
 		t.Fatal("provider is nil for empty default")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// corridorCodes & toHelp (issue #586)
+// ---------------------------------------------------------------------------
+
+func TestCorridorCodes(t *testing.T) {
+	codes := corridorCodes()
+	if len(codes) == 0 {
+		t.Fatal("corridorCodes() returned no codes")
+	}
+
+	registered := make(map[string]bool)
+	for _, e := range asset.Registry() {
+		if e.Code == "USDC" || e.Peg == "" {
+			continue
+		}
+		registered[e.Code] = true
+	}
+
+	if len(codes) != len(registered) {
+		t.Fatalf("corridorCodes() returned %d codes, want %d", len(codes), len(registered))
+	}
+
+	for _, c := range codes {
+		if !registered[c] {
+			t.Errorf("corridorCodes() returned unregistered code %q", c)
+		}
+		if c == "USDC" {
+			t.Errorf("corridorCodes() should not contain USDC")
+		}
+	}
+}
+
+func TestToHelp(t *testing.T) {
+	help := toHelp()
+	wantPrefix := "destination asset code ("
+	if !strings.HasPrefix(help, wantPrefix) {
+		t.Errorf("toHelp() = %q, want prefix %q", help, wantPrefix)
+	}
+	if !strings.HasSuffix(help, ")") {
+		t.Errorf("toHelp() = %q, want suffix ')'", help)
+	}
+
+	// Acceptance criteria: Test asserts every registered destination appears.
+	for _, e := range asset.Registry() {
+		if e.Code == "USDC" || e.Peg == "" {
+			continue
+		}
+		if !strings.Contains(help, e.Code) {
+			t.Errorf("toHelp() = %q missing registered destination %q", help, e.Code)
+		}
+	}
+
+	// Negative assertions:
+	// USDC is the start of the corridor, not a destination.
+	if strings.Contains(help, "USDC") {
+		t.Errorf("toHelp() = %q should not contain USDC", help)
+	}
+	// Bogus/unregistered tokens must not appear.
+	if strings.Contains(help, "BOGUS") {
+		t.Errorf("toHelp() = %q should not contain bogus asset", help)
+	}
+}
+
+func TestCorridorsMapCoversEveryDestination(t *testing.T) {
+	for _, e := range asset.Registry() {
+		if e.Code == "USDC" || e.Peg == "" {
+			continue
+		}
+		c, ok := corridors[e.Code]
+		if !ok {
+			t.Errorf("corridors map missing registered destination %q", e.Code)
+			continue
+		}
+		if c.dest.Code != e.Code {
+			t.Errorf("corridor for %q has dest.Code %q", e.Code, c.dest.Code)
+		}
+		if c.refPair != e.Peg {
+			t.Errorf("corridor for %q has refPair %q, want %q", e.Code, c.refPair, e.Peg)
+		}
 	}
 }
 
@@ -241,7 +382,7 @@ func TestGitRevisionNonEmpty(t *testing.T) {
 
 func TestDirtyFilesReturnsSlice(t *testing.T) {
 	// dirtyFiles should not panic, regardless of whether the tree is clean
-	files, err := dirtyFiles()
+	files, err := dirtyFiles(".")
 	if err != nil {
 		// Not in a git repo is acceptable
 		t.Skipf("dirtyFiles error (may not be in a git repo): %v", err)
@@ -255,7 +396,7 @@ func TestDirtyFilesReturnsSlice(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRequireCleanTreeAllowDirtyAlwaysReturnsNil(t *testing.T) {
-	dirty, err := requireCleanTree(true)
+	dirty, err := requireCleanTree(".", true)
 	if err != nil {
 		t.Fatalf("requireCleanTree(allowDirty=true): %v", err)
 	}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
+	"github.com/Wayfare-labs/wayfare/snapshot"
 )
 
 // liveStrictSendResponse is the actual body Horizon returned for
@@ -188,6 +191,67 @@ func TestLiveCorridorIsRefused(t *testing.T) {
 	joined := strings.Join(res.Notes, " ")
 	if !strings.Contains(joined, "No viable route") {
 		t.Errorf("expected an explicit no-viable-route note, got: %v", res.Notes)
+	}
+}
+
+// TestQuoteHopsCarryThePathAsStructuredData follows the route from
+// pathfinding to the wire (backlog #84, issue #100). The recorded best path
+// on this corridor routes USDC through native XLM to NGNC; the quote must
+// carry that intermediate hop, and ToQuoteJSON must publish the path as
+// structured assets in execution order — both endpoints, the intermediate,
+// issuers where they exist — while the description string stays byte-for-
+// byte what it was, because it is a display field existing clients read.
+//
+// The assertion is exact (reflect.DeepEqual against the wanted entries), so
+// it fails if a hop is dropped, reordered, published without its issuer, or
+// if the description is touched on the way out.
+func TestQuoteHopsCarryThePathAsStructuredData(t *testing.T) {
+	srv := horizonStub(t, liveStrictSendResponse)
+	defer srv.Close()
+
+	e := &Engine{DEX: &dex.Client{HorizonURL: srv.URL}, RefRate: usdToNGN("1500")}
+	res, err := e.Quote(context.Background(), ngnRequest("100"))
+	if err != nil {
+		t.Fatalf("Quote: %v", err)
+	}
+	if len(res.Quotes) == 0 {
+		t.Fatal("expected at least one quote")
+	}
+	q := res.Quotes[0]
+
+	// The intermediate hops travel with the quote: exactly the native XLM
+	// bridge this recorded path takes.
+	if len(q.Hops) != 1 || !q.Hops[0].IsNative() {
+		t.Fatalf("Quote.Hops = %+v, want exactly the native XLM hop", q.Hops)
+	}
+
+	// The description string is unchanged: display text, still published,
+	// still the same bytes.
+	const wantDescription = "USDC -> XLM -> NGNC"
+	if q.Description != wantDescription {
+		t.Fatalf("Description = %q, want %q — it must stay exactly as it was", q.Description, wantDescription)
+	}
+
+	j := ToQuoteJSON(&q)
+	if j.Description != wantDescription {
+		t.Errorf("wire Description = %q, want %q", j.Description, wantDescription)
+	}
+
+	want := []AssetJSON{
+		{Code: "USDC", Issuer: asset.USDCIssuer, Asset: "stellar:USDC:" + asset.USDCIssuer},
+		{Code: "XLM", Asset: "stellar:native"},
+		{Code: "NGNC", Issuer: asset.LinkIOIssuer, Peg: "NGN", Asset: "stellar:NGNC:" + asset.LinkIOIssuer},
+	}
+	if !reflect.DeepEqual(j.Hops, want) {
+		t.Errorf("hops =\n  %+v\nwant (execution order, both endpoints, issuers where known):\n  %+v",
+			j.Hops, want)
+	}
+
+	// The native hop carries no issuer — correctly, because XLM has none
+	// and stellar:native identifies it — and must not claim its issuer is
+	// merely unknown.
+	if j.Hops[1].IssuerUnknown {
+		t.Error("the native XLM hop must not be marked issuer_unknown; native assets have no issuer by nature")
 	}
 }
 
@@ -706,6 +770,105 @@ func TestUnknownIssuerIsNotTreatedAsFiat(t *testing.T) {
 	}
 	if !asset.IsFiatToken(asset.NGNC()) {
 		t.Error("the registered NGNC issuer must be recognised")
+	}
+}
+
+// malformed snapshot loading -------------------------------------------------
+
+// loadMalformedSnap opens the recorded strict-send malformed fixture set.
+//
+// The prefix is deliberately not "usdc-ngnc", so it cannot collide with the
+// corridor snapshots that integrity_snapshot_test.go matches with that prefix.
+func loadMalformedSnap(t *testing.T, prefix string) *snapshot.Manifest {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join("../testdata/snapshots", prefix+"-*"))
+	if err != nil || len(matches) == 0 {
+		t.Fatalf("no snapshot matching %q under ../testdata/snapshots (err=%v)", prefix, err)
+	}
+	m, err := snapshot.Load(matches[0])
+	if err != nil {
+		t.Fatalf("loading %s: %v", matches[0], err)
+	}
+	return m
+}
+
+// TestRecordedMalformedPayloadsReportUnknown is the layer that turns paths
+// into published verdicts, exercised against Horizon responses that parse
+// into plausible zeros.
+//
+// The failure that matters here is not a parse error — those surface loudly.
+// It is a payload that decodes cleanly into a zero or a nonsense figure and
+// would otherwise flow straight into a verdict as though it were a measured
+// price. A destination amount of "0" priced against mid renders a tidy 100%
+// loss; a negative one a loss above 100%; nine decimal places a rate the
+// asset cannot carry; and an asset type Horizon never emits names a hop that
+// was never identified. The engine's rule is that a layer-2 calculation on an
+// unavailable layer-1 fact is unknown — not a default — and each of these
+// must come back with that rule intact: no priced rung, no verdict, and no
+// zero reaching one.
+//
+// All fixtures run through snapshot.Replayer, which errors on any request it
+// was not recorded for, so these tests stay offline by construction.
+func TestRecordedMalformedPayloadsReportUnknown(t *testing.T) {
+	m := loadMalformedSnap(t, "strictsend-malformed")
+	e := &Engine{
+		DEX: &dex.Client{
+			HorizonURL: "https://horizon.stellar.org",
+			HTTPClient: m.HTTPClient(),
+		},
+		RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+			"USD/NGN": decimal.RequireFromString("1350.2568"),
+		}),
+	}
+
+	cases := []struct {
+		name   string
+		amount string
+		// reason is the specific substring the notes must carry, so a failure
+		// can be debugged from the result alone rather than guessing which
+		// shape broke.
+		reason string
+	}{
+		{"zero_destination_amount", "101", "must be positive"},
+		{"negative_destination_amount", "102", "must be positive"},
+		{"amount_more_precise_than_asset", "103", "decimal places"},
+		{"unrecognised_hop_asset_type", "104", "asset_type"},
+		{"records_array_contains_null", "105", "null path record"},
+		{"empty_200_body", "106", "decoding horizon response"},
+		{"truncated_json_body", "107", "decoding horizon response"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := e.Quote(context.Background(), ngnRequest(tc.amount))
+			if err != nil {
+				t.Fatalf("Quote: %v", err)
+			}
+
+			if res.Integrity != IntegrityUnknown {
+				t.Errorf("Integrity = %s, want UNKNOWN: a broken paywall is a failed "+
+					"measurement, not a no-market or a price", res.Integrity)
+			}
+			if len(res.Quotes) != 0 {
+				t.Errorf("got %d priced quotes, want none; a priced rung on broken data "+
+					"would publish a number the response never contained", len(res.Quotes))
+			}
+			if res.Recommended != nil {
+				t.Error("Recommended must be nil: broken data must never yield a recommendation")
+			}
+			for _, q := range res.Quotes {
+				if q.Verdict != VerdictUnknown || !q.LossPct.IsZero() {
+					t.Errorf("quote presented %s at %s%% loss instead of withholding the verdict",
+						q.Verdict, q.LossPct)
+				}
+			}
+
+			joined := strings.Join(res.Notes, " ")
+			if !strings.Contains(joined, tc.reason) {
+				t.Errorf("notes = %q, want them to name the specific reason %q",
+					res.Notes, tc.reason)
+			}
+		})
 	}
 }
 

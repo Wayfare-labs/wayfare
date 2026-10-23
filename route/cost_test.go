@@ -10,10 +10,64 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/checks"
 )
 
 func testUSDC() asset.Asset { return asset.USDC() }
 func testNGNC() asset.Asset { return asset.NGNC() }
+
+// TestDecomposeExpectedFailureCostUndetermined pins the one cost component
+// that must never acquire a number.
+//
+// Expected failure cost is a layer 3 quantity: it needs observed failures to
+// estimate, and none have been collected. Reporting it as zero would state
+// that a corridor never fails, which is a much stronger claim than "we do not
+// know" and the opposite of what the data supports.
+//
+// So it stays undetermined, and it carries a reason saying why — an unexplained
+// blank invites a reader to assume the cost is negligible rather than unmeasured.
+func TestDecomposeExpectedFailureCostUndetermined(t *testing.T) {
+	q := Quote{
+		Kind:          KindDEX,
+		Description:   "USDC -> XLM -> NGNC",
+		Source:        "stellar-dex",
+		SendAsset:     testUSDC(),
+		SendAmount:    decimal.NewFromInt(100),
+		ReceiveAsset:  testNGNC(),
+		ReceiveAmount: decimal.RequireFromString("112800.51"),
+		EffectiveRate: decimal.RequireFromString("1128.0051"),
+		ReferenceMid:  decimal.RequireFromString("1500"),
+		LossPct:       decimal.RequireFromString("24.80"),
+		LossAmount:    decimal.RequireFromString("37199.49"),
+		Verdict:       VerdictUnusable,
+	}
+
+	d := Decompose(q, decimal.RequireFromString("1500"))
+
+	var found bool
+	for _, p := range d.Parts {
+		if p.Component != CostExpectedFailure {
+			continue
+		}
+		found = true
+
+		if p.Determined {
+			t.Error("expected failure cost reported as determined; it needs observed " +
+				"failures to estimate, and none have been collected")
+		}
+		if !p.Amount.IsZero() {
+			t.Errorf("undetermined expected failure cost carries amount %s; an "+
+				"undetermined component must hold no figure at all", p.Amount)
+		}
+		if strings.TrimSpace(p.Reason) == "" {
+			t.Error("undetermined expected failure cost carries no reason; an " +
+				"unexplained blank invites a reader to assume the cost is negligible")
+		}
+	}
+	if !found {
+		t.Fatal("decomposition omits the expected-failure component entirely")
+	}
+}
 
 func TestCostDecomposeSplitsCorrectly(t *testing.T) {
 	q := Quote{
@@ -36,15 +90,15 @@ func TestCostDecomposeSplitsCorrectly(t *testing.T) {
 	if d.TotalLossPct.StringFixed(2) != "24.80" {
 		t.Errorf("TotalLossPct = %s, want 24.80", d.TotalLossPct)
 	}
-	if len(d.Parts) != 4 {
-		t.Fatalf("expected 4 cost parts, got %d", len(d.Parts))
+	if len(d.Parts) != 5 {
+		t.Fatalf("expected 5 cost parts, got %d", len(d.Parts))
 	}
 
 	seen := map[CostComponent]bool{}
 	for _, p := range d.Parts {
 		seen[p.Component] = true
 	}
-	for _, comp := range []CostComponent{CostFXLoss, CostFees, CostSlippage, CostExpectedFailure} {
+	for _, comp := range []CostComponent{CostFXLoss, CostNetworkFees, CostAnchorFee, CostSlippage, CostExpectedFailure} {
 		if !seen[comp] {
 			t.Errorf("missing cost component: %s", comp)
 		}
@@ -58,18 +112,29 @@ func TestCostDecomposeSplitsCorrectly(t *testing.T) {
 		t.Error("FX loss should be determined")
 	}
 
-	fees := d.Parts[1]
-	if fees.Component != CostFees {
-		t.Errorf("second component = %s, want fees", fees.Component)
+	netFees := d.Parts[1]
+	if netFees.Component != CostNetworkFees {
+		t.Errorf("second component = %s, want network_fees", netFees.Component)
 	}
-	if fees.Determined {
-		t.Error("fees must be undetermined when the network fee and operation count are not known")
+	if netFees.Determined {
+		t.Error("network_fees must be undetermined when the network fee and operation count are not known")
 	}
-	if fees.Reason == "" {
-		t.Error("undetermined fees must carry a reason")
+	if netFees.Reason == "" {
+		t.Error("undetermined network_fees must carry a reason")
 	}
 
-	slippage := d.Parts[2]
+	aFee := d.Parts[2]
+	if aFee.Component != CostAnchorFee {
+		t.Errorf("third component = %s, want anchor_fee", aFee.Component)
+	}
+	if aFee.Determined {
+		t.Error("anchor_fee must be undetermined when the anchor does not publish a quote server")
+	}
+	if aFee.Reason == "" {
+		t.Error("undetermined anchor_fee must carry a reason")
+	}
+
+	slippage := d.Parts[3]
 	if slippage.Determined {
 		t.Error("slippage should be undetermined without a size comparison")
 	}
@@ -77,7 +142,7 @@ func TestCostDecomposeSplitsCorrectly(t *testing.T) {
 		t.Error("undetermined slippage must carry a reason")
 	}
 
-	failCost := d.Parts[3]
+	failCost := d.Parts[4]
 	if failCost.Determined {
 		t.Error("expected failure cost must be undetermined")
 	}
@@ -86,6 +151,12 @@ func TestCostDecomposeSplitsCorrectly(t *testing.T) {
 	}
 }
 
+// TestCostDecomposeZeroLoss covers a route that achieves mid exactly.
+//
+// Zero loss is a real measurement, not a missing one: the route was priced and
+// found to cost nothing against the benchmark. It must therefore report a
+// determined zero rather than an undetermined component, which is the
+// distinction the rest of this file exists to protect.
 func TestCostDecomposeZeroLoss(t *testing.T) {
 	q := Quote{
 		Kind:          KindDEX,
@@ -140,6 +211,30 @@ func TestCostComponentsDoNotOverlap(t *testing.T) {
 // computes and carries each priced rung's decomposition — the change that
 // takes Decompose from a test-only function to the value behind every priced
 // rung on the wire. An unpriced rung carries none.
+func TestReconcileComponents(t *testing.T) {
+	total := decimal.NewFromInt(100)
+	comps := map[string]decimal.Decimal{
+		"fx_loss":  decimal.NewFromInt(60),
+		"slippage": decimal.NewFromInt(30),
+	}
+	undetermined := decimal.NewFromInt(10)
+	tolerance := decimal.NewFromFloat(0.1)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+
+	// Mismatch case
+	badComps := map[string]decimal.Decimal{
+		"fx_loss": decimal.NewFromInt(50),
+	}
+	err = ReconcileComponents(total, badComps, undetermined, tolerance)
+	if !errors.Is(err, ErrComponentSumMismatch) {
+		t.Errorf("expected ErrComponentSumMismatch, got %v", err)
+	}
+}
+
 func TestLadderAttachesDecompositionToPricedRungs(t *testing.T) {
 	q := Quote{
 		Kind:          KindDEX,
@@ -184,7 +279,7 @@ func TestLadderAttachesDecompositionToPricedRungs(t *testing.T) {
 	for _, p := range priced.Decomposition.Parts {
 		seen[p.Component] = true
 	}
-	for _, comp := range []CostComponent{CostFXLoss, CostFees, CostSlippage, CostExpectedFailure} {
+	for _, comp := range []CostComponent{CostFXLoss, CostNetworkFees, CostAnchorFee, CostSlippage, CostExpectedFailure} {
 		if !seen[comp] {
 			t.Errorf("priced rung decomposition missing component %s", comp)
 		}
@@ -247,8 +342,8 @@ func TestCostBlockJSONShape(t *testing.T) {
 	if total != "4.46" {
 		t.Errorf("total_loss_pct = %q, want the decimal string \"4.46\"", total)
 	}
-	if len(parts) != 4 {
-		t.Fatalf("cost block carries %d parts, want 4", len(parts))
+	if len(parts) != 5 {
+		t.Fatalf("cost block carries %d parts, want 5", len(parts))
 	}
 
 	// Every part must carry component and determined.
@@ -261,6 +356,16 @@ func TestCostBlockJSONShape(t *testing.T) {
 		}
 	}
 
+	// Only fx_loss is determined — it is computed from the observed effective
+	// rate against mid. The other four components have no observation or
+	// computation behind them, so each must carry a reason and no number:
+	// network_fees, anchor_fee, slippage and expected failure are unknown,
+	// never zero. Fees in particular used to be reported as a determined
+	// zero; #96 was filed against exactly that, and Decompose now reports
+	// it undetermined as network_fees. Anchor fees are a separate component
+	// from network fees (#169): an anchor's own charge is obtainable via
+	// SEP-38 when one publishes ANCHOR_QUOTE_SERVER; the absence is a fact
+	// about the anchor.
 	// The determined component carries amount and pct as strings; the
 	// undetermined ones carry none, only a reason.
 	if got := componentOf(t, parts[0]); got != string(CostFXLoss) {
@@ -268,7 +373,7 @@ func TestCostBlockJSONShape(t *testing.T) {
 	}
 	assertDeterminedDecimalStrings(t, parts[0], "fx_loss")
 
-	for _, idx := range []int{1, 2, 3} {
+	for _, idx := range []int{1, 2, 3, 4} {
 		p := parts[idx]
 		if got := componentOf(t, p); got == string(CostFXLoss) {
 			t.Fatalf("parts[%d].component = %q, want a non-fx component", idx, got)
@@ -368,10 +473,98 @@ func TestCostDecomposeReasonsAreNonEmpty(t *testing.T) {
 	}
 }
 
+// TestAnchorFeeSeparateFromNetworkFees pins issue #169: anchor fees and
+// network fees are separate components in the cost decomposition. For a DEX
+// route (which has no anchor involved), both are undetermined, but for
+// different reasons: network fees are unmeasured because the operation count
+// and base fee are not available; anchor fees are absent because the route
+// does not go through an anchor at all. When a route does go through an
+// anchor that publishes ANCHOR_QUOTE_SERVER, the anchor fee can be priced
+// via SEP-38; when it does not, the absence is a fact about the anchor.
+func TestAnchorFeeSeparateFromNetworkFees(t *testing.T) {
+	q := Quote{
+		Kind:          KindDEX,
+		Description:   "USDC -> XLM -> NGNC",
+		Source:        "stellar-dex",
+		SendAsset:     testUSDC(),
+		SendAmount:    decimal.NewFromInt(100),
+		ReceiveAsset:  testNGNC(),
+		ReceiveAmount: decimal.RequireFromString("112800.51"),
+		EffectiveRate: decimal.RequireFromString("1128.0051"),
+		ReferenceMid:  decimal.RequireFromString("1500"),
+		LossPct:       decimal.RequireFromString("24.80"),
+		LossAmount:    decimal.RequireFromString("37199.49"),
+		Verdict:       VerdictUnusable,
+	}
+
+	d := Decompose(q, decimal.RequireFromString("1500"))
+
+	var netFees, anchorFee *CostPart
+	for i := range d.Parts {
+		switch d.Parts[i].Component {
+		case CostNetworkFees:
+			netFees = &d.Parts[i]
+		case CostAnchorFee:
+			anchorFee = &d.Parts[i]
+		}
+	}
+
+	if netFees == nil {
+		t.Fatal("decomposition is missing network_fees component")
+	}
+	if anchorFee == nil {
+		t.Fatal("decomposition is missing anchor_fee component")
+	}
+
+	// Network fees are undetermined: the operation count and base fee are not
+	// available to Decompose.
+	if netFees.Determined {
+		t.Error("network_fees must be undetermined: the path operation count and Stellar base fee are not available")
+	}
+	if netFees.Reason == "" {
+		t.Error("undetermined network_fees must carry a reason")
+	} else if !strings.Contains(strings.ToLower(netFees.Reason), "network") {
+		t.Errorf("network_fees reason should mention network fee, got: %s", netFees.Reason)
+	}
+
+	// Anchor fee is undetermined for a DEX route: there is no anchor involved,
+	// and the anchor's own fee is not part of on-chain DEX pricing.
+	if anchorFee.Determined {
+		t.Error("anchor_fee must be undetermined for a DEX route: no anchor is involved")
+	}
+	if anchorFee.Reason == "" {
+		t.Error("undetermined anchor_fee must carry a reason")
+	}
+	// The reason should mention ANCHOR_QUOTE_SERVER to make the absence
+	// actionable: a reader can tell whether the anchor could be priced.
+	if !strings.Contains(anchorFee.Reason, "ANCHOR_QUOTE_SERVER") {
+		t.Errorf("anchor_fee reason should mention ANCHOR_QUOTE_SERVER to make the absence actionable, got: %s", anchorFee.Reason)
+	}
+
+	// The two components are distinct — neither is a duplicate or alias.
+	if netFees.Component == anchorFee.Component {
+		t.Error("network_fees and anchor_fee must be distinct components")
+	}
+}
+
 // TestCostNoDeterminedComponentDefaultsToZero pins the project's rule that an
 // unavailable quantity is unknown, not a default: every component that is
 // genuinely unmeasured must report Determined: false, so that no consumer is
 // told a number was established when nothing was observed.
+func TestSweepCostClassBounding(t *testing.T) {
+	if got := SweepCostClass(1); got != checks.CostOneRequest {
+		Errorf(t, "SweepCostClass(1) = %v, want CostOneRequest", got)
+	}
+	if got := SweepCostClass(5); got != checks.CostExpensive {
+		Errorf(t, "SweepCostClass(5) = %v, want CostExpensive", got)
+	}
+}
+
+func Errorf(t *testing.T, format string, args ...any) {
+	t.Helper()
+	t.Errorf(format, args...)
+}
+
 func TestCostNoDeterminedComponentDefaultsToZero(t *testing.T) {
 	q := Quote{
 		Kind:          KindDEX,
@@ -399,7 +592,7 @@ func TestCostNoDeterminedComponentDefaultsToZero(t *testing.T) {
 			if !p.Determined {
 				t.Error("fx_loss is computed from observed rates and must be determined")
 			}
-		case CostFees, CostSlippage, CostExpectedFailure:
+		case CostNetworkFees, CostAnchorFee, CostSlippage, CostExpectedFailure:
 			if p.Determined {
 				t.Errorf(
 					"%s must be undetermined: nothing was observed or computed "+
@@ -409,5 +602,72 @@ func TestCostNoDeterminedComponentDefaultsToZero(t *testing.T) {
 				t.Errorf("undetermined %s must name what would determine it", p.Component)
 			}
 		}
+	}
+}
+
+func TestReconcileComponents_ExactMatch(t *testing.T) {
+	total := decimal.NewFromFloat(10.50)
+	comps := map[string]decimal.Decimal{
+		"fee":     decimal.NewFromFloat(0.50),
+		"fx_loss": decimal.NewFromFloat(10.00),
+	}
+	tolerance := decimal.NewFromFloat(0.001)
+	undetermined := decimal.NewFromFloat(0)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+}
+
+func TestReconcileComponents_WithinTolerance(t *testing.T) {
+	total := decimal.NewFromFloat(10.50)
+	comps := map[string]decimal.Decimal{
+		"fee":     decimal.NewFromFloat(0.501),
+		"fx_loss": decimal.NewFromFloat(10.00),
+	}
+	tolerance := decimal.NewFromFloat(0.01)
+	undetermined := decimal.NewFromFloat(0)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != nil {
+		t.Fatalf(
+			"expected nil error within tolerance, got %v",
+			err,
+		)
+	}
+}
+
+func TestReconcileComponents_CoveredByUndetermined(t *testing.T) {
+	total := decimal.NewFromFloat(15.00)
+	comps := map[string]decimal.Decimal{
+		"fee": decimal.NewFromFloat(5.00),
+	}
+	undetermined := decimal.NewFromFloat(10.00)
+	tolerance := decimal.NewFromFloat(0.001)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != nil {
+		t.Fatalf(
+			"expected undetermined shortfall to reconcile, got %v",
+			err,
+		)
+	}
+}
+
+func TestReconcileComponents_MismatchError(t *testing.T) {
+	total := decimal.NewFromFloat(20.00)
+	comps := map[string]decimal.Decimal{
+		"fee": decimal.NewFromFloat(5.00),
+	}
+	undetermined := decimal.NewFromFloat(2.00)
+	tolerance := decimal.NewFromFloat(0.001)
+
+	err := ReconcileComponents(total, comps, undetermined, tolerance)
+	if err != ErrComponentSumMismatch {
+		t.Fatalf(
+			"expected ErrComponentSumMismatch, got %v",
+			err,
+		)
 	}
 }

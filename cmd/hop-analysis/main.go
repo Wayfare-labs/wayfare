@@ -63,10 +63,15 @@ type SizeBreakdown struct {
 // CorridorReport is the per-corridor rollup: hop-composition counts across
 // every size, and one SizeBreakdown per size for reproducibility.
 type CorridorReport struct {
-	Snapshot         string          `json:"snapshot"`
-	SendCode         string          `json:"send"`
-	ReceiveCode      string          `json:"receive"`
-	SizesMeasured    int             `json:"sizes_measured"`
+	Snapshot      string `json:"snapshot"`
+	SendCode      string `json:"send"`
+	ReceiveCode   string `json:"receive"`
+	SizesMeasured int    `json:"sizes_measured"`
+	// SizesParsed counts probes whose response could be read at all. It is
+	// distinct from SizesWithAnyPath: a parsed response with no paths is the
+	// NO-MARKET finding, while a response that would not parse taught us
+	// nothing about the corridor.
+	SizesParsed      int             `json:"sizes_parsed"`
 	SizesWithAnyPath int             `json:"sizes_with_any_path"`
 	SizesBestUsesXLM int             `json:"sizes_best_uses_xlm"`
 	SizesWithNonXLM  int             `json:"sizes_with_non_xlm_alt"`
@@ -138,6 +143,24 @@ func Analyse(snapshotsDir string) (*Report, error) {
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", e.Name(), err)
 			continue
 		}
+
+		// A snapshot from which no probe parsed is not a corridor
+		// measurement. testdata carries deliberately malformed fixtures —
+		// declared as such in their manifest notes — so the route layer can
+		// be tested against payloads that must be rejected. Reporting one as
+		// a corridor would publish hop analysis derived entirely from
+		// responses designed to be invalid, and it declares the same corridor
+		// as a real snapshot, so it would appear as a second contradictory
+		// entry for it.
+		//
+		// This is the Failed-versus-NO-MARKET distinction again: nothing was
+		// learned here, which is different from learning there is no path.
+		if cr.SizesParsed == 0 {
+			fmt.Fprintf(os.Stderr,
+				"skip %s: not one probe parsed; nothing was learned about this corridor\n",
+				e.Name())
+			continue
+		}
 		out.Corridors = append(out.Corridors, cr)
 	}
 	return out, nil
@@ -172,6 +195,7 @@ func analyseSnapshot(m *snapshot.Manifest) (CorridorReport, error) {
 		SizesMeasured: len(sizes),
 	}
 
+	var parsed int
 	for _, size := range sizes {
 		paths, err := c.StrictSendPaths(ctx, send, size, recv)
 		if err != nil {
@@ -181,6 +205,11 @@ func analyseSnapshot(m *snapshot.Manifest) (CorridorReport, error) {
 				m.Name(), size, err)
 			continue
 		}
+
+		// The response parsed. Whether it contained a path is a separate
+		// question: zero paths is a finding about the corridor (NO-MARKET),
+		// while a response that would not parse taught us nothing at all.
+		parsed++
 
 		sb := SizeBreakdown{SendAmount: size.String(), NumPaths: len(paths)}
 		if len(paths) > 0 {
@@ -216,10 +245,12 @@ func analyseSnapshot(m *snapshot.Manifest) (CorridorReport, error) {
 				Mul(decimal.NewFromInt(100))
 			sb.XLMAdvantagePc = adv.StringFixed(2)
 		}
+		cr.SizesParsed = parsed
 		cr.Sizes = append(cr.Sizes, sb)
 	}
 
 	cr.SummaryLine = summariseCorridor(cr)
+	cr.SizesParsed = parsed
 	return cr, nil
 }
 

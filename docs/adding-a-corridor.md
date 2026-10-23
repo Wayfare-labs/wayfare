@@ -159,7 +159,53 @@ anything else.
 
 ---
 
-## Step 3 — Measure it
+## Step 3 — Confirm both providers serve the fiat
+
+A corridor's verdict is scored against an independent reference mid, and that
+mid comes from cross-checking **two** reference providers — `exchangerate-api`
+(primary) and `currency-api` (secondary), reconciled by
+`refrate.Cross` (`refrate/cross.go`). The cross-check is what makes an `AGREE`
+verdict mean anything: one feed alone cannot corroborate itself.
+
+So a fiat that only one provider publishes is a corridor that can *never*
+reach `AGREE`. `refrate.Cross` degrades it to `SINGLE` on every measurement —
+the mid still gets scored, but uncorroborated, silently, and permanently. That
+is not a transient failure anyone gets paged for; it is a structural property
+of the corridor, so it should surface when the corridor is **registered**, not
+in production.
+
+Ask both providers directly:
+
+```bash
+./scripts/check-provider-coverage.sh
+```
+
+It reads the corridor list from `asset/known.go` (the same registry the
+monitor classifies paths with), asks both providers for `USD/<peg>` for every
+registered corridor's fiat, and prints one row per fiat with each provider's
+answer. It reports three outcomes, and keeps them apart on purpose:
+
+| Cell | Meaning |
+|:---|:---|
+| `ok <mid>` | The provider publishes the fiat. |
+| `GAP` | The provider answered and has **no rate** for the fiat. A structural fact about the corridor. |
+| `ERROR` / `RATE-LIMITED` | The provider did not answer. Coverage is **unknown**, not absent — re-run. |
+
+Absence and failure are different findings, so the exit codes separate them:
+`0` all covered, `1` at least one gap, `2` inconclusive (a provider did not
+answer). A gap means the corridor can never reach `AGREE`; it is worth
+recording in the PR the same way any other finding is — but a gap on its own
+is not a reason to drop the corridor, and the guide does not treat it as one.
+
+This script is deliberately **not** part of the offline suite. It queries the
+live providers, which is exactly the egress `make offline-test` and the CI
+blackout exist to forbid — see [`docs/offline-testing.md`](offline-testing.md).
+Run it yourself when you add or change a corridor; nothing in CI will run it
+for you.
+
+---
+
+## Step 4 — Measure it
 
 ```bash
 go run ./cmd/ladder -to GHSC
@@ -197,7 +243,7 @@ go run ./cmd/ladder -to GHSC -sizes 0.1,1,10,100,1000
 
 ---
 
-## Step 4 — Record what you measured
+## Step 5 — Record what you measured
 
 If you are adding a corridor to the repository, add its figures to
 [`docs/corridor-measurements.md`](corridor-measurements.md) in the same form as
@@ -215,7 +261,7 @@ from what you inferred.
 
 ---
 
-## Step 5 — Test and open the PR
+## Step 6 — Test and open the PR
 
 ```bash
 make fmt vet test race
@@ -238,6 +284,7 @@ issuer's `stellar.toml` status for the asset.
 - [ ] Issuer account read live from the issuer's own `stellar.toml`, not copied
 - [ ] `NETWORK_PASSPHRASE` confirmed as public mainnet
 - [ ] Registered in `asset/known.go` `registry` with `Code`, `Issuer`, `Peg`, `Status`, `VerificationDate`, `SourceURL`, and `HomeDomain`
+- [ ] `./scripts/check-provider-coverage.sh` exits `0` — both providers serve the corridor's fiat (a `GAP` is recorded, not hidden)
 - [ ] `go run ./cmd/ladder -to CODE` produces a sane curve
 - [ ] Integrity state is what you expect, and you can say why
 - [ ] Figures recorded in `docs/corridor-measurements.md` with a timestamp

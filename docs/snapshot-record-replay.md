@@ -221,6 +221,7 @@ it.
 ## Related
 
 - [snapshot-format.md](snapshot-format.md) — the format contract and its nine rules
+- [offline-testing.md](offline-testing.md) — offline testing requirement and CI network isolation
 - [corridor-measurements.md](corridor-measurements.md) — the published figures
   these snapshots make testable
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — project invariants

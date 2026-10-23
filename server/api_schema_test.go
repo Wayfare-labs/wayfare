@@ -152,8 +152,8 @@ func TestErrorResponseContentType(t *testing.T) {
 // error shape -----------------------------------------------------------------
 
 // TestErrorResponseShape is the contract that unknown corridors look like every
-// other API error: a single "error" string, and nothing that could be mistaken
-// for a measurement.
+// other API error: an "error" string and its machine-readable "code", and
+// nothing that could be mistaken for a measurement.
 func TestErrorResponseShape(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
 	resp, err := http.Get(srv.URL + "/api/corridor?to=SCAMC")
@@ -170,10 +170,12 @@ func TestErrorResponseShape(t *testing.T) {
 		t.Fatalf("decoding error body: %v", err)
 	}
 
-	// Exactly one key: "error". A measurement-looking body on an error path
-	// would let an SRE dashboard accidentally parse it as data.
-	if len(body) != 1 {
-		t.Errorf("error body has %d keys, want exactly 1: %v", len(body), body)
+	// Exactly two keys: the prose "error" and its machine-readable "code"
+	// (backlog #16 / issue #86), so a client can switch on the cause instead
+	// of substring-matching English. Anything measurement-shaped on an error
+	// path would let an SRE dashboard accidentally parse it as data.
+	if len(body) != 2 {
+		t.Errorf("error body has %d keys, want exactly 2 (error, code): %v", len(body), body)
 	}
 	raw, ok := body["error"]
 	if !ok {
@@ -181,6 +183,13 @@ func TestErrorResponseShape(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(raw), `"`) {
 		t.Errorf("error = %s, want a string message", raw)
+	}
+	code, ok := body["code"]
+	if !ok {
+		t.Fatal("error body must carry the code key; a client must not have to parse English")
+	}
+	if !strings.HasPrefix(string(code), `"`) {
+		t.Errorf("code = %s, want a string code", code)
 	}
 
 	// Never a measurement-shaped field alongside the error.

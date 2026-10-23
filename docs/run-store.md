@@ -2,9 +2,9 @@
 
 A tamper-evident history of corridor measurements.
 
-**Schema version 3.** Implemented by `runstore/`. Version 1 and Version 2
-chains still load and still verify — see [Migration to version 2](#migration-to-version-2)
-and [Migration to version 3](#migration-to-version-3).
+**Schema version 4.** Implemented by `runstore/`. Version 1 through 3 chains
+still load and verify; each migration adds optional fields after the previous
+record shape so old preimages remain unchanged.
 
 ---
 
@@ -37,7 +37,7 @@ This is not a blockchain and makes no distributed-consensus claim.
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "seq": 42,
   "recorded_at": "2026-08-21T22:30:40Z",
   "corridor": "USDC-NGNC",
@@ -79,6 +79,7 @@ This is not a blockchain and makes no distributed-consensus claim.
                     "observed": "bid=1350.1000 ask=1350.6400"}],
      "observed_at": "2026-08-21T22:28:00Z"}
   ],
+  "snapshot": "sha256:8a4e…",
   "prev_hash": "sha256:0000…0000",
   "hash": "sha256:6b1f…"
 }
@@ -88,7 +89,7 @@ Records are derived from `route.CorridorJSON` — the same shape the HTTP API
 and `ladder -json` emit — so the stored record and the served record cannot
 drift into two schemas that disagree about the same measurement.
 
-Four pieces are worth calling out:
+Five pieces are worth calling out:
 
 **`recommended` is `null`, not omitted,** when no size produced an acceptable
 route. That is the normal shape of a broken corridor, and storing it as an
@@ -98,11 +99,24 @@ recommendation it refused to make.
 **`reference` carries both mids, always,** even when the providers agree. A
 corridor's numbers moving because the benchmark changed is a completely
 different event from the corridor moving, and a history recording only the mid
-it scored against cannot distinguish them afterwards. `scored_against` names
-which mid produced the verdicts in that record. Since Version 3 it also
-carries `fetched_at` — when this project last obtained the rate, which can be
-older than `recorded_at` when a cached rate was reused — so a reader can tell
-how old the benchmark was when the reading was taken.
+it scored against cannot distinguish them afterwards. It records both providers'
+timestamps: `as_of` for the scored mid and `secondary_as_of` for the second mid
+(#368). `scored_against` names which mid produced the verdicts in that record.
+Since Version 3 it also carries `fetched_at` — when this project last obtained
+the benchmark from the provider, which can be older than `recorded_at` when a
+cached rate was reused — so a reader can tell how old the benchmark was when the
+reading was taken. Both providers' as-of and fetch times are thus recorded and
+distinguishable from arrival/fetch times.
+
+On a `DISAGREE` where the optional third provider answered, `reference` also
+carries `diagnostic_source`, `diagnostic_mid`, `diagnostic_as_of`,
+`diagnostic_outlier`, `diagnostic_outlier_distance_pct` and
+`diagnostic_other_distance_pct` (plus `diagnostic_reason` when no side could be
+attributed). These fields are `omitempty` and were declared after every earlier
+field, so a record written before the diagnostic existed encodes exactly as it
+always did and still verifies. They are evidence about which primary is the
+outlier; `mid` and `scored_against` are unaffected. See
+[reference providers](reference-providers.md).
 
 **`checks` and `metrics` carry the findings taken with the measurement.** A
 check result preserves its tri-state — `determined: false` is *not* a failure —
@@ -112,6 +126,130 @@ strings. In Version 2 a record may also omit either block entirely, meaning no
 checks or no metrics ran.
 
 **All money is a decimal string.** Never a JSON number, never a `float64`.
+
+**Both mids are what separate benchmark movement from corridor movement.** A
+stored history is the only place that separation can happen after the fact,
+and it is why a record deliberately carries the benchmark's mid even when both
+providers answered identically. `runstore.BenchmarkMoved` reads two
+consecutive records and reports, all in `decimal.Decimal` arithmetic:
+
+- **`benchmark_pct`** — the benchmark's own move, (mid₂ − mid₁) / mid₁ × 100.
+- **`corridor_pct`** — the corridor's own move, (rate₂ − rate₁) / rate₁ × 100,
+  where `rate` is the effective rate at the smallest priced rung. It is
+  measured against the corridor's own earlier rate, so a benchmark move cannot
+  appear in it.
+- **`loss_pct_change`** — the change in the headline floor loss, loss₂ − loss₁.
+
+Read side by side, they attribute the headline: a `loss_pct_change` that
+worsened while `corridor_pct` held at zero was the benchmark moving, not the
+corridor. `BenchmarkMovement` does the same for every consecutive pair in a
+corridor's history, oldest pair first.
+
+Nothing here is synthesised to fill a gap. An unpriced run carries no rate and
+no loss, a run whose reference was never scorable carries no benchmark, and the
+corresponding fields stay empty — the explicit unknown, never zero, never a
+default. A measured "0" (the corridor genuinely held still between two priced
+runs) is different from an empty field (there was no price to compare), and the
+wire keeps the two apart.
+
+The comparison is derived on read and appends nothing: not a single hash in the
+chain depends on it.
+
+---
+
+## Measurability uptime
+
+Issue [#195](https://github.com/Wayfare-labs/wayfare/issues/195) (entry 124
+of docs/backlog.md): uptime of the measurement, not of the service — how
+many scheduled sweeps produced a priced ladder.
+
+**Measurable means the sweep produced a price.** A run is measurable when at
+least one of its rungs priced — not all of them; a ladder whose smaller sizes
+failed while larger ones answered is still a priced ladder. This is the
+measurement's own uptime: a `DIRECT` corridor that prices badly is measurable,
+and a `NO-MARKET` corridor is not — the sweep ran fine and Horizon answered,
+but the answer is that no path exists, so there is no price and no loss figure
+to analyse. A service that is up while Horizon is down would score 100% HTTP
+uptime and 0% measurement uptime; the distinction is the point.
+
+`runstore.Measurable` reports it for one record;
+`runstore.MeasurabilityOf` summarises the whole chain:
+
+- **`total_runs`** — the recorded runs the figure covers: the denominator,
+  always present, so a reader can see what the percentage stands on. It
+  counts recorded runs only: a sweep that died before writing a record left
+  nothing in the chain, and inventing a run for it would be synthesis (the
+  not-measured-versus-could-not-be distinction is entry 118 of
+  docs/backlog.md).
+- **`measurable_runs`** / **`not_measurable_runs`** — the counts, carried
+  separately so a reader never has to subtract.
+- **`uptime_pct`** — `measurable_runs / total_runs × 100`, computed in
+  `decimal.Decimal` like every other percentage in this repository. A
+  measured `"0"` (every sweep recorded, none priced) is a finding about the
+  corridor. It is empty only when `total_runs` is zero — no recorded history,
+  so uptime is **unknown, never zero**: a corridor that was not measured is
+  not a corridor that was never measurable.
+- **`first_run_at` / `last_run_at`** — the window the figure covers, so
+  "0% over three days" is distinguishable from "0% over an hour".
+
+`runstore.MeasurabilityHistory` returns the per-run classification, oldest
+first — whether each sweep priced, how many of its rungs did, and the
+integrity state it recorded, so a reader can tell a `NO-MARKET` run (the
+corridor was measured and has no market) from an `UNKNOWN` one (an upstream
+outage; nothing was learned).
+
+Like every reader here, the classification is derived on read and appends
+nothing: not a single hash in the chain depends on it.
+
+---
+
+## Path concentration over time
+
+Issue [#197](https://github.com/Wayfare-labs/wayfare/issues/197) (entry 126
+of docs/backlog.md): whether a corridor's executable value is concentrating
+into fewer paths.
+
+**The figure is measured per run, and stored where every metric is.** The
+`fragmentation.paths` metric (`checks.FragmentationMetric`; definition in
+[metrics.md](metrics.md#fragmentationpaths--concentration-of-executable-value-across-paths))
+is a measured quantity like any other, so a sweep that registers it writes it
+into the record's existing `metrics` block. **The record layout does not
+change**: no field is added, `Version` does not move, and every existing hash
+still verifies. A record written before the metric existed simply has no
+reading.
+
+`runstore.FragmentationHistory` returns one reading per stored run, oldest
+first; `runstore.FragmentationOfRecord` reads one record:
+
+- **`determined`** / **`hhi`** — the stored value as written, never
+  re-derived. `hhi` is present only when determined.
+- **`source`** — the stored evidence source: endpoint, pair and probed size.
+- **`reason`** — why a reading is unknown. A run whose record carries no
+  `fragmentation.paths` metric is `not measured`; a run that measured it and
+  could not determine it carries the stored reason; a stored value that does
+  not parse, or is outside (0, 1], is reported as unusable rather than
+  repaired. None of these is ever a zero, and none is dropped to make the
+  series look continuous.
+
+`runstore.FragmentationOf` summarises the chain:
+
+- **`total_runs`**, **`determined_runs`**, **`unknown_runs`** — always
+  present, so a reader can see what the comparison stands on.
+- **`source`** and **`comparable_runs`** — the comparison is made only between
+  determined readings sharing the latest determined reading's source. A
+  reading at 100 USDC and one at 5000 answer different questions, so a
+  history that changed its probe size is not compared across the change.
+- **`first_*`** / **`last_*`** — the earliest and latest comparable readings,
+  with their sequence numbers and timestamps.
+- **`change_hhi`** — `last_hhi − first_hhi`, in `decimal.Decimal`. A measured
+  `"0"` is a finding. It is empty — **unknown, never zero** — when fewer than
+  two comparable readings exist, and **`reason`** says so.
+- **`direction`** — `CONCENTRATING` (the HHI rose), `DISPERSING` (it fell) or
+  `UNCHANGED`: the sign of `change_hhi` and nothing more. It is a comparison
+  of two stored figures, not a trend fit, and says nothing about the runs in
+  between; there is no threshold, and it moves no verdict or integrity state.
+
+Derived on read; appends nothing.
 
 ---
 
@@ -146,7 +284,10 @@ ever written**. A reader verifying last month's history against the new build
 would be told it had been tampered with.
 
 So a shape change is a `Version` bump plus a migration — never a compatible
-change, and never a tidy-up.
+change, and never a tidy-up. Version 4 adds the optional `snapshot` field
+after the Version 3 fields. Earlier records omit it, preserving their original
+JSON preimage and hash; new writes use version 4. This lets existing chains
+continue from their current tip without rewriting or invalidating history.
 
 This is enforced, not merely agreed. `TestRecordHashIsPinned` freezes the hash
 of a fixed record; a purely cosmetic field reorder fails it. The test's own
@@ -176,7 +317,8 @@ chains**, exactly like the Version 2 migration:
 Concretely:
 
 - A record written as Version 1 or Version 2 stays that version on disk
-  forever. Nothing is relabelled or rewritten — the store is append-only.
+  forever. Nothing is relabelled or rewritten — the store is append-only
+  except for rotation (see [Rotating a chain](#rotating-a-chain)).
 - New records are written `version: 3`, carrying `fetched_at` when the
   measurement knew when its rate was fetched and omitting it when it did not
   (an older build's record, or a provider that left the stamp unset — the
@@ -211,7 +353,8 @@ chains**, and intentionally so:
 Concretely:
 
 - A record written as Version 1 stays `version: 1` on disk forever. Nothing
-  is relabelled or rewritten — the store is append-only.
+  is relabelled or rewritten — the store is append-only except for rotation
+  (see [Rotating a chain](#rotating-a-chain)).
 - New records are written `version: 2`, with a `checks`/`metrics` block when
   checks ran and both blocks omitted when none did.
 - A corridor's file can therefore become a **mixed-version chain** (older
@@ -225,14 +368,36 @@ Verification, not rewriting, is what makes a mixed chain safe: the new build
 tell a genuine legacy record from a tampered one — and it refuses any other
 version (see [the version-mismatch rule](#the-version-mismatch-rule)).
 
+### Migration to version 4
+
+Version 3 records have no snapshot link. Version 4 adds the optional
+`snapshot` field after every prior record field. When absent, it is omitted
+from JSON, so Version 1 through Version 3 hashes remain unchanged. New records
+written by the monitor carry the content hash of their snapshot artifact.
+
 ### The version-mismatch rule
 
 A record version this build does not recognise is an error, never a best-effort
-parse: `runstore` accepts exactly `1`, `2` and `3`. Relabelling a record to
+parse: `runstore` accepts versions `1` through `4`. Relabelling a record to
 make it parse is falsification, not migration — a record that says `version: 9`
 is a schema the build cannot speak, and guessing at it would hide the mismatch.
 
 ---
+
+## Snapshot artifacts
+
+Scheduled sweeps with a configured data directory store each complete run's
+snapshot beneath `<data>/snapshots/<hex-digest>`. The run record contains the
+`sha256:` digest; the large response bodies stay outside the NDJSON chain.
+The digest covers the exact manifest bytes and each response path and body,
+sorted by path and length-framed before hashing. Snapshot loading also verifies
+each response against its manifest `body_sha256`.
+
+This is content-addressed storage: an artifact's directory name is derived
+from its content, and a record never depends on a timestamp-based lookup.
+`-verify-store` checks each referenced artifact when it is present. A missing
+artifact does not invalidate the hash chain, but the original inputs are no
+longer available for reproducing that run.
 
 ## Storage
 
@@ -298,16 +463,132 @@ runstore: USDC-NGNC: record seq 3 has hash 1872c8f15412… but its contents
 hash to 8a4eecd77b48…; it was modified after it was written
 ```
 
+### Rotating a chain
+
+The committed store is a **bounded window**, not the whole chain (ADR 007,
+[issue #201](https://github.com/Wayfare-labs/wayfare/issues/201)). At the
+six-hour cadence a corridor gains ~1,460 records a year; left alone the
+embedded history would outgrow the repository. The answer is to keep, per
+corridor, the newest `runstore.MaxWindow` (366, one quarter) records and drop
+the rest.
+
+```bash
+wayfared -rotate-store                # trim every chain over the ceiling
+wayfared -rotate-store -rotate-records 1000   # custom ceiling, if you must
+```
+
+`Rotate` is the one place the store is not append-only. A chain that has
+outgrown the ceiling is truncated to its newest `n` records and **re-sealed**:
+the new window head's `prev_hash` is set back to the genesis hash and every
+subsequent `prev_hash` is re-derived, so the surviving window verifies as a
+self-contained chain. Before writing, rotation re-verifies the chain it is
+about to stand on, and refuses a chain that is already broken.
+
+What rotation is **not**:
+
+- It does not touch measured contents. Only `hash` and `prev_hash` move.
+- It does not destroy dropped records. The archive is the repository's own
+  git history: every prior commit contains the chain as it stood, and this is
+  the copy a reader who wants the deep history consults. Rotation is what
+  lets the committed window stay bounded *and* the whole story stay verifiable.
+- It does not edit records whole. `seq` values are preserved, so a reader can
+  tell where the window begins relative to the run.
+
+A rotation is visible from outside: compared with an older commit, the window
+head's `hash` has changed even though its measurements are byte-identical.
+That is deliberate — a re-sealed window must not masquerade as the original
+chain — and `TestRotateChangesTheWindowHashes` pins it.
+
+### Exporting a chain as CSV
+
+The history is NDJSON with a nested `reference` block and a full `rungs` array
+per record. That is the right shape for provenance and the wrong shape for a
+spreadsheet: a researcher or journalist has to flatten it before a pivot table
+works, and every hand flattening is a chance to drop or reorder a figure. So
+the binary exports a verified chain as CSV — one row per record.
+
+```bash
+wayfared -export USDC-NGNC -format csv -data ./data > usdc-ngnc.csv
+
+# on a deployed instance
+fly ssh console -C "/wayfared -export USDC-NGNC -format csv -data /data" > usdc-ngnc.csv
+```
+
+`-format` defaults to `csv`, the only implemented format. The corridor is
+matched case-insensitively.
+
+#### The columns
+
+One header row, then one row per record in chronological order (oldest first,
+the same order `Store.All` returns):
+
+```
+recorded_at,corridor,seq,integrity,floor_loss_pct,floor_size,worst_loss_pct,worst_size,reference_mid,reference_source,reference_as_of,reference_fetched_at,reference_scored_against,reference_secondary_mid,reference_secondary_source,reference_secondary_as_of,reference_divergence_pct
+```
+
+Every cell is the stored value copied through unchanged. Money and rate fields
+stay **decimal strings** (`25.02`, `1350.2568`), never floats: parsing them into
+a spreadsheet number at export time would reintroduce exactly the
+binary-floating-point loss the rest of the project refuses, and the exported
+figure would stop matching the published one. The only transformations are the
+two a readable export cannot avoid — `recorded_at` is normalised to UTC RFC3339
+(the store's own format) and `seq` is rendered as a decimal integer.
+
+The export is one row per **measurement**, not one row per size. Per-rung detail
+stays in the NDJSON chain; a column per rung would make the shape depend on the
+ladder width and break in every spreadsheet. Fields that are legitimately absent
+(a `SINGLE` cross-check has no secondary mid, an older record has no
+`fetched_at`) are exported as empty cells, not as zeros or placeholders.
+
+#### Verification comes first
+
+`-export` walks the chain with `Verify` **before it writes anything**, and
+refuses if the chain does not reconcile:
+
+```
+refusing to export: chain failed verification  corridor=USDC-NGNC
+  error="runstore: USDC-NGNC: record seq 1 has hash 424b33fcf120… but its
+  contents hash to 46a5ad0726de…; it was modified after it was written"
+```
+
+The CSV carries no hashes of its own, so an export of an unverified chain could
+not be distinguished from a faithful copy — exporting one would launder the
+provenance claim the chain exists to support. A refused export writes **no
+partial file**: a truncated CSV reads as a short history rather than as a failed
+verification, and nothing on the artifact itself would say which.
+
+#### Exit codes
+
+The codes follow `-verify-store`, so a script that already handles one handles
+the other:
+
+| Code | Meaning |
+|:---:|:---|
+| `0` | Chain verified and exported; the CSV is on stdout |
+| `1` | The chain failed verification. Nothing was written to stdout |
+| `2` | The export could not run: no store configured, unknown or empty corridor, or an unsupported `-format` |
+
+Usage errors are kept separate from verification failures on purpose: a corridor
+with no history, or a misspelled format, is not a finding about the corridor, and
+neither may be reported as one.
+
+The command writes the document to stdout and logs to stderr, so
+`> corridor.csv` always produces a clean file. It does not serve, measure, or
+modify the store.
+
 ### Backups
 
 The chain proves nothing was edited. It does **not** survive the volume dying.
-Copy the NDJSON files off-box on a schedule, and verify after restoring —
-a backup nobody has restored from is a hypothesis. See
+Copy both the NDJSON files and the `snapshots/` artifact directory off-box on a
+schedule, and verify after restoring — a backup nobody has restored from is a
+hypothesis. See
 [deployment.md](deployment.md).
 
 ---
 
 ## Related
 
+- [rollback.md](rollback.md) — returning to an older image, and verifying the chain it serves
+- [verify-store.md](verify-store.md) — what a verification failure looks like, and its exit codes
 - [snapshot-format.md](snapshot-format.md) — recorded upstream bytes
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — project invariants

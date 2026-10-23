@@ -37,7 +37,7 @@ A live response does not include `stale`. Consumers should branch on the boolean
 
 ## How history is selected
 
-A deployment may run in history-first mode. In that mode, `/api/corridor` serves the latest stored run by default. Add `live=1` to explicitly request a fresh measurement.
+A deployment may run in history-first mode. In that mode, `/api/corridor` serves the latest stored run by default. Add `live=1` to explicitly request a fresh measurement. With no stored run for that corridor, the request is answered before anything is measured: `404` with `code: "no_history"`, which is neither an outage nor a finding about the market (`docs/errors.md#a-note-on-no_history`).
 
 In normal mode, the server attempts a live measurement first. If it fails and a stored run exists, it returns that run as `live: false` with `stale`. The stored result is not promoted into a live result, and its recommendation remains exactly as recorded—including JSON `null` when no route was recommendable.
 

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +59,20 @@ func testServer(t *testing.T, horizonBody, mid string) *httptest.Server {
 	api := httptest.NewServer(s.Handler())
 	t.Cleanup(api.Close)
 	return api
+}
+
+func rawGet(t *testing.T, url string) (int, []byte) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading %s: %v", url, err)
+	}
+	return resp.StatusCode, raw
 }
 
 func getJSON(t *testing.T, url string) (int, map[string]any) {
@@ -160,33 +175,128 @@ func TestNoMarketIsReportedAsItsOwnState(t *testing.T) {
 	}
 }
 
-// TestMoneyCrossesTheWireAsStrings guards the float64 invariant at the
-// boundary. A JSON number invites the client to parse a rate into a float,
-// reintroducing exactly the rounding error the engine avoids internally.
+// getCorridor fetches a corridor document from an API server and decodes it
+// into the shared wire type, so boundary tests walk exactly what a client
+// receives: the same JSON, parsed the same way. A money field that crossed
+// the wire as a JSON number would fail this decode with a type error.
+func getCorridor(t *testing.T, url string) route.CorridorJSON {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	var doc route.CorridorJSON
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		t.Fatalf("decoding %s as a corridor document: %v", url, err)
+	}
+	return doc
+}
+
+// assertMoneyFieldsParse is the assertion half of the boundary test: every
+// money-valued string a corridor document carries must parse as a decimal.
+// The walk is route.MoneyStrings, the single source of truth for which wire
+// fields carry money, so one walk guards all three producers of the shape —
+// live, stale and cmd/ladder -json.
+func assertMoneyFieldsParse(t *testing.T, doc route.CorridorJSON) {
+	t.Helper()
+	for _, s := range route.MoneyStrings(doc) {
+		if _, err := decimal.NewFromString(s); err != nil {
+			t.Errorf("money field %q is not a parseable decimal: %v", s, err)
+		}
+	}
+}
+
+// TestMoneyCrossesTheWireAsStrings is the boundary test the README refers
+// to: every amount, rate and percentage in a corridor document is a decimal
+// string, never a JSON number. It walks the live document (backlog #6); the
+// stale and CLI documents are walked by TestStaleDocumentMoneyFieldsParse
+// and cmd/ladder's TestLadderDocumentMoneyFieldsParse, using the same
+// route.MoneyStrings walk.
 func TestMoneyCrossesTheWireAsStrings(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
 
-	resp, err := http.Get(srv.URL + "/api/corridor?to=NGNC&sizes=100")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
+	// A real ladder run against the recorded Horizon fixture, so the walk
+	// sees the per-rung quotes and the cost blocks the engine attaches.
+	doc := getCorridor(t, srv.URL+"/api/corridor?to=NGNC&sizes=100")
+	assertMoneyFieldsParse(t, doc)
+}
 
-	var body map[string]json.RawMessage
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+// TestUnknownQueryParamsAreRejected pins the A5 strictness contract: a typo
+// like ?tp=NGNC must be an explicit 400, never a silent measurement of the
+// default corridor. Each case is rejected before any asset or size parsing,
+// so the error names the parameter, not the value it was meant to carry.
+func TestUnknownQueryParamsAreRejected(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
 
-	for _, field := range []string{"reference_mid", "floor_loss_pct", "worst_loss_pct"} {
-		raw, ok := body[field]
-		if !ok {
-			t.Errorf("%s missing from the response", field)
-			continue
-		}
-		if !strings.HasPrefix(string(raw), `"`) {
-			t.Errorf("%s = %s, want a quoted string so clients cannot parse it as a float",
-				field, raw)
-		}
+	cases := map[string]struct {
+		path    string
+		wantMsg string
+	}{
+		"corridor typo": {
+			path:    "/api/corridor?tp=NGNC",
+			wantMsg: `"tp"`,
+		},
+		// "pretty" is deliberately NOT listed here: it is a supported
+		// parameter with its own test (TestPrettyOptInIndents). An earlier
+		// merge left both a test asserting it returns 200 and this one
+		// asserting it returns 400, which cannot both hold.
+		"corridor extra param": {
+			// Deliberately not "pretty": that is a real, supported parameter
+			// (the opt-in for indented JSON). Strictness rejects a parameter
+			// the endpoint does not know, not one it honours.
+			path:    "/api/corridor?to=NGNC&debug=1",
+			wantMsg: `"debug"`,
+		},
+		"corridor multiple unknown": {
+			path:    "/api/corridor?to=NGNC&tp=NGNC&fmt=json",
+			wantMsg: `"fmt", "tp"`,
+		},
+		"assets unknown": {
+			path:    "/api/assets?foo=bar",
+			wantMsg: `"foo"`,
+		},
+		"healthz unknown": {
+			path:    "/healthz?foo=bar",
+			wantMsg: `"foo"`,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			status, body := getJSON(t, srv.URL+tc.path)
+			if status != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", status)
+			}
+			msg, _ := body["error"].(string)
+			if !strings.Contains(msg, "unknown query parameter") {
+				t.Errorf("error = %q, want it to say unknown query parameter", msg)
+			}
+			if !strings.Contains(msg, tc.wantMsg) {
+				t.Errorf("error = %q, want it to name the unknown parameter(s) %s", msg, tc.wantMsg)
+			}
+		})
+	}
+}
+
+// TestKnownQueryParamsAreAccepted is the control for the strictness test: the
+// documented parameters on each endpoint must still pass. Without it, a
+// server that rejected everything would pass the test above.
+func TestKnownQueryParamsAreAccepted(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	cases := map[string]string{
+		"corridor all params": "/api/corridor?from=USDC&to=NGNC&sizes=100&live=1&pretty=1",
+		"corridor default":    "/api/corridor",
+		"assets":              "/api/assets",
+		"healthz":             "/healthz",
+	}
+	for name, path := range cases {
+		t.Run(name, func(t *testing.T) {
+			status, body := getJSON(t, srv.URL+path)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %v", status, body)
+			}
+		})
 	}
 }
 
@@ -295,6 +405,139 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+// TestHeadMatchesGetOnHealthAndUI pins the issue #612 contract: HEAD on the
+// health and UI routes returns the same status and headers as GET, with no
+// body. Go's http server suppresses the HEAD body while preserving status and
+// headers, including Content-Length; this test guards against a future method
+// check silently reintroducing a 405 or a body.
+func TestHeadMatchesGetOnHealthAndUI(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+	for _, path := range []string{"/healthz", "/"} {
+		t.Run(path, func(t *testing.T) {
+			getResp, err := http.Get(srv.URL + path)
+			if err != nil {
+				t.Fatalf("GET %s: %v", path, err)
+			}
+			_, err = io.ReadAll(getResp.Body)
+			getResp.Body.Close()
+			if err != nil {
+				t.Fatalf("reading GET %s: %v", path, err)
+			}
+
+			headReq, err := http.NewRequest(http.MethodHead, srv.URL+path, nil)
+			if err != nil {
+				t.Fatalf("building HEAD %s: %v", path, err)
+			}
+			headResp, err := http.DefaultClient.Do(headReq)
+			if err != nil {
+				t.Fatalf("HEAD %s: %v", path, err)
+			}
+			headBody, err := io.ReadAll(headResp.Body)
+			headResp.Body.Close()
+			if err != nil {
+				t.Fatalf("reading HEAD %s: %v", path, err)
+			}
+
+			if getResp.StatusCode != http.StatusOK {
+				t.Errorf("GET %s status = %d, want 200", path, getResp.StatusCode)
+			}
+			if headResp.StatusCode != http.StatusOK {
+				t.Errorf("HEAD %s status = %d, want 200", path, headResp.StatusCode)
+			}
+			if headResp.StatusCode != getResp.StatusCode {
+				t.Errorf("HEAD %s status = %d, want GET status %d", path, headResp.StatusCode, getResp.StatusCode)
+			}
+			if len(headBody) != 0 {
+				t.Errorf("HEAD %s returned a %d-byte body; HEAD must carry no body", path, len(headBody))
+			}
+			compareHeaders(t, path, getResp.Header, headResp.Header)
+		})
+	}
+}
+
+// compareHeaders asserts that every header present in the GET response (except
+// Date, which differs per request) is present with the same values in the HEAD
+// response, and vice versa.
+func compareHeaders(t *testing.T, path string, getH, headH http.Header) {
+	t.Helper()
+	for k, vv := range getH {
+		if k == "Date" {
+			continue
+		}
+		hv, ok := headH[k]
+		if !ok {
+			t.Errorf("HEAD %s header %q present in GET (%v) absent in HEAD", path, k, vv)
+			continue
+		}
+		if !equalStringSlices(vv, hv) {
+			t.Errorf("HEAD %s header %q mismatch: GET=%v HEAD=%v", path, k, vv, hv)
+		}
+	}
+	for k := range headH {
+		if k == "Date" {
+			continue
+		}
+		if _, ok := getH[k]; !ok {
+			t.Errorf("HEAD %s header %q (%v) absent in GET", path, k, headH[k])
+		}
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestNonGetNonHeadRejectedOnHealthAndUI is the negative side of the #612
+// contract: anything that is not GET or HEAD on the health and UI routes is
+// method-not-allowed, matching the convention every other endpoint follows.
+func TestNonGetNonHeadRejectedOnHealthAndUI(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+	for _, path := range []string{"/healthz", "/"} {
+		t.Run(path, func(t *testing.T) {
+			code, status := errorCode(t, http.MethodPost, srv.URL+path)
+			if code != codeMethodNotAllowed {
+				t.Errorf("POST %s code = %q, want %q", path, code, codeMethodNotAllowed)
+			}
+			if status != http.StatusMethodNotAllowed {
+				t.Errorf("POST %s status = %d, want 405", path, status)
+			}
+		})
+	}
+}
+
+// TestHealthzReportsBuildProvenance pins that /healthz exposes the code and
+// data commits that built the binary, so a consumer can tell which provenance
+// is serving. Dev and test builds are unstamped and report the empty string,
+// but the keys are always present.
+func TestHealthzReportsBuildProvenance(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+	_, body := getJSON(t, srv.URL+"/healthz")
+
+	code, ok := body["code_commit"]
+	if !ok {
+		t.Fatal("healthz body lacks code_commit")
+	}
+	if _, isString := code.(string); !isString {
+		t.Errorf("code_commit = %v (%T), want a string", code, code)
+	}
+
+	data, ok := body["data_commit"]
+	if !ok {
+		t.Fatal("healthz body lacks data_commit")
+	}
+	if _, isString := data.(string); !isString {
+		t.Errorf("data_commit = %v (%T), want a string", data, data)
+	}
+}
+
 // TestHealthzReportsDataAge is the A6 contract: on a -history-first
 // deployment the thing at risk is the age of the data, and /healthz must say
 // it. Each corridor's newest record is reported with its recorded_at and age;
@@ -365,6 +608,146 @@ func TestHealthzEmptyStoreIsUnknown(t *testing.T) {
 	}
 }
 
+// freshnessServer wires a store plus a Horizon root fake serving rootBody,
+// the two inputs the /healthz freshness block reads.
+func freshnessServer(t *testing.T, st runstore.Store, rootBody string) *httptest.Server {
+	t.Helper()
+	horizon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.Error(w, "not recorded", http.StatusServiceUnavailable)
+			return
+		}
+		if rootBody == "" {
+			http.Error(w, "horizon down", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/hal+json")
+		_, _ = w.Write([]byte(rootBody))
+	}))
+	t.Cleanup(horizon.Close)
+
+	s := &Server{
+		Store:  st,
+		Engine: &route.Engine{DEX: &dex.Client{HorizonURL: horizon.URL}},
+	}
+	api := httptest.NewServer(s.Handler())
+	t.Cleanup(api.Close)
+	return api
+}
+
+// TestHealthzFreshnessReported is the issue #311 contract: chain head,
+// newest record and total record count are readable straight off /healthz,
+// without parsing any corridor response.
+func TestHealthzFreshnessReported(t *testing.T) {
+	base := time.Now().UTC().Add(-6 * time.Hour).Truncate(time.Second)
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendHealthRecord(t, st, "USDC-NGNC", base)
+	appendHealthRecord(t, st, "USDC-NGNC", base.Add(time.Hour))
+	appendHealthRecord(t, st, "USDC-GHSC", base.Add(-time.Hour))
+
+	srv := freshnessServer(t, st, `{"core_ledger_seq": 55101724}`)
+	_, body := getJSON(t, srv.URL+"/healthz")
+
+	f, _ := body["freshness"].(map[string]any)
+	if f == nil {
+		t.Fatalf("freshness = %v, want an object", body["freshness"])
+	}
+	if f["chain_head"] != float64(55101724) {
+		t.Errorf("chain_head = %v, want 55101724", f["chain_head"])
+	}
+	if f["record_count"] != float64(3) {
+		t.Errorf("record_count = %v, want 3 (two NGNC runs plus one GHSC)", f["record_count"])
+	}
+	if f["newest_record_at"] != base.Add(time.Hour).Format(time.RFC3339) {
+		t.Errorf("newest_record_at = %v, want %s", f["newest_record_at"],
+			base.Add(time.Hour).Format(time.RFC3339))
+	}
+}
+
+// TestHealthzFreshnessAdvancesAfterSweep is the issue #563 contract: a new
+// committed record (a sweep that lands on data/, then a redeploy) advances the
+// freshness block, so the served history stops being stale. Verified once here.
+func TestHealthzFreshnessAdvancesAfterSweep(t *testing.T) {
+	base := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendHealthRecord(t, st, "USDC-NGNC", base)
+
+	srv := freshnessServer(t, st, `{"core_ledger_seq": 1}`)
+	newest := func() string {
+		_, body := getJSON(t, srv.URL+"/healthz")
+		f, _ := body["freshness"].(map[string]any)
+		ts, _ := f["newest_record_at"].(string)
+		return ts
+	}
+	if got := newest(); got != base.Format(time.RFC3339) {
+		t.Errorf("before sweep newest_record_at = %v, want %s", got, base.Format(time.RFC3339))
+	}
+
+	// A sweep lands: a newer record for NGNT.
+	appendHealthRecord(t, st, "USDC-NGNT", base.Add(time.Hour))
+
+	if got := newest(); got != base.Add(time.Hour).Format(time.RFC3339) {
+		t.Errorf("after sweep newest_record_at = %v, want %s", got, base.Add(time.Hour).Format(time.RFC3339))
+	}
+}
+
+// TestHealthzFreshnessChainHeadUnknown covers the unknown half: Horizon
+// refusing the root lookup must null the field, never fill it with 0 — a
+// reader must not be able to mistake "unaskable" for "ledger zero". The
+// store-derived fields keep reporting what they know.
+func TestHealthzFreshnessChainHeadUnknown(t *testing.T) {
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendHealthRecord(t, st, "USDC-NGNC", time.Now().UTC().Add(-time.Hour))
+
+	srv := freshnessServer(t, st, "")
+	_, body := getJSON(t, srv.URL+"/healthz")
+	f, _ := body["freshness"].(map[string]any)
+	if f == nil {
+		t.Fatalf("freshness = %v, want an object even when parts are unknown", body["freshness"])
+	}
+	if head, ok := f["chain_head"]; !ok || head != nil {
+		t.Errorf("chain_head = %v, want null when Horizon refused", head)
+	}
+	if f["record_count"] != float64(1) {
+		t.Errorf("record_count = %v, want 1", f["record_count"])
+	}
+	if ts, ok := f["newest_record_at"].(string); !ok || ts == "" {
+		t.Errorf("newest_record_at = %v, want the stored run's timestamp", f["newest_record_at"])
+	}
+}
+
+// TestHealthzFreshnessNoStoreIsUnknown pins the deployment with no history:
+// the whole freshness block is present and every field is null. Presence
+// with nulls means "looked, unknown" — the honest state a consumer can
+// alert on — where an absent block could be read as "this version does not
+// report it".
+func TestHealthzFreshnessNoStoreIsUnknown(t *testing.T) {
+	srv := freshnessServer(t, nil, `{"core_ledger_seq": 1}`)
+	_, body := getJSON(t, srv.URL+"/healthz")
+	f, _ := body["freshness"].(map[string]any)
+	if f == nil {
+		t.Fatalf("freshness = %v, want an object", body["freshness"])
+	}
+	if f["chain_head"] != float64(1) {
+		t.Errorf("chain_head = %v, want 1", f["chain_head"])
+	}
+	if count, ok := f["record_count"]; !ok || count != nil {
+		t.Errorf("record_count = %v, want null without a store", count)
+	}
+	if ts, ok := f["newest_record_at"]; !ok || ts != nil {
+		t.Errorf("newest_record_at = %v, want null without a store", ts)
+	}
+}
+
 // appendHealthRecord appends one record for the given corridor and time.
 func appendHealthRecord(t *testing.T, st runstore.Store, corridor string, at time.Time) {
 	t.Helper()
@@ -388,6 +771,118 @@ func appendHealthRecord(t *testing.T, st runstore.Store, corridor string, at tim
 	}
 	if err := st.Append(context.Background(), rec); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// isIndented reports whether a JSON body was emitted with SetIndent.
+// json.Encoder always appends a terminal newline, so a compact body is one
+// line plus that newline; an indented body has interior newlines too.
+func isIndented(raw []byte) bool {
+	return strings.Count(string(raw), "\n") > 1
+}
+
+// TestJSONIsCompactByDefault pins the payload-size contract behind backlog
+// #39: writeJSON emits a single line unless the caller opts into ?pretty. An
+// indented body roughly doubles the bytes every programmatic consumer pays.
+func TestJSONIsCompactByDefault(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	for _, path := range []string{"/healthz", "/api/corridor?to=NGNC&sizes=100"} {
+		status, raw := rawGet(t, srv.URL+path)
+		if status != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", path, status)
+		}
+		if isIndented(raw) {
+			t.Errorf("%s: default response is multi-line; the body must be compact", path)
+		}
+	}
+}
+
+// TestPrettyOptInIndents covers the flip side of the same contract: ?pretty
+// (bare, =1, or =true) indents the body for a human reader, while ?pretty=0
+// and ?pretty=false stay compact. The indented form must decode to the same
+// document as the plain one — pretty changes the bytes, never the meaning.
+func TestPrettyOptInIndents(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	// The corridor URL already carries a query, so the pretty parameter is
+	// appended with & rather than ?.
+	cases := []struct {
+		name       string
+		query      string
+		wantIndent bool
+	}{
+		{"absent", "", false},
+		{"zero", "&pretty=0", false},
+		{"false", "&pretty=false", false},
+		{"bare", "&pretty", true},
+		{"one", "&pretty=1", true},
+		{"true", "&pretty=true", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := srv.URL + "/api/corridor?to=NGNC&sizes=100"
+			status, raw := rawGet(t, base+tc.query)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200", status)
+			}
+			if got := isIndented(raw); got != tc.wantIndent {
+				t.Errorf("body indented = %v, want %v", got, tc.wantIndent)
+			}
+
+			// Formatting must never change the document.
+			//
+			// The two bodies come from two independent measurements, so the
+			// fields that record when each one was taken legitimately differ:
+			// measured_at is formatted with RFC3339 second precision, and two
+			// requests milliseconds apart straddle a second tick often enough
+			// to fail this comparison for a reason that has nothing to do with
+			// ?pretty. They are asserted present and then set aside, so the
+			// comparison covers the measurement itself rather than the clock.
+			var prettyDoc, plainDoc map[string]any
+			if err := json.Unmarshal(raw, &prettyDoc); err != nil {
+				t.Fatalf("parsing body: %v", err)
+			}
+			_, plain := rawGet(t, base)
+			if err := json.Unmarshal(plain, &plainDoc); err != nil {
+				t.Fatalf("parsing plain body: %v", err)
+			}
+			for _, doc := range []map[string]any{prettyDoc, plainDoc} {
+				if _, ok := doc["measured_at"]; !ok {
+					t.Fatal("the corridor body has no measured_at; a reading with no time on it is not verifiable")
+				}
+			}
+			for _, field := range []string{"measured_at", "reference_fetched_at"} {
+				delete(prettyDoc, field)
+				delete(plainDoc, field)
+			}
+			if !reflect.DeepEqual(prettyDoc, plainDoc) {
+				t.Error("?pretty changed the document, not just the formatting")
+			}
+		})
+	}
+}
+
+// TestPrettyAppliesToErrors pins that the opt-in is honoured on error
+// responses too: a human debugging with ?pretty=1 gets a readable 400, and
+// a programmatic caller still gets the compact form by default.
+func TestPrettyAppliesToErrors(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	status, raw := rawGet(t, srv.URL+"/api/corridor?to=SCAMC")
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", status)
+	}
+	if isIndented(raw) {
+		t.Error("default error body is multi-line; it should be compact")
+	}
+
+	status, raw = rawGet(t, srv.URL+"/api/corridor?to=SCAMC&pretty=1")
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", status)
+	}
+	if !isIndented(raw) {
+		t.Error("?pretty=1 error body is compact; the opt-in must apply to errors too")
 	}
 }
 
@@ -447,8 +942,10 @@ func TestUIScoredFalseSuppressesVerdicts(t *testing.T) {
 		t.Error("loss curve is not gated on d.scored; it would render when unscored")
 	}
 
-	// The table function must accept a scored parameter.
-	if !strings.Contains(page, "function table(rungs, scored)") {
+	// The table function must accept a scored parameter and the corridor's
+	// dependencies (so an unpriced DERIVATIVE rung can name what it routes
+	// through without overflowing the row).
+	if !strings.Contains(page, "function table(rungs, scored, depends)") {
 		t.Error("table() does not accept a scored parameter")
 	}
 
@@ -548,9 +1045,9 @@ func dexClientAt(url string) *dex.Client {
 //
 // It exercises the same composition the live handler uses: a rendered corridor
 // passed through route.WithFindings, exactly as handleCorridor calls it with
-// the checks runner's output. The runner producing metrics is the separate
-// keystone (issue #49); the point here is that when it lands, the wire is
-// already pinned.
+// the checks runner's output. The runner now produces metrics (#577), so this
+// test pins the shape they cross the wire in rather than a shape that might
+// one day be used.
 func TestFindingsMetricsSchema(t *testing.T) {
 	t.Run("corridor with metrics returns them under findings.metrics", func(t *testing.T) {
 		corridor := route.WithFindings(
@@ -641,6 +1138,57 @@ func TestFindingsMetricsSchema(t *testing.T) {
 			t.Error("findings.metrics must be absent when no metric ran — presence would read as \"measured, nothing found\"")
 		}
 	})
+}
+
+// TestLiveCorridorCarriesMetrics is the acceptance criterion for #577 on the
+// server side: a live response must carry a non-empty findings.metrics block,
+// not merely a shape able to hold one. The runner is pointed at a Horizon that
+// serves an order book, so the default metric set measures a value instead of
+// reporting undetermined for a fetch that never happened.
+func TestLiveCorridorCarriesMetrics(t *testing.T) {
+	horizon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/order_book") {
+			_, _ = w.Write([]byte(`{"bids":[{"price":"0.0007400","amount":"100.0"}],"asks":[{"price":"0.0007600","amount":"100.0"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(liveNGNCPaths))
+	}))
+	t.Cleanup(horizon.Close)
+
+	s := &Server{
+		Engine: &route.Engine{
+			DEX: &dex.Client{HorizonURL: horizon.URL},
+			RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+				"USD/NGN": decimal.RequireFromString("1500"),
+			}),
+		},
+		// The explicit client bypasses the guarded default so the mock
+		// Horizon is reachable, exactly as a snapshot replayer does.
+		Checks: &checks.Runner{HorizonURL: horizon.URL, HTTPClient: horizon.Client()},
+	}
+	api := httptest.NewServer(s.Handler())
+	t.Cleanup(api.Close)
+
+	corridor := getCorridor(t, api.URL+"/api/corridor?to=NGNC&live=1&sizes=100")
+	if corridor.Findings == nil {
+		t.Fatal("the live response carries no findings block")
+	}
+	if len(corridor.Findings.Metrics) == 0 {
+		t.Fatal("the live response carries no findings.metrics; a metric ran " +
+			"nowhere on the production path")
+	}
+
+	var sawSpread bool
+	for _, m := range corridor.Findings.Metrics {
+		if m.ID == "spread.bid-ask" && m.Determined && m.Value != "" {
+			sawSpread = true
+		}
+	}
+	if !sawSpread {
+		t.Errorf("findings.metrics = %v, want a determined spread.bid-ask from the "+
+			"served order book", corridor.Findings.Metrics)
+	}
 }
 
 // metricsSchemaFixture returns findings carrying one determined metric and one
@@ -754,4 +1302,102 @@ func metricString(t *testing.T, entry map[string]json.RawMessage, field string) 
 		t.Fatalf("%s = %s, want a JSON string (decimal strings cross the wire, never numbers)", field, raw)
 	}
 	return s
+}
+
+// TestMarketStructureEndpoint verifies the /api/market-structure endpoint
+// returns the issuer concentration analysis. The known registry has one
+// issuer (LinkIOIssuer) backing three corridors (NGNC, GHSC, KESC), which
+// is the concentration the endpoint must surface.
+func TestMarketStructureEndpoint(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	status, body := getJSON(t, srv.URL+"/api/market-structure")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %v", status, body)
+	}
+
+	// Verify issuer_concentrations has the LinkIOIssuer entry.
+	concentrations, ok := body["issuer_concentrations"].(map[string]any)
+	if !ok {
+		t.Fatal("issuer_concentrations missing or not a map")
+	}
+
+	linkIOCorridors, ok := concentrations["GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"].([]any)
+	if !ok {
+		t.Fatalf("LinkIOIssuer not found in concentrations: %v", concentrations)
+	}
+	if len(linkIOCorridors) != 3 {
+		t.Errorf("LinkIOIssuer corridors = %v, want 3", linkIOCorridors)
+	}
+
+	// Verify the three expected corridors are present.
+	expected := map[string]bool{"NGNC": false, "GHSC": false, "KESC": false}
+	for _, c := range linkIOCorridors {
+		if code, ok := c.(string); ok {
+			expected[code] = true
+		}
+	}
+	for code, found := range expected {
+		if !found {
+			t.Errorf("missing corridor %q in LinkIOIssuer concentration", code)
+		}
+	}
+
+	// Verify corridor_count and concentrated_corridor_count.
+	if got := body["corridor_count"]; got != float64(8) { // 8 corridors with pegs excluding USDC
+		t.Errorf("corridor_count = %v, want 8", got)
+	}
+	if got := body["concentrated_corridor_count"]; got != float64(3) {
+		t.Errorf("concentrated_corridor_count = %v, want 3", got)
+	}
+
+	// Verify generated_at is present and parseable.
+	generatedAt, ok := body["generated_at"].(string)
+	if !ok {
+		t.Fatal("generated_at missing or not a string")
+	}
+	if _, err := time.Parse(time.RFC3339, generatedAt); err != nil {
+		t.Errorf("generated_at = %q, want RFC3339 timestamp: %v", generatedAt, err)
+	}
+
+	// No other issuer should have a concentration.
+	for issuer := range concentrations {
+		if issuer != "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6" {
+			t.Errorf("unexpected issuer in concentration map: %q", issuer)
+		}
+	}
+}
+
+// TestMarketStructureUnknownParamsAreRejected verifies the endpoint enforces
+// the same strict parameter handling as other endpoints.
+func TestMarketStructureUnknownParamsAreRejected(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	status, body := getJSON(t, srv.URL+"/api/market-structure?foo=bar")
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", status)
+	}
+	msg, _ := body["error"].(string)
+	if !strings.Contains(msg, "unknown query parameter") {
+		t.Errorf("error = %q, want it to say unknown query parameter", msg)
+	}
+	if !strings.Contains(msg, `"foo"`) {
+		t.Errorf("error = %q, want it to name the unknown parameter", msg)
+	}
+}
+
+// TestMarketStructureKnownParamsAreAccepted verifies the documented
+// parameters are accepted.
+func TestMarketStructureKnownParamsAreAccepted(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+
+	status, _ := getJSON(t, srv.URL+"/api/market-structure")
+	if status != http.StatusOK {
+		t.Errorf("status = %d, want 200", status)
+	}
+
+	status, _ = getJSON(t, srv.URL+"/api/market-structure?pretty=1")
+	if status != http.StatusOK {
+		t.Errorf("status = %d, want 200 with pretty=1", status)
+	}
 }

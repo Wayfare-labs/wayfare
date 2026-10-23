@@ -1,0 +1,139 @@
+# Error responses
+
+**Status: implemented.** How the service reports a request it could not
+fulfil, and the machine-readable codes a client can switch on. Every claim
+below was checked against the code at time of writing (2026-10-17).
+
+The JSON API answers a request it cannot serve with a non-2xx status and a
+small JSON object:
+
+```json
+{ "error": "human-readable prose", "code": "machine_readable_code" }
+```
+
+- `error` is prose for a person reading logs or a screen. It is **not** a
+  contract: it may be reworded at any time.
+- `code` is the contract. It is a stable, lower-case `snake_case` token that
+  names the cause. A client should switch on `code`, never on the English.
+- The language of the response does not change the shape. An error is never
+  measurement-shaped: it carries no `integrity`, `rungs`, `floor_loss_pct`,
+  `reference_mid`, `finding` or `live` field, so a monitoring dashboard cannot
+  accidentally parse an error as data. `TestErrorResponseShape` in
+  `server/api_schema_test.go` pins this.
+
+Codes are emitted from one set of constants (`server/api.go`), so the same
+cause produces the same code on every endpoint. `TestErrorCodeContract` in
+`server/error_codes_test.go` pins each value and the cross-endpoint identity.
+
+## Codes
+
+| Code | HTTP | Cause | Endpoints |
+|:---|:---|:---|:---|
+| `method_not_allowed` | 405 | A method other than `GET` was used. | `/api/corridor`, `/api/corridor/trend`, `/api/chain-heads`, `/api/market-structure`, `/api/thresholds` |
+| `invalid_query` | 400 | An unsupported query parameter was supplied. Parameter handling is strict: a typo like `?tp=NGNC` is an error, not a silent fall-back to the default corridor. | all |
+| `unknown_send_asset` | 400 | The `from` asset code is not in the verified registry. | `/api/corridor`, `/api/corridor/trend` |
+| `unknown_receive_asset` | 400 | The `to` asset code is not in the verified registry. | `/api/corridor`, `/api/corridor/trend` |
+| `no_fiat_peg` | 400 | The destination asset has no verified fiat peg, so there is no independent rate to score the corridor against. | `/api/corridor`, `/api/corridor/trend` |
+| `invalid_sizes` | 400 | The `sizes` parameter is not a comma-separated list of positive decimals, or names more than 24 sizes. | `/api/corridor` |
+| `invalid_limit` | 400 | The `limit` parameter is not a positive whole number. | `/api/corridor/trend` |
+| `invalid_cursor` | 400 | The `before` sequence cursor is not a positive whole number. | `/api/corridor/trend` |
+| `measurement_failed` | 502 | A live measurement failed at every size and there is no stored run to serve instead. | `/api/corridor` |
+| `upstream_timeout` | 504 | A live measurement exceeded the server's measurement timeout and there is no stored run to serve instead. | `/api/corridor` |
+| `no_history` | 404 | A history-first instance was asked for a corridor it has no stored measurement for, and was not asked to measure one. Nothing was attempted and nothing failed. | `/api/corridor` |
+| `internal_error` | 500 | The request could not be completed because of a server-side failure (for example, the run store could not be listed or read for `/api/assets`). | `/api/assets` |
+| `store_read_error` | 500 | The run store could not be listed or read while serving history. | `/api/corridor/trend`, `/api/chain-heads` |
+| `divergence_history_error` | 500 | A stored `divergence_pct` could not be parsed while summarising reference-divergence history. This is a corrupt record, not an absent observation, so it is reported as an error rather than silently omitted. | `/api/corridor/trend` |
+| `rate_limited` | 429 | The per-client request budget was exhausted. The response carries a `Retry-After` header in whole seconds. | all |
+
+### A note on `method_not_allowed`
+
+The five endpoints above reject a non-`GET` method in the handler itself. The
+two remaining endpoints, `/api/assets` and `/healthz`, do **not** yet do so:
+they answer any method with the same body. This document reports the code as it
+is, so the row above names only the endpoints that emit the code today. A
+CORS `OPTIONS` preflight is answered by middleware before any handler runs
+(`withCORS` in `server/api.go`), so it never reaches a method check on any
+endpoint.
+
+### A note on `measurement_failed` and stored history
+
+A failed live measurement is only an error when there is nothing to fall back
+on. When the store holds a prior run, `/api/corridor` serves that run instead,
+with `live: false` and a `stale` envelope — a `200`, not one of the codes
+above. The error codes are what a client sees when even the recorded history
+cannot answer. Nothing is ever synthesised to fill the gap.
+
+### A note on `no_history`
+
+`no_history` is the code a history-first instance returns when the corridor has
+never been swept. Three absences meet at this endpoint and only one of them is
+an error about the corridor, which is why the code exists at all:
+
+- `no_history` (404) says this deployment holds no measurement. It is a fact
+  about the server's history, made before any upstream was contacted.
+- `measurement_failed` (502) says a measurement was attempted and every size
+  failed to reach an upstream. It is a fact about the service right now.
+- `NO-MARKET` is not an error at all. It is a `200` measurement-shaped response
+  whose finding is that the corridor has no path — a fact about the market
+  ([#189](https://github.com/Wayfare-labs/wayfare/issues/189) draws the same
+  line inside the run store: an absent record and an unmeasurable corridor are
+  different findings).
+
+A cold corridor used to fall through to a live measurement, and when that
+measurement failed the response was `measurement_failed`: an outage report for
+a server that was working, on the deployment configuration the monitor runs in.
+The request now answers `no_history` without measuring, and the prose names
+`live=1` as the way to ask for a reading that does not exist yet.
+
+`no_history` is never returned when the store exists but could not be read, and
+never when no store is configured. Neither is a statement that history is
+absent — one is a server that cannot tell, and the other is a deployment that
+never promised history — so both fall through to a live measurement and report
+whatever that produces. `TestUnreadableStoreIsNotReportedAsNoHistory` in
+`server/no_history_test.go` pins the distinction.
+
+### A note on `unknown_send_asset` and `unknown_receive_asset`
+
+These are deliberately two codes, not one `unknown_asset`. The UI needs to
+tell which side of the request was wrong so it can mark the right input, and
+the two endpoints that accept both `from` and `to` use the same pair.
+
+## Shape
+
+The same envelope is used on every path. `writeError` (`server/api.go`) is the
+single producer, so the keys cannot drift between handlers.
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json; charset=utf-8
+
+{"error":"unknown receive asset \"SCAMC\"; verified assets are GHSC, KESC, NGNC, ...","code":"unknown_receive_asset"}
+```
+
+A rate-limited response adds the header:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 1
+
+{"error":"rate limit exceeded; retry after the delay in the Retry-After header","code":"rate_limited"}
+```
+
+`pretty=1` (or `?pretty`) indents the body for a human reader; it does not
+change the shape. See the [API reference](api.md#rate-limiting) for the
+limiter's parameters.
+
+## What this document does not cover
+
+- The `error` prose and the exact wording of each message.
+- HTTP status codes chosen for causes that are not machine-classified.
+- Anything in this repository that does not exist yet. Error codes are part of
+  V1 hardening (backlog entry #177, issue #237) and are implemented.
+
+## Related
+
+- [api.md](api.md) — the endpoints, their parameters, and their success shapes
+- [checks.md](checks.md) — counterparty findings, which are a measure of the
+  corridor rather than an error response
+- [CONTRIBUTING.md](../CONTRIBUTING.md) — the project invariants a change to
+  this contract must respect

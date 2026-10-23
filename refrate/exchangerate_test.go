@@ -1,10 +1,15 @@
 package refrate
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 )
@@ -316,4 +321,44 @@ func TestExchangeRateAPIZeroRateIsErrNoRate(t *testing.T) {
 	if !errors.As(err, &noRate) {
 		t.Errorf("zero rate should produce *ErrNoRate, got %T", err)
 	}
+}
+
+func FuzzExchangeRateAPIRate(f *testing.F) {
+	snapshot, err := os.ReadFile("../testdata/snapshots/usdc-ghsc-20260821T222915Z/responses/001-v1-currencies-usd.json")
+	if err != nil {
+		f.Fatalf("reading currency-api snapshot seed: %v", err)
+	}
+	var snapshotBody struct {
+		USD map[string]json.RawMessage `json:"usd"`
+	}
+	if err := json.Unmarshal(snapshot, &snapshotBody); err != nil {
+		f.Fatalf("decoding currency-api snapshot seed: %v", err)
+	}
+	ngn := snapshotBody.USD["ngn"]
+	if len(ngn) == 0 {
+		f.Fatal("currency-api snapshot has no USD/NGN rate")
+	}
+	f.Add([]byte(fmt.Sprintf(`{"result":"success","base_code":"USD","rates":{"NGN":%s}}`, ngn)))
+	f.Add([]byte(`{"result":"success","rates":{"NGN":0}}`))
+	f.Add([]byte(`{"result":"success","rates":{"NGN":-1}}`))
+	f.Add([]byte(`{"result":"success","rates":{"NGN":"NaN"}}`))
+
+	f.Fuzz(func(t *testing.T, body []byte) {
+		provider := &ExchangeRateAPI{Client: &http.Client{Transport: fuzzBodyTransport(body)}}
+		rate, err := provider.Rate(context.Background(), "USD", "NGN")
+		if err == nil && !rate.Mid.IsPositive() {
+			t.Fatalf("provider accepted non-positive rate %s", rate.Mid)
+		}
+	})
+}
+
+type fuzzBodyTransport []byte
+
+func (body fuzzBodyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Request:    req,
+	}, nil
 }

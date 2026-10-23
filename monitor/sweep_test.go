@@ -506,3 +506,104 @@ func TestRecordedGapIsVerifiable(t *testing.T) {
 		t.Error("USDC-KESC Finding is empty; a gap must be explained")
 	}
 }
+
+// TestSweepCoversEveryRegisteredCorridor pins the sweep set to the registry.
+//
+// Every verified corridor destination in asset must appear in
+// DefaultCorridors(), so a newly registered corridor cannot be measured in
+// asset and silently skipped by the monitor. Removing a corridor from the
+// sweep makes this test fail.
+func TestSweepCoversEveryRegisteredCorridor(t *testing.T) {
+	sweep := make(map[string]Corridor)
+	for _, c := range DefaultCorridors() {
+		sweep[c.Receive.Code+":"+c.Receive.Issuer] = c
+	}
+
+	for _, e := range asset.Registry() {
+		if e.Code == "USDC" || e.Peg == "" {
+			// USDC is the settlement asset; every other registered entry
+			// with a peg is a corridor destination.
+			continue
+		}
+		key := e.Code + ":" + e.Issuer
+		c, ok := sweep[key]
+		if !ok {
+			t.Errorf("registered corridor %s is not in the monitor's sweep set", runstore.CorridorKey("USDC", e.Code))
+			continue
+		}
+		if c.ReferenceBase == "" || c.ReferenceQuote == "" {
+			t.Errorf("%s has no reference pair; it could not be scored", c.Key())
+		}
+	}
+}
+
+// TestSweepSetEqualsRegistrySet pins the equality #615 asks for in both
+// directions, which TestSweepCoversEveryRegisteredCorridor above does not: it
+// walks the registry into the sweep, so a corridor that is swept but never
+// registered passes it silently.
+//
+// That second direction is not hypothetical, and it is the more dangerous of
+// the two. A swept-but-unregistered corridor is priced against a reference
+// pair nothing has verified, while /api/corridor refuses the same code outright
+// with unknown_receive_asset — so the monitor accumulates a history for a
+// corridor the API says does not exist, and the two disagree about what the
+// registry is. The fix is always registration (asset's own package comment:
+// "the fix is registration, never guessing"), and this is the test that says
+// so.
+//
+// It also pins the reference pair against the issuer's own declared peg rather
+// than merely requiring it to be non-empty: the scoring contract says the
+// benchmark is the peg a token claims to track, so a sweep entry scored against
+// anything else grades a corridor against the wrong money.
+func TestSweepSetEqualsRegistrySet(t *testing.T) {
+	swept := make(map[string]Corridor, len(DefaultCorridors()))
+	var duplicates []string
+	for _, c := range DefaultCorridors() {
+		key := c.Receive.Code + ":" + c.Receive.Issuer
+		if _, seen := swept[key]; seen {
+			duplicates = append(duplicates, c.Key())
+			continue
+		}
+		swept[key] = c
+	}
+	if len(duplicates) > 0 {
+		t.Errorf("the sweep lists %s twice; a duplicated corridor measures the same chain twice per run",
+			strings.Join(duplicates, ", "))
+	}
+
+	registered := make(map[string]asset.Entry, len(swept))
+	for _, e := range asset.Registry() {
+		// USDC is the settlement asset every corridor starts from, not a
+		// destination; an entry with no peg is not a corridor either.
+		if e.Code == "USDC" || e.Peg == "" {
+			continue
+		}
+		registered[e.Code+":"+e.Issuer] = e
+	}
+
+	for key, e := range registered {
+		if _, ok := swept[key]; !ok {
+			t.Errorf("registered corridor %s is not swept, so it never accumulates history",
+				runstore.CorridorKey("USDC", e.Code))
+		}
+	}
+	for key, c := range swept {
+		e, ok := registered[key]
+		if !ok {
+			t.Errorf("swept corridor %s is not a registered destination; the API would answer it with unknown_receive_asset while the monitor records it",
+				c.Key())
+			continue
+		}
+		if c.Send.Code != "USDC" {
+			t.Errorf("%s starts from %s; every registered corridor's send asset is the settlement asset USDC",
+				c.Key(), c.Send.Code)
+		}
+		if c.ReferenceBase != "USD" {
+			t.Errorf("%s reference base = %s, want USD", c.Key(), c.ReferenceBase)
+		}
+		if c.ReferenceQuote != e.Peg {
+			t.Errorf("%s is scored against %s but its issuer declares a %s peg; the benchmark must be the peg the token claims to track",
+				c.Key(), c.ReferenceQuote, e.Peg)
+		}
+	}
+}

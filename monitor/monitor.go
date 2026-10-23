@@ -17,12 +17,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"time"
 
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
+	"github.com/Wayfare-labs/wayfare/snapshot"
 )
 
 // Corridor is one measurement target.
@@ -42,16 +44,24 @@ func (c Corridor) Key() string {
 	return runstore.CorridorKey(c.Send.Code, c.Receive.Code)
 }
 
-// DefaultCorridors are the three corridors of case study #1.
+// DefaultCorridors are every registered corridor destination.
 //
-// Each is included because it exhibits a different integrity state, so a
-// deployment measuring all three exercises the whole taxonomy continuously
-// rather than only the state that happens to be interesting today.
+// The sweep covers the whole registry so that no verified corridor is
+// measured in one place and served in another: a destination registered in
+// asset is a destination the monitor prices. The case-study trio (USDC-NGNC
+// DIRECT, USDC-GHSC DERIVATIVE, USDC-KESC NO-MARKET) still exercises each
+// integrity state, and the remaining registered corridors extend the same
+// coverage to every verified destination token.
 func DefaultCorridors() []Corridor {
 	return []Corridor{
 		{Send: asset.USDC(), Receive: asset.NGNC(), ReferenceBase: "USD", ReferenceQuote: "NGN"},
 		{Send: asset.USDC(), Receive: asset.GHSC(), ReferenceBase: "USD", ReferenceQuote: "GHS"},
 		{Send: asset.USDC(), Receive: asset.KESC(), ReferenceBase: "USD", ReferenceQuote: "KES"},
+		{Send: asset.USDC(), Receive: asset.NGNT(), ReferenceBase: "USD", ReferenceQuote: "NGN"},
+		{Send: asset.USDC(), Receive: asset.USDZ(), ReferenceBase: "USD", ReferenceQuote: "USD"},
+		{Send: asset.USDC(), Receive: asset.ZARZ(), ReferenceBase: "USD", ReferenceQuote: "ZAR"},
+		{Send: asset.USDC(), Receive: asset.EURMTL(), ReferenceBase: "USD", ReferenceQuote: "EUR"},
+		{Send: asset.USDC(), Receive: asset.PYUSD(), ReferenceBase: "USD", ReferenceQuote: "USD"},
 	}
 }
 
@@ -65,6 +75,9 @@ func DefaultCorridors() []Corridor {
 // inside both rate providers' free tiers once refrate.Cached is in the stack.
 const DefaultInterval = 6 * time.Hour
 
+// DefaultJitter is the maximum random delay added to each scheduled interval.
+const DefaultJitter = 5 * time.Minute
+
 // Scheduler measures corridors on an interval and records the results.
 type Scheduler struct {
 	Engine    *route.Engine
@@ -77,8 +90,23 @@ type Scheduler struct {
 	// records then carry none.
 	Checks *checks.Runner
 
+	// SnapshotDir enables scheduled capture. SnapshotEngineFactory must
+	// configure every upstream client to use the supplied recorder.
+	SnapshotDir           string
+	SnapshotSources       snapshot.Sources
+	SnapshotNotes         []string
+	SnapshotEngineFactory func(*snapshot.Recorder) *route.Engine
+	SnapshotChecksFactory func(*snapshot.Recorder) *checks.Runner
+
 	// Interval is the gap between sweeps. Zero means DefaultInterval.
 	Interval time.Duration
+
+	// Jitter is the maximum random delay added to Interval. Zero disables it.
+	Jitter time.Duration
+
+	// JitterSeed makes the interval sequence reproducible when set. Nil uses
+	// a time-based seed.
+	JitterSeed *int64
 
 	// Logger is where run outcomes go. Nil means slog.Default.
 	Logger *slog.Logger
@@ -99,6 +127,21 @@ func (s *Scheduler) interval() time.Duration {
 		return s.Interval
 	}
 	return DefaultInterval
+}
+
+func (s *Scheduler) nextInterval(rng *rand.Rand) time.Duration {
+	if s.Jitter <= 0 {
+		return s.interval()
+	}
+	return s.interval() + time.Duration(rng.Int63n(int64(s.Jitter)))
+}
+
+func (s *Scheduler) randomSource() *rand.Rand {
+	seed := time.Now().UnixNano()
+	if s.JitterSeed != nil {
+		seed = *s.JitterSeed
+	}
+	return rand.New(rand.NewSource(seed))
 }
 
 func (s *Scheduler) corridors() []Corridor {
@@ -133,6 +176,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 	s.log().Info("scheduler starting",
 		"interval", s.interval().String(),
+		"jitter", s.Jitter.String(),
 		"corridors", len(s.corridors()))
 
 	if err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
@@ -143,15 +187,16 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		s.log().Error("initial sweep failed", "error", err)
 	}
 
-	ticker := time.NewTicker(s.interval())
-	defer ticker.Stop()
+	rng := s.randomSource()
 
 	for {
+		timer := time.NewTimer(s.nextInterval(rng))
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			s.log().Info("scheduler stopping", "reason", ctx.Err())
 			return ctx.Err()
-		case <-ticker.C:
+		case <-timer.C:
 			if err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
 				s.log().Error("sweep failed", "error", err)
 			}
@@ -193,8 +238,32 @@ func (s *Scheduler) RunOnce(ctx context.Context) error {
 // measure runs one corridor's ladder and appends the result.
 func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 	started := s.now()
+	engine := s.Engine
+	var recorder *snapshot.Recorder
+	if s.SnapshotDir != "" {
+		if s.SnapshotEngineFactory == nil {
+			return fmt.Errorf("monitor: snapshot directory configured without a snapshot engine factory")
+		}
+		recorder = &snapshot.Recorder{
+			Corridor: snapshot.Corridor{
+				Send:          snapshot.AssetRef{Code: c.Send.Code, Issuer: c.Send.Issuer},
+				Receive:       snapshot.AssetRef{Code: c.Receive.Code, Issuer: c.Receive.Issuer},
+				ReferencePair: c.ReferenceBase + "/" + c.ReferenceQuote,
+			},
+			Sizes:   make([]string, len(route.DefaultSizes)),
+			Sources: s.SnapshotSources,
+			Notes:   s.SnapshotNotes,
+		}
+		for i, size := range route.DefaultSizes {
+			recorder.Sizes[i] = size.String()
+		}
+		engine = s.SnapshotEngineFactory(recorder)
+		if engine == nil {
+			return fmt.Errorf("monitor: snapshot engine factory returned nil for %s", c.Key())
+		}
+	}
 
-	result, err := s.Engine.Ladder(ctx, route.LadderRequest{
+	result, err := engine.Ladder(ctx, route.LadderRequest{
 		SendAsset:      c.Send,
 		ReceiveAsset:   c.Receive,
 		Sizes:          route.DefaultSizes,
@@ -213,11 +282,37 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 	// live read. With no checks configured, this is a no-op and the record
 	// carries none — the same "not checked" the server serves.
 	live := route.ToCorridorJSON(result, pair)
-	if s.Checks != nil {
-		live = route.WithFindings(live, s.Checks.ForAsset(ctx, c.Receive))
+	checkRunner := s.Checks
+	if recorder != nil && s.SnapshotChecksFactory != nil {
+		checkRunner = s.SnapshotChecksFactory(recorder)
+	} else if recorder != nil && checkRunner != nil {
+		return fmt.Errorf("monitor: snapshot checks require a recorder-backed checks factory")
+	}
+	if checkRunner != nil {
+		live = route.WithFindings(live, checkRunner.ForCorridor(ctx, checks.Corridor{
+			Send:       c.Send,
+			Receive:    c.Receive,
+			Integrity:  result.Integrity.String(),
+			Underlying: underlyingPair(result),
+			Reference:  result.Reference,
+			Baseline:   s.issuerDriftBaseline(ctx, c.Key()),
+		}))
 	}
 	record := runstore.FromCorridorJSON(live)
 	record.RecordedAt = started
+	if recorder != nil {
+		for _, rung := range result.Rungs {
+			if rung.Err != nil || rung.Result == nil || rung.Result.Integrity == route.IntegrityUnknown {
+				return fmt.Errorf("monitor: refusing to record incomplete snapshot for %s at size %s",
+					c.Key(), rung.SendAmount)
+			}
+		}
+		hash, err := snapshot.SaveContentAddressed(s.SnapshotDir, recorder)
+		if err != nil {
+			return fmt.Errorf("monitor: recording snapshot artifact for %s: %w", c.Key(), err)
+		}
+		record.Snapshot = hash
+	}
 
 	// Carry the second provider's mid and the divergence, so a later reader
 	// can tell a corridor change from a benchmark change.
@@ -254,8 +349,74 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 	if err := s.store().Append(ctx, record); err != nil {
 		s.log().Error("recording measurement failed",
 			"corridor", c.Key(), "error", err)
+		return nil
 	}
+
+	// The run is stored, so the corridor's structure can now be compared
+	// with the run before it. A corridor moving from DIRECT to NO-MARKET
+	// is the single most important event this monitor can observe, and
+	// until now nothing called the detector that finds it: the change was
+	// visible only by diffing stored records by hand.
+	s.reportTransition(ctx, c.Key())
 	return nil
+}
+
+func (s *Scheduler) issuerDriftBaseline(ctx context.Context, corridor string) *checks.IssuerDriftBaseline {
+	record, err := s.store().Latest(ctx, corridor)
+	if err != nil {
+		s.log().Warn("loading issuer drift baseline failed", "corridor", corridor, "error", err)
+		return nil
+	}
+	if record == nil {
+		return nil
+	}
+	return checks.IssuerDriftBaselineFromChecks(record.Checks)
+}
+
+// underlyingPair names the pair a DERIVATIVE corridor's paths traverse, when
+// the ladder identified exactly one. It mirrors the server's helper: a book
+// metric should measure the market that exists rather than report "no book" for
+// a corridor whose liquidity sits one hop away, and more than one dependency
+// stays empty because there is no single pair to measure.
+func underlyingPair(res *route.LadderResult) asset.Asset {
+	if res == nil || res.Integrity != route.IntegrityDerivative || len(res.DependsOn) != 1 {
+		return asset.Asset{}
+	}
+	return res.DependsOn[0]
+}
+
+// reportTransition logs the corridor's most recent structural change, when
+// the store records one.
+//
+// The comparison is the two most recent stored runs, so a corridor whose
+// structure has not moved says nothing at all. The absence of a transition
+// is the normal case, not a missing observation, and logging it would bury
+// the events that matter.
+//
+// UNKNOWN is excluded by the detector itself, so a transient upstream
+// failure cannot raise a structural alarm here: the same reasoning that
+// keeps a monitor that cries wolf from being muted.
+func (s *Scheduler) reportTransition(ctx context.Context, corridor string) {
+	transition, err := runstore.DetectLatestTransition(ctx, s.store(), corridor)
+	if err != nil {
+		// A failed read is not a failed measurement. The record is
+		// stored, and the next sweep will compare against it.
+		s.log().Error("integrity transition check failed",
+			"corridor", corridor, "error", err)
+		return
+	}
+	if transition == nil {
+		return
+	}
+	s.log().Warn("corridor integrity transition",
+		"corridor", corridor,
+		"previous_integrity", transition.PreviousIntegrity,
+		"current_integrity", transition.CurrentIntegrity,
+		"transition_type", transition.TransitionType.String(),
+		"previous_run_at", transition.PreviousRunAt.UTC().Format(time.RFC3339),
+		"current_run_at", transition.CurrentRunAt.UTC().Format(time.RFC3339),
+		"previous_depends_on", transition.PreviousDependsOn,
+		"current_depends_on", transition.CurrentDependsOn)
 }
 
 func formatTime(t time.Time) string {

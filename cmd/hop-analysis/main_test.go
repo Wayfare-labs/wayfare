@@ -83,14 +83,26 @@ func TestAnalyseReproducesDocFigures(t *testing.T) {
 // snapshot is skipped rather than aborting the whole run. Otherwise a single
 // bad sibling in testdata/snapshots would hide every good corridor and turn
 // the tool into a false negative for issue #101.
+//
+// The fixture set grows as corridors are research-qualified, so the assertion
+// is that the founding corridors survive a bad sibling, not a frozen directory
+// count: pinning the count would fail every time a corridor is added, which is
+// exactly the change this test is not about. That the run completes without an
+// error is the skip behaviour under test — a sibling that could not be loaded
+// or analysed is dropped, and the rest are still reported.
 func TestAnalyseSkipsInvalidSiblings(t *testing.T) {
-	// testdata/snapshots contains three real snapshots; Analyse should return
-	// three CorridorReport entries and no error.
 	report, err := Analyse("../../testdata/snapshots")
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
-	if len(report.Corridors) != 3 {
-		t.Errorf("got %d corridors, want 3 (NGNC, GHSC, KESC)", len(report.Corridors))
+
+	got := map[string]bool{}
+	for _, c := range report.Corridors {
+		got[c.ReceiveCode] = true
+	}
+	for _, want := range []string{"NGNC", "GHSC", "KESC"} {
+		if !got[want] {
+			t.Errorf("Analyse did not report %s; a bad sibling must not hide a good corridor", want)
+		}
 	}
 }

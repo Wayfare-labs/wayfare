@@ -120,6 +120,47 @@ func TestStaleReadingIsLabelled(t *testing.T) {
 	}
 }
 
+// TestStaleHTTPServesStoredFindings covers the full history response path for
+// issue #112. It is not enough for staleJSON to reconstruct findings in
+// isolation: the record conversion and HTTP fallback must preserve the block
+// a client uses to explain counterparty facts after a live fetch fails.
+func TestStaleHTTPServesStoredFindings(t *testing.T) {
+	live := route.WithFindings(
+		route.ToCorridorJSON(wellPopulatedLadderResult(), "USD/NGN"),
+		findingsFixture(),
+	)
+	rec := runstore.FromCorridorJSON(live)
+	if len(rec.Checks) == 0 && len(rec.Metrics) == 0 {
+		t.Fatal("test setup: findings were not carried into the stored record")
+	}
+
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Append(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+
+	status, body := getJSON(t, deadServer(t, st).URL+"/api/corridor?to=NGNC&sizes=100")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %v", status, body)
+	}
+
+	findings, ok := body["findings"].(map[string]any)
+	if !ok {
+		t.Fatal("stale response omitted the stored findings block")
+	}
+	checks, ok := findings["checks"].([]any)
+	if !ok || len(checks) != len(live.Findings.Checks) {
+		t.Fatalf("stale findings checks = %v, want %d entries", findings["checks"], len(live.Findings.Checks))
+	}
+	metrics, ok := findings["metrics"].([]any)
+	if !ok || len(metrics) != len(live.Findings.Metrics) {
+		t.Fatalf("stale findings metrics = %v, want %d entries", findings["metrics"], len(live.Findings.Metrics))
+	}
+}
+
 // TestStaleServesReferenceFetchedAt covers backlog #7: a stored reading must
 // carry reference_fetched_at so a reader can tell how old the benchmark was
 // when the reading was taken — a rate reused from the cache is older than the

@@ -371,3 +371,60 @@ func TestDirNameConvention(t *testing.T) {
 		t.Errorf("DirName = %q, want %q", got, want)
 	}
 }
+
+func TestContentHashVerifiesArtifactAndAllowsMissingArtifact(t *testing.T) {
+	dir, _ := recordAgainst(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"value":1}`)
+	}, "/info")
+
+	want, err := ContentHash(dir)
+	if err != nil {
+		t.Fatalf("ContentHash: %v", err)
+	}
+	if ok, err := VerifyContentHash(dir, want); err != nil || !ok {
+		t.Fatalf("VerifyContentHash present artifact = %v, %v", ok, err)
+	}
+	if ok, err := VerifyContentHash(filepath.Join(t.TempDir(), "absent"), want); err != nil || ok {
+		t.Errorf("VerifyContentHash missing artifact = %v, %v; want false, nil", ok, err)
+	}
+
+	bodyPath := filepath.Join(dir, "responses", "001-info.json")
+	if err := os.WriteFile(bodyPath, []byte(`{"value":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyContentHash(dir, want); err == nil {
+		t.Fatal("edited artifact verified against its original content hash")
+	}
+}
+
+func TestSaveContentAddressed(t *testing.T) {
+	rec := &Recorder{Corridor: ngncCorridor(), Sizes: []string{"100"}}
+	rec.Transport = roundTripper(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"value":1}`)),
+			Request:    req,
+		}, nil
+	})
+	client := &http.Client{Transport: rec}
+	resp, err := client.Get("https://example.test/info")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	parent := t.TempDir()
+	want, err := SaveContentAddressed(parent, rec)
+	if err != nil {
+		t.Fatalf("SaveContentAddressed: %v", err)
+	}
+	path := filepath.Join(parent, strings.TrimPrefix(want, "sha256:"))
+	if ok, err := VerifyContentHash(path, want); err != nil || !ok {
+		t.Fatalf("saved artifact verification = %v, %v", ok, err)
+	}
+}
+
+type roundTripper func(*http.Request) (*http.Response, error)
+
+func (f roundTripper) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }

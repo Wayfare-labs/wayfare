@@ -147,3 +147,18 @@ Add a new snapshot with `go run ./cmd/ladder -record testdata/snapshots`
 first if the corridor list is not the one recorded on 2026-08-21. The tool
 reads whatever snapshot directories it finds under `-snapshots`; the
 recorded `sizes` list drives the analysis, not a private constant.
+
+## Using the tool
+
+`cmd/hop-analysis` reads recorded snapshots only and never touches the network.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-snapshots` | `testdata/snapshots` | Parent directory holding recorded corridor snapshots. |
+| `-json` | off | Emit the report as JSON on stdout instead of a text table. |
+
+With `-json` the output has two top-level keys: `corridors`, one object per
+snapshot, and `note`. Each corridor carries `snapshot`, `send`, `receive`,
+`sizes_measured`, `sizes_parsed`, `sizes_with_any_path`, `sizes_best_uses_xlm`,
+`sizes_with_non_xlm_alt`, `summary` and `sizes` (one breakdown per send
+amount). `cmd/hop-analysis/json_test.go` pins these keys.

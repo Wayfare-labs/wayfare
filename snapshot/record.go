@@ -53,20 +53,25 @@ type Recorder struct {
 	started time.Time
 }
 
-// defaultClassify distinguishes Horizon from the reference-rate provider.
+// defaultClassify distinguishes Horizon, reference-rate, and check requests.
 //
-// Horizon's endpoints are a known, small set; anything else in this project's
-// request path is the rate feed.
+// Horizon's endpoints are a known, small set. The two rate feeds and their
+// diagnostic are also known; other hosts are published check endpoints.
 func defaultClassify(req *http.Request) string {
 	p := req.URL.EscapedPath()
+	host := strings.ToLower(req.URL.Hostname())
 	switch {
 	case strings.HasPrefix(p, "/paths/"),
 		strings.HasPrefix(p, "/order_book"),
 		strings.HasPrefix(p, "/accounts"),
 		strings.HasPrefix(p, "/assets"):
 		return KindHorizon
-	default:
+	case strings.HasSuffix(host, "open.er-api.com"),
+		strings.HasSuffix(host, "currency-api.pages.dev"),
+		strings.HasSuffix(host, "floatrates.com"):
 		return KindReference
+	default:
+		return KindCheck
 	}
 }
 
@@ -243,6 +248,44 @@ func (r *Recorder) Save(dir string) error {
 		return fmt.Errorf("snapshot: writing manifest: %w", err)
 	}
 	return nil
+}
+
+// SaveContentAddressed stores a run under its content hash and returns that
+// hash for the run record. Snapshot bytes remain outside the run-store chain.
+func SaveContentAddressed(parent string, r *Recorder) (string, error) {
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return "", fmt.Errorf("snapshot: creating artifact directory: %w", err)
+	}
+	tempDir, err := os.MkdirTemp(parent, ".capture-")
+	if err != nil {
+		return "", fmt.Errorf("snapshot: creating temporary artifact: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+	if err := r.Save(tempDir); err != nil {
+		return "", err
+	}
+	hash, err := ContentHash(tempDir)
+	if err != nil {
+		return "", err
+	}
+	dest := filepath.Join(parent, strings.TrimPrefix(hash, "sha256:"))
+	if _, err := os.Stat(dest); err == nil {
+		if _, err := VerifyContentHash(dest, hash); err != nil {
+			return "", err
+		}
+		return hash, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("snapshot: inspecting content-addressed artifact: %w", err)
+	}
+	if err := os.Rename(tempDir, dest); err != nil {
+		if _, statErr := os.Stat(dest); statErr == nil {
+			if _, verifyErr := VerifyContentHash(dest, hash); verifyErr == nil {
+				return hash, nil
+			}
+		}
+		return "", fmt.Errorf("snapshot: storing content-addressed artifact: %w", err)
+	}
+	return hash, nil
 }
 
 // Count reports how many distinct interactions have been captured.

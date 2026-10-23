@@ -79,6 +79,10 @@ type LadderResult struct {
 	Request LadderRequest
 	Rungs   []Rung
 
+	// Curve is the measured effective-rate relationship across priced and
+	// unpriced rungs. Unpriced rungs remain explicit holes; no interpolation
+	// or monotonicity assumption is applied.
+	Curve *ExecutionRateCurve
 	// MarginalClassification describes whether adjacent marginal costs are
 	// improving, flat, or worsening. It is undetermined when fewer than two
 	// valid priced points exist.
@@ -135,6 +139,64 @@ type LadderResult struct {
 
 // Viable reports whether any size produced a recommendable route.
 func (l *LadderResult) Viable() bool { return l.Recommended != nil }
+
+// ExecutionRatePoint is one measured ladder rung. Rate is present only when
+// the rung priced; an unpriced point is represented by a hole and its reason.
+type ExecutionRatePoint struct {
+	Size   decimal.Decimal
+	Rate   decimal.Decimal
+	Priced bool
+	Reason string
+}
+
+// ExecutionRateCurve publishes the effective rate by measured size.
+type ExecutionRateCurve struct {
+	Points           []ExecutionRatePoint
+	PricedCount      int
+	ObservationCount int
+	NonMonotonic     bool
+}
+
+// buildCurve preserves the measured ladder faithfully. Rates are compared in
+// ascending size order; a missing rung neither contributes a zero nor breaks
+// the non-monotonicity check between adjacent priced observations.
+func (l *LadderResult) buildCurve() *ExecutionRateCurve {
+	curve := &ExecutionRateCurve{Points: make([]ExecutionRatePoint, 0, len(l.Rungs))}
+	var previous decimal.Decimal
+	var havePrevious bool
+	for _, r := range l.Rungs {
+		point := ExecutionRatePoint{Size: r.SendAmount, Reason: rungReason(r)}
+		if r.Priced() {
+			point.Priced = true
+			point.Rate = r.Result.Quotes[0].EffectiveRate
+			curve.PricedCount++
+			if havePrevious && point.Rate.GreaterThan(previous) {
+				curve.NonMonotonic = true
+			}
+			previous = point.Rate
+			havePrevious = true
+		}
+		curve.Points = append(curve.Points, point)
+	}
+	curve.ObservationCount = curve.PricedCount
+	if curve.PricedCount < 2 {
+		return nil
+	}
+	return curve
+}
+
+func rungReason(r Rung) string {
+	if r.Err != nil {
+		return r.Err.Error()
+	}
+	if r.Result == nil {
+		return "no result"
+	}
+	if len(r.Result.Notes) > 0 {
+		return strings.Join(r.Result.Notes, "; ")
+	}
+	return "no quote priced"
+}
 
 // Failed reports that no size was measured at all, because every request
 // failed before reaching an upstream.
@@ -203,6 +265,17 @@ func (l *LadderResult) PartiallyFailed() bool {
 	return unmeasured > 0 && unmeasured < len(l.Rungs)
 }
 
+// CompletedSizes names the send amounts that were priced, in ascending order.
+func (l *LadderResult) CompletedSizes() []decimal.Decimal {
+	var out []decimal.Decimal
+	for _, r := range l.Rungs {
+		if r.Priced() {
+			out = append(out, r.SendAmount)
+		}
+	}
+	return out
+}
+
 // UnmeasuredSizes names the send amounts at which nothing was learned, in
 // ascending order. Empty means every size produced information about the
 // corridor.
@@ -262,7 +335,10 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 	wg.Wait()
 
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		// The partial result is returned alongside the error so a caller can
+		// report which rungs finished (CompletedSizes). It is not summarised
+		// and must not be presented as a measurement.
+		return out, err
 	}
 	out.summarise()
 	return out, nil
@@ -442,6 +518,7 @@ func (l *LadderResult) summarise() {
 		l.Integrity = IntegrityUnknown
 	}
 
+	l.Curve = l.buildCurve()
 	l.computeMarginalCosts()
 	l.Finding = l.finding(anyPriced, firstErr)
 }
