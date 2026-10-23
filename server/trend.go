@@ -68,6 +68,14 @@ type TrendJSON struct {
 	// integrity state or verdict.
 	LatestTransition *IntegrityTransitionJSON `json:"latest_transition"`
 
+	// Movements is the benchmark-vs-corridor movement decomposition over the
+	// same window (issue #637): one entry per consecutive pair that
+	// established any movement, oldest pair first. Empty array, never null,
+	// so a client can iterate without a nil check. Empty means no pair
+	// established a movement — fewer than two runs, or no pair with both a
+	// scorable benchmark and a priced rung — never "no movement happened".
+	Movements []MovementJSON `json:"movements"`
+
 	// DivergenceStats summarises how far the corridor's two reference
 	// providers have disagreed across the runs above — a fact about the
 	// benchmark, not the corridor. Always present, never omitted: a benchmark
@@ -268,6 +276,9 @@ func toTrendJSON(recs []*runstore.Record, key, pair string, send, recv asset.Ass
 	if len(transitions) > 0 {
 		latest := toIntegrityTransitionJSON(transitions[len(transitions)-1])
 		out.LatestTransition = &latest
+	}
+	for _, movement := range runstore.MovementsFromRecords(recs) {
+		out.Movements = append(out.Movements, toMovementJSON(movement))
 	}
 	return out
 }

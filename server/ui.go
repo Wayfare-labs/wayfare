@@ -173,28 +173,28 @@ func (s *Server) uiHandler() http.Handler {
 			writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET and HEAD are supported")
 			return
 		}
-		body, err := uiFS.ReadFile("index.html")
-		if err != nil {
-			http.Error(w, "ui unavailable", http.StatusInternalServerError)
-			return
-		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Content-Security-Policy", uiCSP())
+
+		// Render the page with the server-side summary (noscript fallback
+		// and head metadata, #635/#636). If rendering fails, serve the raw
+		// page rather than an error: it is still a working UI.
+		data := uiPageData{Summary: s.summaryFor(r.Context())}
+		var buf bytes.Buffer
+		if err := uiTemplate.Execute(&buf, data); err != nil {
+			body, err := uiFS.ReadFile("index.html")
+			if err != nil {
+				http.Error(w, "ui unavailable", http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write(body)
+			return
+		}
 		_, _ = w.Write(buf.Bytes())
 	})
-}
-
-// uiSourceRaw returns the raw embedded page source, for tests that assert on
-// the file's text rather than a rendered response.
-func uiSourceRaw() (string, error) {
-	b, err := uiFS.ReadFile("index.html")
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
 }
 
 // noscriptSummary extracts the rendered <noscript> block from a page body.
