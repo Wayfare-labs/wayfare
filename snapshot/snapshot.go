@@ -36,6 +36,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -67,6 +69,7 @@ const responsesDir = "responses"
 const (
 	KindHorizon   = "horizon"
 	KindReference = "reference"
+	KindCheck     = "check"
 )
 
 // AssetRef identifies an asset within a manifest.
@@ -212,7 +215,13 @@ func Load(dir string) (*Manifest, error) {
 	m.dir = dir
 	m.bodies = make(map[string][]byte, len(m.Interactions))
 	for _, in := range m.Interactions {
-		body, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(in.BodyFile)))
+		bodyPath := filepath.Clean(filepath.FromSlash(in.BodyFile))
+		if filepath.IsAbs(bodyPath) || bodyPath == ".." ||
+			strings.HasPrefix(bodyPath, ".."+string(os.PathSeparator)) ||
+			!strings.HasPrefix(filepath.ToSlash(bodyPath), responsesDir+"/") {
+			return nil, fmt.Errorf("snapshot: invalid body path %q", in.BodyFile)
+		}
+		body, err := os.ReadFile(filepath.Join(dir, bodyPath))
 		if err != nil {
 			return nil, fmt.Errorf("snapshot: reading body for %q: %w", in.Key, err)
 		}
@@ -228,6 +237,57 @@ func Load(dir string) (*Manifest, error) {
 		m.bodies[in.Key] = body
 	}
 	return &m, nil
+}
+
+// ContentHash identifies the exact snapshot artifact, including its manifest
+// and response bytes. Load verifies the manifest's per-body hashes first.
+func ContentHash(dir string) (string, error) {
+	m, err := Load(dir)
+	if err != nil {
+		return "", err
+	}
+	manifest, err := os.ReadFile(filepath.Join(dir, ManifestFile))
+	if err != nil {
+		return "", fmt.Errorf("snapshot: reading manifest for content hash: %w", err)
+	}
+
+	h := sha256.New()
+	_, _ = io.WriteString(h, "wayfare.snapshot.content.v1\x00")
+	writeHashPart(h, manifest)
+	interactions := append([]Interaction(nil), m.Interactions...)
+	sort.Slice(interactions, func(i, j int) bool {
+		return interactions[i].BodyFile < interactions[j].BodyFile
+	})
+	for _, in := range interactions {
+		body := m.bodies[in.Key]
+		writeHashPart(h, []byte(in.BodyFile))
+		writeHashPart(h, body)
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// VerifyContentHash checks a snapshot artifact when it exists. An absent
+// artifact is not an error because run records may outlive retained snapshots.
+func VerifyContentHash(dir, want string) (bool, error) {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("snapshot: inspecting artifact %s: %w", dir, err)
+	}
+	got, err := ContentHash(dir)
+	if err != nil {
+		return true, err
+	}
+	if got != want {
+		return true, fmt.Errorf("snapshot: artifact %s hashes to %s, record expects %s",
+			dir, got, want)
+	}
+	return true, nil
+}
+
+func writeHashPart(h hash.Hash, b []byte) {
+	_, _ = fmt.Fprintf(h, "%d:", len(b))
+	_, _ = h.Write(b)
 }
 
 // Body returns the verbatim recorded body for a key.

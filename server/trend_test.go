@@ -184,6 +184,77 @@ func TestTrendServesIntegrityTransitions(t *testing.T) {
 	}
 }
 
+// TestTrendExposesLatestTransition pins the field issue #579 asks for: the
+// most recent structural change, named with both states, so a reader does not
+// have to diff two records by hand to learn that a corridor moved kind.
+//
+// It is the same event as the last element of integrity_transitions, so the
+// two can never disagree.
+func TestTrendExposesLatestTransition(t *testing.T) {
+	base := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	seeds := []trendSeed{
+		{at: base, integrity: "DIRECT", mid: "1350", source: "currency-api", loss: "5", verdict: "FAIR"},
+		{at: base.Add(6 * time.Hour), integrity: "DERIVATIVE", dependsOn: []string{"NGNC"}, mid: "1350", source: "currency-api", loss: "5", verdict: "FAIR"},
+		{at: base.Add(12 * time.Hour), integrity: "NO-MARKET", mid: "1350", source: "currency-api", loss: "5", verdict: "FAIR"},
+	}
+	srv := trendServer(t, seedTrendStore(t, seeds))
+
+	status, body := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %v", status, body)
+	}
+	latest, ok := body["latest_transition"].(map[string]any)
+	if !ok {
+		t.Fatalf("latest_transition must be an object when the window establishes a transition, got %v", body["latest_transition"])
+	}
+	if latest["previous_integrity"] != "DERIVATIVE" || latest["current_integrity"] != "NO-MARKET" {
+		t.Errorf("latest_transition = %v -> %v, want DERIVATIVE -> NO-MARKET",
+			latest["previous_integrity"], latest["current_integrity"])
+	}
+	if latest["transition_type"] != "INTEGRITY_STATE_CHANGE" {
+		t.Errorf("transition_type = %v, want INTEGRITY_STATE_CHANGE", latest["transition_type"])
+	}
+	if latest["current_run_at"] != seeds[2].at.Format(time.RFC3339) {
+		t.Errorf("current_run_at = %v, want %s", latest["current_run_at"], seeds[2].at.Format(time.RFC3339))
+	}
+
+	// The named transition and the series must be the same event.
+	transitions, _ := body["integrity_transitions"].([]any)
+	if len(transitions) != 2 {
+		t.Fatalf("integrity_transitions = %d, want 2", len(transitions))
+	}
+	last := transitions[len(transitions)-1].(map[string]any)
+	if last["previous_integrity"] != latest["previous_integrity"] || last["current_integrity"] != latest["current_integrity"] {
+		t.Errorf("latest_transition %v disagrees with the last entry of integrity_transitions %v",
+			latest, last)
+	}
+}
+
+// TestTrendLatestTransitionIsNullWhenNoneEstablished covers the honest
+// absence: a window that establishes no transition reports null rather than
+// omitting the field, so a client can tell "nothing changed" from "this
+// build does not report transitions". A single run has nothing to compare,
+// and that is a different answer from a transition.
+func TestTrendLatestTransitionIsNullWhenNoneEstablished(t *testing.T) {
+	base := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	seeds := []trendSeed{
+		{at: base, integrity: "DIRECT", mid: "1350", source: "currency-api", loss: "5", verdict: "FAIR"},
+	}
+	srv := trendServer(t, seedTrendStore(t, seeds))
+
+	status, body := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %v", status, body)
+	}
+	raw, present := body["latest_transition"]
+	if !present {
+		t.Fatal("latest_transition must always be present, so a client cannot miss it")
+	}
+	if raw != nil {
+		t.Errorf("latest_transition = %v, want null for a history of one run", raw)
+	}
+}
+
 // TestTrendWithNoHistoryIsEmptyNotError covers both halves of the empty case:
 // an opened-but-empty store, and no store at all. Both must answer 200 with
 // an empty array, because a missing history is the answer, not a failure,
@@ -303,6 +374,250 @@ func TestTrendLimitBoundsTheRead(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestTrendCursorRejectsInvalidValues pins the typed 400 contract for invalid cursors.
+func TestTrendCursorRejectsInvalidValues(t *testing.T) {
+	srv := trendServer(t, nil)
+
+	cases := map[string]string{
+		"not a number":   "before=abc",
+		"zero":           "before=0",
+		"negative":       "before=-1",
+		"large negative": "before=-99999",
+		"decimal":        "before=1.5",
+		"empty":          "before=",
+		"whitespace":     "before=%20",
+	}
+	for name, q := range cases {
+		t.Run(name, func(t *testing.T) {
+			status, body := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC&"+q)
+			if status != http.StatusBadRequest {
+				t.Fatalf("%s: status = %d, want 400", name, status)
+			}
+			if body["code"] != codeInvalidCursor {
+				t.Errorf("%s: code = %v, want %s", name, body["code"], codeInvalidCursor)
+			}
+			msg, _ := body["error"].(string)
+			if !strings.Contains(msg, "bad cursor") {
+				t.Errorf("%s: error = %q, want it to mention bad cursor", name, msg)
+			}
+		})
+	}
+}
+
+// TestTrendCursorPagination verifies walking multiple pages backward using before=seq.
+func TestTrendCursorPagination(t *testing.T) {
+	base := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	seeds := make([]trendSeed, 0, 10)
+	for i := 0; i < 10; i++ {
+		seeds = append(seeds, trendSeed{
+			at:        base.Add(time.Duration(i) * 6 * time.Hour),
+			integrity: "DIRECT", mid: "1350", source: "currency-api",
+			loss: "25.00", verdict: "UNUSABLE",
+		})
+	}
+	srv := trendServer(t, seedTrendStore(t, seeds))
+
+	// Page 1: 3 newest runs (seq 8, 9, 10), oldest first. Next cursor should be 8.
+	status, p1 := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC&limit=3")
+	if status != http.StatusOK {
+		t.Fatalf("p1 status = %d, want 200: %v", status, p1)
+	}
+	if p1["count"] != float64(3) {
+		t.Errorf("p1 count = %v, want 3", p1["count"])
+	}
+	if p1["next"] != float64(8) {
+		t.Errorf("p1 next = %v, want 8", p1["next"])
+	}
+	runs1 := p1["runs"].([]any)
+	if runs1[0].(map[string]any)["seq"] != float64(8) ||
+		runs1[1].(map[string]any)["seq"] != float64(9) ||
+		runs1[2].(map[string]any)["seq"] != float64(10) {
+		t.Errorf("p1 runs = %v, want seqs [8 9 10]", runs1)
+	}
+
+	// Page 2: before=8 -> runs 5, 6, 7. Next cursor should be 5.
+	status, p2 := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC&limit=3&before=8")
+	if status != http.StatusOK {
+		t.Fatalf("p2 status = %d, want 200: %v", status, p2)
+	}
+	if p2["count"] != float64(3) {
+		t.Errorf("p2 count = %v, want 3", p2["count"])
+	}
+	if p2["next"] != float64(5) {
+		t.Errorf("p2 next = %v, want 5", p2["next"])
+	}
+	runs2 := p2["runs"].([]any)
+	if runs2[0].(map[string]any)["seq"] != float64(5) ||
+		runs2[1].(map[string]any)["seq"] != float64(6) ||
+		runs2[2].(map[string]any)["seq"] != float64(7) {
+		t.Errorf("p2 runs = %v, want seqs [5 6 7]", runs2)
+	}
+
+	// Page 3: before=5 -> runs 2, 3, 4. Next cursor should be 2.
+	status, p3 := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC&limit=3&before=5")
+	if status != http.StatusOK {
+		t.Fatalf("p3 status = %d, want 200: %v", status, p3)
+	}
+	if p3["count"] != float64(3) {
+		t.Errorf("p3 count = %v, want 3", p3["count"])
+	}
+	if p3["next"] != float64(2) {
+		t.Errorf("p3 next = %v, want 2", p3["next"])
+	}
+	runs3 := p3["runs"].([]any)
+	if runs3[0].(map[string]any)["seq"] != float64(2) ||
+		runs3[1].(map[string]any)["seq"] != float64(3) ||
+		runs3[2].(map[string]any)["seq"] != float64(4) {
+		t.Errorf("p3 runs = %v, want seqs [2 3 4]", runs3)
+	}
+
+	// Page 4: before=2 -> run 1. Next cursor should be omitted (end of history).
+	status, p4 := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC&limit=3&before=2")
+	if status != http.StatusOK {
+		t.Fatalf("p4 status = %d, want 200: %v", status, p4)
+	}
+	if p4["count"] != float64(1) {
+		t.Errorf("p4 count = %v, want 1", p4["count"])
+	}
+	if p4["next"] != nil {
+		t.Errorf("p4 next = %v, want nil (omitted at genesis)", p4["next"])
+	}
+	runs4 := p4["runs"].([]any)
+	if runs4[0].(map[string]any)["seq"] != float64(1) {
+		t.Errorf("p4 run = %v, want seq 1", runs4[0])
+	}
+
+	// Page 5: requesting before=1 yields empty history and no next.
+	status, p5 := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC&limit=3&before=1")
+	if status != http.StatusOK {
+		t.Fatalf("p5 status = %d, want 200: %v", status, p5)
+	}
+	if p5["count"] != float64(0) {
+		t.Errorf("p5 count = %v, want 0", p5["count"])
+	}
+	if p5["next"] != nil {
+		t.Errorf("p5 next = %v, want nil on empty page", p5["next"])
+	}
+}
+
+// TestTrendCursorBoundaryAtPageEdge pins boundary edge cases:
+// exact page size matches, single-item remnants, and cursor beyond tip.
+func TestTrendCursorBoundaryAtPageEdge(t *testing.T) {
+	base := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	makeSeeds := func(n int) []trendSeed {
+		s := make([]trendSeed, 0, n)
+		for i := 0; i < n; i++ {
+			s = append(s, trendSeed{
+				at:        base.Add(time.Duration(i) * 6 * time.Hour),
+				integrity: "DIRECT", mid: "1350", source: "currency-api",
+				loss: "25.00", verdict: "UNUSABLE",
+			})
+		}
+		return s
+	}
+
+	// Case 1: Exact limit match. 3 records with limit=3.
+	// All records returned in page 1. No older records exist. Next must be omitted.
+	t.Run("exact page edge has no next", func(t *testing.T) {
+		srv := trendServer(t, seedTrendStore(t, makeSeeds(3)))
+		status, body := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC&limit=3")
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %v", status, body)
+		}
+		if body["count"] != float64(3) {
+			t.Errorf("count = %v, want 3", body["count"])
+		}
+		if body["next"] != nil {
+			t.Errorf("next = %v, want nil when all runs fit on the page", body["next"])
+		}
+	})
+
+	// Case 2: limit + 1 items. 4 records with limit=3.
+	// Page 1 gets seq [2 3 4] and next=2. Page 2 gets seq [1] and next=nil.
+	t.Run("limit plus one boundary", func(t *testing.T) {
+		srv := trendServer(t, seedTrendStore(t, makeSeeds(4)))
+		status, p1 := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC&limit=3")
+		if status != http.StatusOK {
+			t.Fatalf("p1 status = %d, want 200: %v", status, p1)
+		}
+		if p1["count"] != float64(3) {
+			t.Errorf("p1 count = %v, want 3", p1["count"])
+		}
+		if p1["next"] != float64(2) {
+			t.Errorf("p1 next = %v, want 2", p1["next"])
+		}
+
+		status, p2 := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC&limit=3&before=2")
+		if status != http.StatusOK {
+			t.Fatalf("p2 status = %d, want 200: %v", status, p2)
+		}
+		if p2["count"] != float64(1) {
+			t.Errorf("p2 count = %v, want 1", p2["count"])
+		}
+		if p2["next"] != nil {
+			t.Errorf("p2 next = %v, want nil at end", p2["next"])
+		}
+		runs := p2["runs"].([]any)
+		if runs[0].(map[string]any)["seq"] != float64(1) {
+			t.Errorf("p2 run = %v, want seq 1", runs[0])
+		}
+	})
+
+	// Case 3: limit = 1 walks record by record.
+	t.Run("limit of one single-step walk", func(t *testing.T) {
+		srv := trendServer(t, seedTrendStore(t, makeSeeds(3)))
+		// Step 1: latest (seq 3), next=3
+		status, s1 := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC&limit=1")
+		if status != http.StatusOK || s1["next"] != float64(3) {
+			t.Fatalf("s1 next = %v, want 3", s1["next"])
+		}
+		// Step 2: before=3 -> seq 2, next=2
+		status, s2 := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC&limit=1&before=3")
+		if status != http.StatusOK || s2["next"] != float64(2) {
+			t.Fatalf("s2 next = %v, want 2", s2["next"])
+		}
+		// Step 3: before=2 -> seq 1, next=nil
+		status, s3 := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC&limit=1&before=2")
+		if status != http.StatusOK || s3["next"] != nil {
+			t.Fatalf("s3 next = %v, want nil", s3["next"])
+		}
+	})
+
+	// Case 4: cursor beyond highest sequence returns the most recent runs up to limit.
+	t.Run("cursor beyond head seq", func(t *testing.T) {
+		srv := trendServer(t, seedTrendStore(t, makeSeeds(4)))
+		status, body := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC&limit=2&before=100")
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %v", status, body)
+		}
+		if body["count"] != float64(2) {
+			t.Errorf("count = %v, want 2", body["count"])
+		}
+		if body["next"] != float64(3) {
+			t.Errorf("next = %v, want 3", body["next"])
+		}
+		runs := body["runs"].([]any)
+		if runs[0].(map[string]any)["seq"] != float64(3) || runs[1].(map[string]any)["seq"] != float64(4) {
+			t.Errorf("runs = %v, want seqs [3 4]", runs)
+		}
+	})
+
+	// Case 5: Single run store.
+	t.Run("single run store has no next", func(t *testing.T) {
+		srv := trendServer(t, seedTrendStore(t, makeSeeds(1)))
+		status, body := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC&limit=5")
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %v", status, body)
+		}
+		if body["count"] != float64(1) {
+			t.Errorf("count = %v, want 1", body["count"])
+		}
+		if body["next"] != nil {
+			t.Errorf("next = %v, want nil for single run", body["next"])
+		}
+	})
 }
 
 // buildTrendSeeds returns n runs, oldest first, each carrying divergencePct

@@ -269,18 +269,22 @@ bounded parts out. As of the date at the top of this document:
   corridor. (A live SEP-38 round-trip *has* been performed against the
   `testanchor.stellar.org` sandbox on 2026-08-28 and is recorded in
   `sep38/testdata/live/` — a sandbox anchor, not a corridor.)
-- **Market-quality metrics are merged but unreachable.** Spread, depth, price
-  impact and concentration are implemented and tested, but `checks.Runner` has
-  no way to run a `Metric`, so none has ever appeared in a response, been
-  recorded, or been rendered. The published comparison today is loss against
-  mid, not the full cost decomposition. See
+- **Market-quality metrics reach the wire, and the cost decomposition does
+  not.** Since 2026-10-22 a corridor sweep runs spread, concentration, observed
+  depth and book-versus-reference deviation beside its checks, so they are
+  recorded and served in `findings.metrics`. Price impact and executable depth
+  are implemented but not in the default set, because each costs a pathfinding
+  sweep. The published headline comparison is still loss against mid, not the
+  full cost decomposition — `route.Decompose` has no caller. See
   [docs/metrics.md](metrics.md).
-- **The corridor health score is implemented and not reachable.** A 0–100 blend
-  of five metric inputs exists in `route/health_score.go` with tests, and has no
-  non-test caller; its `Value` is deliberately absent from the wire
-  (`json:"-"`). It is also undetermined whenever any input is undetermined, so
-  it would report nothing today. The weights are maintainer-owned and
-  provisional.
+- **The corridor health score is implemented and not reachable, by decision.**
+  A 0–100 blend of five metric inputs exists in `route/health_score.go` with
+  tests, and has no non-test caller; its `Value` is deliberately absent from the
+  wire (`json:"-"`). Its inputs are reachable now, which is why the decision is
+  written down rather than implied: a blended number read beside an empty
+  `recommended` turns a refusal into a bad grade
+  ([ADR 009](adr/009-why-the-health-score-stays-off-the-wire.md)). The weights
+  are maintainer-owned and provisional.
 - **The history is short and currently frozen.** `runstore` has been collecting
   since August 2026, and the scheduled measure workflow cannot push
   ([#63](https://github.com/Wayfare-labs/wayfare/issues/63)), so the served

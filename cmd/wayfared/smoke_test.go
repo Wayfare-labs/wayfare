@@ -157,7 +157,7 @@ func TestVerifyStoreEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openStore: %v", err)
 	}
-	code := verifyStore(store, logger)
+	code := verifyStore(store, dir, logger)
 	if code != 0 {
 		t.Errorf("verifyStore on empty store = %d, want 0", code)
 	}
@@ -197,7 +197,7 @@ func TestVerifyStoreReadOnlyBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenFS: %v", err)
 	}
-	if code := verifyStore(store, logger); code != 0 {
+	if code := verifyStore(store, dir, logger); code != 0 {
 		t.Fatalf("verifyStore on read-only backend = %d, want 0", code)
 	}
 }

@@ -236,7 +236,7 @@ blame issuers for Horizon outages.
 
 ---
 
-## The reference checks
+## The default reference checks
 
 The first three were deliberately structurally different, so that implementing
 them tested the contract rather than one shape of it:
@@ -244,18 +244,23 @@ them tested the contract rather than one shape of it:
 | Check | Kind | Why this one |
 |:---|:---|:---|
 | `toml.anchor-asset-iso4217` | pure parse, `CostFree` | Derivable from a `stellar.toml` already fetched. Has a real failing case in published data: KESC declares `anchor_asset="KESC"`, naming its own token rather than the shilling |
+| `sep12.server-published` | TOML fact, `CostFree` | Reports whether `KYC_SERVER` is declared; it does not probe the KYC service |
 | `sep10.endpoint-responds` | network probe, `CostOneRequest` | Tests the RoundTripper seam and the declared-versus-actual distinction |
+| `sep31.info` | network probe, `CostOneRequest` | Checks the declared `DIRECT_PAYMENT_SERVER` `/info` response and whether the asset is enabled for receiving |
 | `issuer.auth-flags` | on-chain, `CostOneRequest` | `AUTH_REQUIRED`, `AUTH_REVOCABLE`, clawback — these determine whether a payment can be blocked or reversed, which is the most consequential thing a check can report |
 
 If implementing the third shows the contract is wrong, the contract changes —
 that is why three existed before the backlog did. It did not need to change, so
-the set grew to seven, which is what `checks.Runner.Default()` returns today:
+the set has grown, and `checks.Runner.Default()` returns:
 
 | Check | Scope | Cost | Severity |
 |:---|:---|:---|:---|
 | `toml.anchor-asset-iso4217` | asset | free | notice |
+| `sep12.server-published` | anchor | free | info |
 | `sep10.endpoint-responds` | anchor | one-request | warning |
+| `sep6.info-lists-asset` | asset | one-request | notice |
 | `sep24.info-lists-asset` | asset | one-request | notice |
+| `sep31.info` | asset | one-request | warning |
 | `sep38.quote-server-published` | anchor | free | notice |
 | `issuer.auth-flags` | asset | one-request | critical |
 | `issuer.auth-immutable` | asset | one-request | info |
@@ -270,23 +275,27 @@ and the line in `Runner.Default()` that makes it reach a reader.
 
 ---
 
-## Open questions for review
+## Decisions
 
-1. **Is `Subject` as a string enough?** A corridor-scoped check needs a send
-   and a receive asset; a string forces parsing. A typed subject is cleaner but
-   makes the interface generic over three shapes.
-2. **Should `Severity` live on the check or on the result?** On the descriptor
-   it is fixed per check; on the result a check could escalate. Fixed is
-   simpler and harder to abuse.
-3. **Do metrics need a threshold-derived check at all in v1**, or should that
-   wait until a metric exists that anyone wants a verdict on?
+1. **`Subject` is typed.** Corridor checks receive `Send` and `Receive` as
+  `asset.Asset` values, avoiding per-check parsing and malformed-string
+  handling. See [`Subject`](../checks/checks.go).
+2. **Severity is fixed by the descriptor.** `Descriptor.Severity` is the
+  source of truth; each `CheckResult` carries that value with its observation
+  so consumers can sort and report results without looking up the descriptor.
+  See [`Descriptor` and `CheckResult`](../checks/checks.go).
+3. **Metrics do not become threshold verdicts in v1.** Metrics remain
+  measurements; a threshold-derived check is an explicit, separate
+  maintainer-owned decision. No threshold check is added until there is a
+  defined decision that needs one. See [Checks and metrics are separate
+  shapes](checks.md#checks-and-metrics-are-separate-shapes).
 
 ## Related
 
 - [adding-a-check.md](adding-a-check.md) — the worked example: writing a new
   check from an empty file to a registered one
-- [adding-a-metric.md](adding-a-metric.md) — the same, for quantities, and why
-  a metric is not reachable yet
+- [adding-a-metric.md](adding-a-metric.md) — the same, for quantities, and what
+  registering one costs on the default metric set
 - [glossary.md](glossary.md) — every state a reader can meet, including the
   three-valued check result and severity levels
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — project invariants

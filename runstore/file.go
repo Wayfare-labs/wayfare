@@ -3,6 +3,7 @@ package runstore
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Wayfare-labs/wayfare/snapshot"
 )
 
 // FileStore keeps one NDJSON file per corridor, opened for append.
@@ -100,28 +103,45 @@ func (s *FileStore) readAll(corridor string) ([]*Record, error) {
 		if raw == "" {
 			continue
 		}
-		var r Record
-		if err := json.Unmarshal([]byte(raw), &r); err != nil {
-			return nil, fmt.Errorf("runstore: %s line %d: %w", corridor, line, err)
+		r, err := decodeLine(corridor, line, []byte(raw))
+		if err != nil {
+			return nil, err
 		}
-		// Versions 1, 2 and 3 are all loadable: each migration added its
-		// fields with omitempty after every earlier field, so older records
-		// encode byte-for-byte as they did when they were written and
-		// verify unchanged (see Record and docs/run-store.md). Any other
-		// version is a schema this build does not understand and must be
-		// refused, never guessed at.
-		if r.Version != 1 && r.Version != 2 && r.Version != Version {
-			return nil, fmt.Errorf(
-				"runstore: %s line %d has record version %d, this build understands %d; "+
-					"refusing to guess at a schema it does not know",
-				corridor, line, r.Version, Version)
-		}
-		out = append(out, &r)
+		out = append(out, r)
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("runstore: reading %s: %w", corridor, err)
 	}
 	return out, nil
+}
+
+// decodeLine parses one NDJSON line into a Record.
+//
+// Factored out of readAll so the fuzz target can drive it directly: the decoder
+// is what stands between a committed chain and a served measurement, so it is
+// fuzzed rather than reached only through a file on disk (FuzzDecodeRecord).
+//
+// Versions 1 through 4 are loadable: each migration added its fields with
+// omitempty after every earlier field, so older records encode byte-for-byte as
+// they did when they were written and verify unchanged (see Record and
+// docs/run-store.md). Any other version is a schema this build does not
+// understand and must be refused, never guessed at.
+func decodeLine(corridor string, line int, raw []byte) (*Record, error) {
+	var r Record
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return nil, fmt.Errorf("runstore: %s line %d: %w", corridor, line, err)
+	}
+	if r.Version < 1 || r.Version > Version {
+		return nil, fmt.Errorf(
+			"runstore: %s line %d has record version %d, this build understands %d; "+
+				"refusing to guess at a schema it does not know",
+			corridor, line, r.Version, Version)
+	}
+	if r.Version < Version && r.Snapshot != "" {
+		return nil, fmt.Errorf("runstore: %s line %d has a snapshot hash in legacy record version %d",
+			corridor, line, r.Version)
+	}
+	return &r, nil
 }
 
 // verifyChain checks every hash and every link in order.
@@ -247,8 +267,10 @@ func (s *FileStore) Latest(ctx context.Context, corridor string) (*Record, error
 	return s.tips[strings.ToUpper(corridor)], nil
 }
 
-// Recent returns up to n records, newest first.
-func (s *FileStore) Recent(ctx context.Context, corridor string, n int) ([]*Record, error) {
+// RecentBefore returns up to n records strictly before sequence number
+// 'before' (i.e. Seq < before), newest first. When before <= 0, it returns
+// up to n most recent records.
+func (s *FileStore) RecentBefore(ctx context.Context, corridor string, n int, before int64) ([]*Record, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -262,6 +284,15 @@ func (s *FileStore) Recent(ctx context.Context, corridor string, n int) ([]*Reco
 	if err != nil {
 		return nil, err
 	}
+	if before > 0 {
+		filtered := make([]*Record, 0, len(all))
+		for _, r := range all {
+			if r.Seq < before {
+				filtered = append(filtered, r)
+			}
+		}
+		all = filtered
+	}
 	if len(all) > n {
 		all = all[len(all)-n:]
 	}
@@ -270,6 +301,11 @@ func (s *FileStore) Recent(ctx context.Context, corridor string, n int) ([]*Reco
 		out = append(out, all[i])
 	}
 	return out, nil
+}
+
+// Recent returns up to n records, newest first.
+func (s *FileStore) Recent(ctx context.Context, corridor string, n int) ([]*Record, error) {
+	return s.RecentBefore(ctx, corridor, n, 0)
 }
 
 // All returns the complete corridor history in chronological order
@@ -302,6 +338,42 @@ func (s *FileStore) Verify(ctx context.Context, corridor string) error {
 		return err
 	}
 	return verifyChain(corridor, records)
+}
+
+// VerifySnapshots checks the artifacts referenced by a corridor's records.
+// Missing artifacts are allowed; present artifacts must be valid and match
+// their recorded content hashes.
+func (s *FileStore) VerifySnapshots(ctx context.Context, corridor, snapshotsDir string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	records, err := s.readAll(strings.ToUpper(corridor))
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	for _, r := range records {
+		if r.Snapshot == "" {
+			continue
+		}
+		const prefix = "sha256:"
+		digest := strings.TrimPrefix(r.Snapshot, prefix)
+		if !strings.HasPrefix(r.Snapshot, prefix) || len(digest) != 64 {
+			return fmt.Errorf("runstore: %s: record seq %d has invalid snapshot hash %q",
+				corridor, r.Seq, r.Snapshot)
+		}
+		if _, err := hex.DecodeString(digest); err != nil {
+			return fmt.Errorf("runstore: %s: record seq %d has invalid snapshot hash %q",
+				corridor, r.Seq, r.Snapshot)
+		}
+		artifactDir := filepath.Join(snapshotsDir, digest)
+		if _, err := snapshot.VerifyContentHash(artifactDir, r.Snapshot); err != nil {
+			return fmt.Errorf("runstore: %s: record seq %d snapshot verification: %w",
+				corridor, r.Seq, err)
+		}
+	}
+	return nil
 }
 
 // Corridors lists the corridors with stored history, sorted.

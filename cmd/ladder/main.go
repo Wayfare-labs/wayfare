@@ -48,17 +48,31 @@ type corridor struct {
 	refPair string // ISO-4217 code of the fiat the token is pegged to
 }
 
-var corridors = map[string]corridor{
-	"NGNC": {asset.NGNC(), "NGN"},
-	"GHSC": {asset.GHSC(), "GHS"},
-	"KESC": {asset.KESC(), "KES"},
-	"NGNT": {asset.NGNT(), "NGN"},
+// defaultCorridors builds the corridor map from the asset registry.
+func defaultCorridors() map[string]corridor {
+	m := make(map[string]corridor)
+	for _, e := range asset.Registry() {
+		if e.Code == "USDC" || e.Peg == "" {
+			continue
+		}
+		a, ok := asset.Lookup(e.Code)
+		if !ok {
+			a = asset.Stellar(e.Code, e.Issuer)
+		}
+		m[strings.ToUpper(e.Code)] = corridor{
+			dest:    a,
+			refPair: e.Peg,
+		}
+	}
+	return m
 }
+
+var corridors = defaultCorridors()
 
 func main() {
 	var (
-		to        = flag.String("to", "NGNC", "destination asset code (NGNC, GHSC, KESC, NGNT)")
-		sizesFlag = flag.String("sizes", "0.1,1,5,10,25,50,100,250,500,1000,2500,5000",
+		to        = flag.String("to", "NGNC", toHelp())
+		sizesFlag = flag.String("sizes", defaultSizesFlag(),
 			"comma-separated send amounts in USDC")
 		jsonOut = flag.Bool("json", false, "emit JSON on stdout instead of the text table")
 		record  = flag.String("record", "",
@@ -75,7 +89,7 @@ func main() {
 
 	c, ok := corridors[strings.ToUpper(*to)]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "unknown destination %q; known: NGNC, GHSC, KESC, NGNT\n", *to)
+		fmt.Fprintf(os.Stderr, "unknown destination %q; known: %s\n", *to, strings.Join(corridorCodes(), ", "))
 		os.Exit(2)
 	}
 
@@ -210,6 +224,46 @@ func main() {
 	if !result.Viable() {
 		os.Exit(1)
 	}
+}
+
+// corridorCodes returns the destination asset codes of all registered corridors
+// in registry order.
+//
+// USDC is excluded because it is the settlement asset every corridor starts
+// from, not a destination.
+func corridorCodes() []string {
+	var codes []string
+	for _, e := range asset.Registry() {
+		if e.Code == "USDC" || e.Peg == "" {
+			continue
+		}
+		codes = append(codes, e.Code)
+	}
+	return codes
+}
+
+// toHelp returns the help text for the -to flag, listing all registered corridor destinations.
+//
+// Derived from the asset registry at startup so that adding a corridor in package
+// asset automatically updates the CLI flag help without maintaining a second list
+// (issue #586).
+func toHelp() string {
+	return fmt.Sprintf("destination asset code (%s)", strings.Join(corridorCodes(), ", "))
+}
+
+// defaultSizesFlag renders the shared ladder as the comma-separated form the
+// -sizes flag accepts.
+//
+// The default is derived from route.DefaultSizes rather than written out as a
+// second literal. The CLI, the server and the depth metric must measure the
+// same ladder; a literal here would silently drift when the shared definition
+// changed, which is the class of divergence #390 removed everywhere else.
+func defaultSizesFlag() string {
+	parts := make([]string, len(route.DefaultSizes))
+	for i, size := range route.DefaultSizes {
+		parts[i] = size.String()
+	}
+	return strings.Join(parts, ",")
 }
 
 // parseSizes reads the -sizes flag. A malformed entry is reported and

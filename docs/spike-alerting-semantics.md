@@ -12,6 +12,13 @@ to whom, and — critically — what must never fire*, against the semantics the
 code already encodes. Delivery of the notifications is future work and is
 explicitly out of this issue's scope.
 
+**Update (issue #579, 2026-10-20).** C1 now has a caller: the scheduler
+compares the two most recent stored runs after every sweep and logs the
+transition at `warn`, and `GET /api/corridor/trend` publishes the same
+comparison as `latest_transition`. What is still absent is *delivery* — no
+notification channel of any kind — so the alert catalogue below remains spec,
+and the semantics this document fixes are unchanged.
+
 ---
 
 ## Why this matters
@@ -151,10 +158,14 @@ through a corridor) and **an operator/maintainer** (the deployment's owner).
 | O3 | A scheduled sweep produced no record (gap) | a previous record exists and the expected cadence elapsed with no successor (`monitor`, `measure.yml`) | Absence of measurement is the one state that is *not* read from a run — it is read from the schedule. It must never be conflated with NO-MARKET ("no path") |
 
 Of these, **C1 is the only one with a detector already implemented**
-(`runstore/transition.go`), and it currently has **no caller and no delivery**
-— it was merged as capability in PR #109 with notification deferred. It is the
-natural first alert. The rest are specifications; none of their alert code
-exists in the tree today.
+(`runstore/transition.go`). It was merged as capability in PR #109 with
+notification deferred, and it **had no caller** until issue #579 wired the
+scheduler to it: the monitor now compares the two most recent stored runs
+after every sweep and logs the transition, and `GET /api/corridor/trend`
+publishes the same comparison as `latest_transition`. It still has **no
+delivery** — nothing is sent to anyone — but the detection is no longer
+invisible. It is the natural first alert. The rest are specifications; none
+of their alert code exists in the tree today.
 
 ---
 
@@ -185,9 +196,11 @@ The receiver split maps to two channels: consumer-facing events (C1–C3) could
 be delivered pollably by extending the *trend* endpoint's output with a
 `last_transitions` block (client polls and diffs — one transition added since
 last read → exactly one "new" event, preserving Rule 4), while operator-facing
-events (O1–O3) would go to the deployment's own paging. Nothing in the repo
-implements either channel today; both are **future** under this issue's
-constraint "mark future capabilities as future".
+events (O1–O3) would go to the deployment's own paging. The trend endpoint
+now carries a `latest_transition` block (issue #579), so the poll-and-diff
+channel has something to read; the operator-facing paging does not exist.
+Both remain **future** under this issue's constraint "mark future
+capabilities as future".
 
 ---
 
@@ -201,7 +214,10 @@ What this spike contributes is the alert *catalogue* (C1–C3, O1–O3), the
 explicit never-list, and the audience split — and the finding that there is
 currently **no notification channel in the tree**, so everything above beyond
 `DetectLatestTransition` is spec awaiting an implementation that this spike
-does not attempt.
+does not attempt. Since issue #579 the detector itself has a caller (the
+scheduler logs it, the trend endpoint publishes it), but the channel is still
+absent: a transition is visible to whoever reads the log or the API, and
+nobody is told.
 
 ## Related
 

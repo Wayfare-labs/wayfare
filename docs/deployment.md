@@ -32,6 +32,13 @@ settings below exist to prevent it.
 
 ## Two ways to run it continuously
 
+The hosted scheduler runs its first sweep immediately. Each later sweep waits
+the configured `-schedule` interval plus a random delay in the range
+`[0, -schedule-jitter)`. The defaults are six hours and five minutes; setting
+`-schedule-jitter=0` disables the offset. The interval is the base gap, not a
+fixed wall-clock time, and the random delay is selected separately for each
+process run.
+
 **Scheduled CI** (`.github/workflows/measure.yml`) — a workflow measures every
 six hours and commits the hash-chained store back to the repository. No host,
 no bill, and one repository secret ([below](#running-the-ci-path)).
@@ -298,9 +305,12 @@ hours.
 
 ## Load on upstreams
 
-One sweep is roughly three dozen Horizon calls per corridor — twelve sizes,
-each with pathfinding plus a slippage probe — across three corridors, so about
-110 requests every six hours. That is negligible for Horizon at this cadence.
+One sweep is roughly sixty-eight Horizon calls across the three corridors —
+NGNC and GHSC each run twelve rungs with pathfinding plus a slippage probe on
+rungs above the probe threshold (28 calls each); KESC short-circuits as
+NO-MARKET after twelve pathfinding calls (12) — plus about twelve counterparty
+requests and two reference-provider calls, near eighty requests every six
+hours. That is negligible for Horizon at this cadence.
 
 The reference providers are hit roughly **once per run** rather than once per
 rung, because `refrate.Cached` collapses a ladder's twelve identical rate
@@ -324,6 +334,8 @@ put a secret into the deployment, and this service holds none.
 | `-timeout` | | `90s` | Ceiling on a live measurement. Each request's budget is 10s plus 6s per rung, capped at this value, and is returned in the `X-Measurement-Budget` header. A timeout returns `504` with code `upstream_timeout`, the `budget`, and `rungs_completed`. |
 | `-shutdown-grace` | | `30s` | On SIGTERM, how long in-flight requests (a live ladder) get to finish before the server closes |
 | `-verify-store` | | | Walk every chain and exit |
+| `-export` | | | Export one corridor's verified history to stdout and exit, e.g. `-export USDC-NGNC` |
+| `-format` | | `csv` | Export format for `-export`; `csv` is the only implemented format |
 | `-rotate-store` | | | Trim every chain over the window ceiling and exit |
 | `-rotate-records` | | `366` | Per-corridor record ceiling for `-rotate-store` |
 | `-check-fresh` | | | Report corridors whose newest record is older than `-max-age` (or missing) and exit |
@@ -406,7 +418,10 @@ absence.
 With no stored run, the request **errors**. Nothing is ever synthesised to fill
 the gap. This is the one place a continuous monitor can quietly betray the
 project, so it has explicit tests: one asserting a stale response is labelled,
-and one asserting a missing one is an error rather than a plausible number.
+and one asserting a missing one is an error rather than a plausible number. On
+a `-history-first` deployment the missing-history case is answered before any
+upstream is contacted — `404` with `code: "no_history"` — so an unswept corridor
+is never reported as an outage (`docs/errors.md`).
 
 ---
 
@@ -451,7 +466,7 @@ Background monitoring sweeps record corridor health and storage outcomes:
 
 | Field | Meaning | Example |
 |:---|:---|:---|
-| `msg` | Event description | `"corridor measured"`, `"corridor measurement failed"`, `"recording measurement failed"` |
+| `msg` | Event description | `"corridor measured"`, `"corridor measurement failed"`, `"recording measurement failed"`, `"corridor integrity transition"`, `"integrity transition check failed"` |
 | `corridor` | Corridor identifier key | `USDC-NGNC` |
 | `integrity` | Structural classification from ladder | `DIRECT` |
 | `floor_loss_pct` | Lowest loss percentage measured across rungs | `4.31` |
@@ -461,6 +476,33 @@ Background monitoring sweeps record corridor health and storage outcomes:
 | `agreement` | Cross-benchmark comparison outcome | `AGREE`, `DIVERGED`, `UNAVAILABLE` |
 | `took` | Ladder measurement latency | `1.85s` |
 | `error` | Upstream network or storage error | `measuring USDC-NGNC: context deadline exceeded` |
+
+**Integrity transitions.** After each sweep, the scheduler compares the run it
+just stored with the run before it and writes the result at `warn` when the
+corridor's structure changed — the event a corridor consumer cares about most,
+because a route object built on the old shape is now wrong. The comparison
+covers the two most recent stored runs, so an unchanged corridor says nothing
+at all, and a pair involving `UNKNOWN` never fires: a transient upstream
+failure is not a structural change, and a monitor that cries wolf gets muted.
+
+| Field | Meaning | Example |
+|:---|:---|:---|
+| `msg` | Event description | `"corridor integrity transition"` |
+| `corridor` | Corridor identifier key | `USDC-NGNC` |
+| `previous_integrity` | Integrity state before the change | `DIRECT` |
+| `current_integrity` | Integrity state after the change | `NO-MARKET` |
+| `transition_type` | Kind of structural change | `INTEGRITY_STATE_CHANGE`, `DEPENDS_ON_CHANGED` |
+| `previous_run_at` | RFC 3339 timestamp of the earlier run | `2026-09-26T02:00:00Z` |
+| `current_run_at` | RFC 3339 timestamp of the later run | `2026-09-26T08:00:00Z` |
+| `previous_depends_on` | Dependency set before the change | `[NGNC]` |
+| `current_depends_on` | Dependency set after the change | `[]` |
+
+The same comparison is published on `GET /api/corridor/trend` as
+`latest_transition` (`docs/api.md`), so the event is available to a reader
+that polls the API instead of reading the log. A failed read of the store is
+logged at `error` as `"integrity transition check failed"` and costs the
+sweep nothing: the measurement is already stored, and the next sweep will
+compare against it.
 
 #### 4. Process lifecycle and storage management (`cmd/wayfared`)
 

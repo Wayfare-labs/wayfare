@@ -12,6 +12,20 @@
 // same class of decision as the verdict bands. The current values are
 // reasonable defaults; they will be adjusted once the five component metrics
 // are reachable and producing real data.
+//
+// # Status: deliberately unreachable
+//
+// Nothing in this tree calls HealthScore or HealthScoreWeighted, and that is a
+// decision rather than an oversight: see
+// docs/adr/009-why-the-health-score-stays-off-the-wire.md. The market-quality
+// metrics that feed it are reachable since #577, which is exactly when it
+// becomes tempting to wire this too — a blended number can appear beside an
+// empty `recommended` and be read as "bad grade" instead of "this corridor
+// does not price", which is the refusal the project exists to preserve.
+//
+// Do not add a caller without deciding the four conditions ADR 009 lists. The
+// `json:"-"` tag on HealthScoreResult.Value is the mechanical half: a
+// serialised result cannot carry the blended number even if one is computed.
 package route
 
 import (

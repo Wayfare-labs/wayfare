@@ -405,6 +405,139 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+// TestHeadMatchesGetOnHealthAndUI pins the issue #612 contract: HEAD on the
+// health and UI routes returns the same status and headers as GET, with no
+// body. Go's http server suppresses the HEAD body while preserving status and
+// headers, including Content-Length; this test guards against a future method
+// check silently reintroducing a 405 or a body.
+func TestHeadMatchesGetOnHealthAndUI(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+	for _, path := range []string{"/healthz", "/"} {
+		t.Run(path, func(t *testing.T) {
+			getResp, err := http.Get(srv.URL + path)
+			if err != nil {
+				t.Fatalf("GET %s: %v", path, err)
+			}
+			_, err = io.ReadAll(getResp.Body)
+			getResp.Body.Close()
+			if err != nil {
+				t.Fatalf("reading GET %s: %v", path, err)
+			}
+
+			headReq, err := http.NewRequest(http.MethodHead, srv.URL+path, nil)
+			if err != nil {
+				t.Fatalf("building HEAD %s: %v", path, err)
+			}
+			headResp, err := http.DefaultClient.Do(headReq)
+			if err != nil {
+				t.Fatalf("HEAD %s: %v", path, err)
+			}
+			headBody, err := io.ReadAll(headResp.Body)
+			headResp.Body.Close()
+			if err != nil {
+				t.Fatalf("reading HEAD %s: %v", path, err)
+			}
+
+			if getResp.StatusCode != http.StatusOK {
+				t.Errorf("GET %s status = %d, want 200", path, getResp.StatusCode)
+			}
+			if headResp.StatusCode != http.StatusOK {
+				t.Errorf("HEAD %s status = %d, want 200", path, headResp.StatusCode)
+			}
+			if headResp.StatusCode != getResp.StatusCode {
+				t.Errorf("HEAD %s status = %d, want GET status %d", path, headResp.StatusCode, getResp.StatusCode)
+			}
+			if len(headBody) != 0 {
+				t.Errorf("HEAD %s returned a %d-byte body; HEAD must carry no body", path, len(headBody))
+			}
+			compareHeaders(t, path, getResp.Header, headResp.Header)
+		})
+	}
+}
+
+// compareHeaders asserts that every header present in the GET response (except
+// Date, which differs per request) is present with the same values in the HEAD
+// response, and vice versa.
+func compareHeaders(t *testing.T, path string, getH, headH http.Header) {
+	t.Helper()
+	for k, vv := range getH {
+		if k == "Date" {
+			continue
+		}
+		hv, ok := headH[k]
+		if !ok {
+			t.Errorf("HEAD %s header %q present in GET (%v) absent in HEAD", path, k, vv)
+			continue
+		}
+		if !equalStringSlices(vv, hv) {
+			t.Errorf("HEAD %s header %q mismatch: GET=%v HEAD=%v", path, k, vv, hv)
+		}
+	}
+	for k := range headH {
+		if k == "Date" {
+			continue
+		}
+		if _, ok := getH[k]; !ok {
+			t.Errorf("HEAD %s header %q (%v) absent in GET", path, k, headH[k])
+		}
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestNonGetNonHeadRejectedOnHealthAndUI is the negative side of the #612
+// contract: anything that is not GET or HEAD on the health and UI routes is
+// method-not-allowed, matching the convention every other endpoint follows.
+func TestNonGetNonHeadRejectedOnHealthAndUI(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+	for _, path := range []string{"/healthz", "/"} {
+		t.Run(path, func(t *testing.T) {
+			code, status := errorCode(t, http.MethodPost, srv.URL+path)
+			if code != codeMethodNotAllowed {
+				t.Errorf("POST %s code = %q, want %q", path, code, codeMethodNotAllowed)
+			}
+			if status != http.StatusMethodNotAllowed {
+				t.Errorf("POST %s status = %d, want 405", path, status)
+			}
+		})
+	}
+}
+
+// TestHealthzReportsBuildProvenance pins that /healthz exposes the code and
+// data commits that built the binary, so a consumer can tell which provenance
+// is serving. Dev and test builds are unstamped and report the empty string,
+// but the keys are always present.
+func TestHealthzReportsBuildProvenance(t *testing.T) {
+	srv := testServer(t, liveNGNCPaths, "1500")
+	_, body := getJSON(t, srv.URL+"/healthz")
+
+	code, ok := body["code_commit"]
+	if !ok {
+		t.Fatal("healthz body lacks code_commit")
+	}
+	if _, isString := code.(string); !isString {
+		t.Errorf("code_commit = %v (%T), want a string", code, code)
+	}
+
+	data, ok := body["data_commit"]
+	if !ok {
+		t.Fatal("healthz body lacks data_commit")
+	}
+	if _, isString := data.(string); !isString {
+		t.Errorf("data_commit = %v (%T), want a string", data, data)
+	}
+}
+
 // TestHealthzReportsDataAge is the A6 contract: on a -history-first
 // deployment the thing at risk is the age of the data, and /healthz must say
 // it. Each corridor's newest record is reported with its recorded_at and age;
@@ -912,9 +1045,9 @@ func dexClientAt(url string) *dex.Client {
 //
 // It exercises the same composition the live handler uses: a rendered corridor
 // passed through route.WithFindings, exactly as handleCorridor calls it with
-// the checks runner's output. The runner producing metrics is the separate
-// keystone (issue #49); the point here is that when it lands, the wire is
-// already pinned.
+// the checks runner's output. The runner now produces metrics (#577), so this
+// test pins the shape they cross the wire in rather than a shape that might
+// one day be used.
 func TestFindingsMetricsSchema(t *testing.T) {
 	t.Run("corridor with metrics returns them under findings.metrics", func(t *testing.T) {
 		corridor := route.WithFindings(
@@ -1005,6 +1138,57 @@ func TestFindingsMetricsSchema(t *testing.T) {
 			t.Error("findings.metrics must be absent when no metric ran — presence would read as \"measured, nothing found\"")
 		}
 	})
+}
+
+// TestLiveCorridorCarriesMetrics is the acceptance criterion for #577 on the
+// server side: a live response must carry a non-empty findings.metrics block,
+// not merely a shape able to hold one. The runner is pointed at a Horizon that
+// serves an order book, so the default metric set measures a value instead of
+// reporting undetermined for a fetch that never happened.
+func TestLiveCorridorCarriesMetrics(t *testing.T) {
+	horizon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/order_book") {
+			_, _ = w.Write([]byte(`{"bids":[{"price":"0.0007400","amount":"100.0"}],"asks":[{"price":"0.0007600","amount":"100.0"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(liveNGNCPaths))
+	}))
+	t.Cleanup(horizon.Close)
+
+	s := &Server{
+		Engine: &route.Engine{
+			DEX: &dex.Client{HorizonURL: horizon.URL},
+			RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+				"USD/NGN": decimal.RequireFromString("1500"),
+			}),
+		},
+		// The explicit client bypasses the guarded default so the mock
+		// Horizon is reachable, exactly as a snapshot replayer does.
+		Checks: &checks.Runner{HorizonURL: horizon.URL, HTTPClient: horizon.Client()},
+	}
+	api := httptest.NewServer(s.Handler())
+	t.Cleanup(api.Close)
+
+	corridor := getCorridor(t, api.URL+"/api/corridor?to=NGNC&live=1&sizes=100")
+	if corridor.Findings == nil {
+		t.Fatal("the live response carries no findings block")
+	}
+	if len(corridor.Findings.Metrics) == 0 {
+		t.Fatal("the live response carries no findings.metrics; a metric ran " +
+			"nowhere on the production path")
+	}
+
+	var sawSpread bool
+	for _, m := range corridor.Findings.Metrics {
+		if m.ID == "spread.bid-ask" && m.Determined && m.Value != "" {
+			sawSpread = true
+		}
+	}
+	if !sawSpread {
+		t.Errorf("findings.metrics = %v, want a determined spread.bid-ask from the "+
+			"served order book", corridor.Findings.Metrics)
+	}
 }
 
 // metricsSchemaFixture returns findings carrying one determined metric and one

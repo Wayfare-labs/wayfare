@@ -143,12 +143,17 @@ contract; only the wire shape and [api.md](api.md) are.
 - **Consumer identity is unresolved.** Until \#217 interviews wallets/PSPs/
   anchors, "SDK in which language / runtime" is a guess. This spec is
   language-agnostic by construction (it binds wire JSON).
-- **Error-code taxonomy is inconsistent across endpoints.** `server/api.go`
-  uses `snake_case` codes (`method_not_allowed`, `no_fiat_peg` — api.go:347-357)
-  while `server/trend.go` uses `SCREAMING_SNAKE` (`METHOD_NOT_ALLOWED`,
-  `UNKNOWN_ASSET`, `BAD_LIMIT` — trend.go:230-266). An SDK must handle both
-  spellings; harmonising them is a small, separate issue and is **out of scope**
-  here (this spike makes no code change).
+- **Error-code taxonomy is inconsistent across endpoints — closed.** At the
+  time of writing `server/api.go` used `snake_case` codes (`method_not_allowed`,
+  `no_fiat_peg`) while `server/trend.go` used `SCREAMING_SNAKE`
+  (`METHOD_NOT_ALLOWED`, `UNKNOWN_ASSET`, `BAD_LIMIT`). Both spellings were on
+  the wire, so an SDK had to handle them. The set was harmonised on
+  `snake_case` and is now emitted from one constant block (`server/api.go`),
+  pinned across endpoints by `TestErrorCodeContract` in
+  `server/error_codes_test.go` and documented in [errors.md](errors.md). An SDK
+  binds one spelling. The upper-case codes were removed rather than kept
+  alongside the new ones; [api.md](api.md#error-codes) records that for
+  consumers.
 - **Trend has no cursor.** Consumers wanting the entire history of a long-lived
   corridor can fetch at most 500 runs per request (`server/trend.go:32-33`).
   Whether that is a product gap is a \#217 consumer question.
@@ -158,7 +163,8 @@ contract; only the wire shape and [api.md](api.md) are.
 ## Verdict
 
 **A consumer-facing SDK is a typed binding of an already-stable wire contract,
-not a design problem — with one named precondition and two named gaps.** The
+not a design problem — with one named precondition and (originally) two
+named gaps, both since closed.** The
 precondition is \#217's consumers; absent them the SDK has no audience and no
 language. The gaps (error-code case split, trend lacks a cursor) are small
 and would be fixed at build time, not by this spike. **Negative/inconclusive

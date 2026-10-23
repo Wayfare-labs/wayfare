@@ -39,19 +39,22 @@ type Server struct {
 	// the other means "checked, nothing found".
 	Checks *checks.Runner
 
-	// HistoryFirst serves the most recent stored run instead of measuring,
+	// History-first serves the most recent stored run instead of measuring,
 	// unless the caller asks for a live reading with ?live=1.
 	//
 	// This is for deployments that cannot hold a request open long enough to
 	// price a twelve-rung ladder — a serverless function, typically. The
 	// honesty properties are unchanged either way: a stored reading is
 	// labelled live:false and carries its age, and with no stored run the
-	// request errors rather than inventing one. What changes is only which
-	// is tried first.
+	// request answers 404 no_history rather than inventing one or silently
+	// becoming the measurement this mode exists to avoid. What changes is
+	// only which is tried first.
 	HistoryFirst bool
 
-	// Timeout bounds a single corridor measurement. A full ladder is a
-	// dozen round trips to Horizon, so this is generous by HTTP standards.
+	// Timeout bounds a single corridor measurement. One Horizon call per
+	// rung, plus a two-call slippage probe on each rung above the probe
+	// threshold, so the count scales with route.DefaultSizes rather than
+	// staying a fixed dozen; this is still generous by HTTP standards.
 	// It is the ceiling: the budget a request actually gets is derived from
 	// its rung count (see budgetFor) and never exceeds this.
 	Timeout time.Duration
@@ -64,6 +67,11 @@ type Server struct {
 	// it. Tests that hammer one endpoint build their own Server or call
 	// NewRateLimiter with a disabled configuration.
 	Limiter *RateLimiter
+
+	// now is the clock the handlers stamp a "generated at" field with. It is
+	// swapped in tests, which pin it so the timestamp can be frozen in a
+	// golden file; nil means time.Now, and production never sets it.
+	now func() time.Time
 }
 
 // pkgLogger is the package-level logger for request and upstream logging.
@@ -85,6 +93,15 @@ func (s *Server) timeout() time.Duration {
 		return s.Timeout
 	}
 	return 90 * time.Second
+}
+
+// clock returns the current time in UTC. It reads the swappable now field so
+// a test can pin the clock; production leaves that nil and gets time.Now.
+func (s *Server) clock() time.Time {
+	if s.now != nil {
+		return s.now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 // Live-measurement budget: a fixed allowance for the reference rate and
@@ -113,9 +130,10 @@ func (s *Server) budgetFor(n int) time.Duration {
 //
 // The limiter wraps every route, including /healthz: a deployment probe and
 // a browser page load are both requests a client chose to make, and the
-// free instance's cost is upstream calls plus CPU regardless of path. CORS
-// stays outermost so a rate-limited response still carries the origin
-// policy and remains readable to a browser client.
+// free instance's cost is upstream calls plus CPU regardless of path.
+// withGzip serves compressed responses when accepted (issue #610), skipping
+// tiny bodies. CORS stays outermost so a rate-limited or compressed response
+// still carries the origin policy and remains readable to a browser client.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/corridor", s.handleCorridor)
@@ -123,9 +141,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/chain-heads", s.handleChainHeads)
 	mux.HandleFunc("/api/assets", s.handleAssets)
 	mux.HandleFunc("/api/market-structure", s.handleMarketStructure)
+	mux.HandleFunc("/api/thresholds", s.handleThresholds)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.Handle("/", uiHandler())
-	return withCORS(s.limit(mux))
+	return withCORS(withGzip(s.limit(mux)))
 }
 
 // limit applies the configured rate limiter, or passes through unchanged
@@ -154,9 +173,16 @@ func (s *Server) limit(next http.Handler) http.Handler {
 // Preflight (OPTIONS) is answered here so a client that adds custom
 // headers can still call the API; the methods list is exactly what the
 // mux supports.
+//
+// Access-Control-Expose-Headers names the response headers a browser may
+// read. Only ETag is listed, and only because the conditional-request
+// contract (issue #613) is useless to a browser consumer otherwise: a
+// cross-origin fetch hides every response header the server did not expose,
+// so a page could not read the tag it is asked to send back.
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Expose-Headers", "ETag")
 		if r.Method == http.MethodOptions {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
 			if reqHeaders := r.Header.Get("Access-Control-Request-Headers"); reqHeaders != "" {
@@ -224,9 +250,15 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	// for. The stored document is the same shape, so a client needs no
 	// special casing — see staleJSON.
 	if s.HistoryFirst && r.URL.Query().Get("live") == "" {
-		if stale, ok := s.staleFor(r.Context(), sendAsset.Code, recvAsset.Code,
-			pegBase+"/"+pegQuote); ok {
-			writeJSON(w, r, http.StatusOK, stale)
+		rec, found, err := s.latestRun(r.Context(), sendAsset.Code, recvAsset.Code)
+		pair := pegBase + "/" + pegQuote
+		switch {
+		case err == nil && found:
+			stale := staleJSON(rec, pair, time.Now().UTC())
+			// The record is the response's validator: a client holding
+			// this record can be answered 304 rather than sent the same
+			// body again. See writeHistoryJSON.
+			writeHistoryJSON(w, r, rec, stale)
 			log().Info("corridor measured",
 				"method", r.Method,
 				"path", r.URL.Path,
@@ -237,9 +269,21 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 				"integrity", stale.Integrity,
 				"duration", time.Since(started).Round(time.Millisecond).String())
 			return
+		case err == nil && !found && s.Store != nil:
+			// A history-first instance with no run for this corridor. This is
+			// neither an outage nor a finding about the market: nothing has
+			// been swept yet, so there is nothing to report. Say exactly
+			// that, and name how to ask for a reading that does not exist
+			// (live=1) instead of spending a live measurement on a request
+			// the deployment mode says should be served from history.
+			writeError(w, r, http.StatusNotFound, codeNoHistory, fmt.Sprintf(
+				"no stored measurement for corridor %s on this history-first instance; request with live=1 to measure it now",
+				runstore.CorridorKey(sendAsset.Code, recvAsset.Code)))
+			return
 		}
-		// No history yet. Fall through and measure rather than erroring:
-		// a first deploy with an empty chain should still answer.
+		// The store could not be read, or none is configured. Neither is a
+		// statement that history is absent, so measure as an instance without
+		// history does.
 	}
 
 	rungs := len(sizes)
@@ -272,8 +316,8 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		// is the one place a continuous monitor can quietly betray the
 		// project, by returning a plausible number instead of admitting
 		// it does not currently know.
-		if stale, ok := s.staleFor(ctx, sendAsset.Code, recvAsset.Code, pegBase+"/"+pegQuote); ok {
-			writeJSON(w, r, http.StatusOK, stale)
+		if rec, stale, ok := s.staleFor(ctx, sendAsset.Code, recvAsset.Code, pegBase+"/"+pegQuote); ok {
+			writeHistoryJSON(w, r, rec, stale)
 			log().Info("corridor measured",
 				"method", r.Method,
 				"path", r.URL.Path,
@@ -310,11 +354,17 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 
 	out := route.ToCorridorJSON(res, pegBase+"/"+pegQuote)
 
-	// Checks run after the measurement and cannot alter it. route.WithFindings
-	// is the only composition point and branches on nothing — see the
-	// composition rule in docs/checks.md.
+	// Checks and metrics run after the measurement and cannot alter it.
+	// route.WithFindings is the only composition point and branches on
+	// nothing — see the composition rule in docs/checks.md.
 	if s.Checks != nil {
-		out = route.WithFindings(out, s.Checks.ForAsset(ctx, recvAsset))
+		out = route.WithFindings(out, s.Checks.ForCorridor(ctx, checks.Corridor{
+			Send:       sendAsset,
+			Receive:    recvAsset,
+			Integrity:  res.Integrity.String(),
+			Underlying: underlyingPair(res),
+			Reference:  res.Reference,
+		}))
 	}
 
 	writeJSON(w, r, http.StatusOK, out)
@@ -335,6 +385,19 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		"live", actualLive,
 		"integrity", out.Integrity,
 		"duration", time.Since(started).Round(time.Millisecond).String())
+}
+
+// underlyingPair names the pair a DERIVATIVE corridor's paths traverse, when
+// the ladder identified exactly one. It exists so a book metric measures the
+// market that actually exists instead of reporting "no book" for a corridor
+// whose liquidity sits one hop away. More than one dependency stays empty:
+// there is no single pair to measure, and guessing one would attribute that
+// market's spread to this corridor.
+func underlyingPair(res *route.LadderResult) asset.Asset {
+	if res == nil || res.Integrity != route.IntegrityDerivative || len(res.DependsOn) != 1 {
+		return asset.Asset{}
+	}
+	return res.DependsOn[0]
 }
 
 func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
@@ -475,19 +538,30 @@ type healthFreshnessJSON struct {
 	RecordCount    *int64  `json:"record_count"`
 }
 
+// chainHeadSource is the optional capability /healthz asks the configured
+// pathfinder for: the current ledger sequence. It is deliberately not part of
+// route.Pathfinder, whose surface is exactly the pricing contract. Keeping it
+// optional means a replacement pathfinder is not required to expose Horizon's
+// root endpoint for the route seam to be satisfied.
+type chainHeadSource interface {
+	ChainHead(ctx context.Context) (int64, error)
+}
+
 // healthFreshness assembles the freshness block. The store is small by
 // construction — the run window is capped by rotation — so reading the full
 // history for a count is deliberate rather than something to optimise away.
 func (s *Server) healthFreshness(ctx context.Context) healthFreshnessJSON {
 	f := healthFreshnessJSON{}
 
-	if s.Engine != nil && s.Engine.DEX != nil {
-		headCtx, cancel := context.WithTimeout(ctx, chainHeadBudget)
-		defer cancel()
-		if head, err := s.Engine.DEX.ChainHead(headCtx); err == nil {
-			f.ChainHead = &head
-		} else {
-			log().Debug("healthz: chain head unavailable, reporting unknown", "error", err)
+	if s.Engine != nil {
+		if ch, ok := s.Engine.DEX.(chainHeadSource); ok {
+			headCtx, cancel := context.WithTimeout(ctx, chainHeadBudget)
+			defer cancel()
+			if head, err := ch.ChainHead(headCtx); err == nil {
+				f.ChainHead = &head
+			} else {
+				log().Debug("healthz: chain head unavailable, reporting unknown", "error", err)
+			}
 		}
 	}
 
@@ -526,14 +600,20 @@ func (s *Server) healthFreshness(ctx context.Context) healthFreshnessJSON {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET and HEAD are supported")
+		return
+	}
 	if err := checkParams(r, "pretty"); err != nil {
 		writeError(w, r, http.StatusBadRequest, codeInvalidQuery, err.Error())
 		return
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
-		"status":    "ok",
-		"data":      s.healthData(r.Context()),
-		"freshness": s.healthFreshness(r.Context()),
+		"status":      "ok",
+		"code_commit": codeCommit,
+		"data_commit": dataCommit,
+		"data":        s.healthData(r.Context()),
+		"freshness":   s.healthFreshness(r.Context()),
 	})
 }
 
@@ -554,9 +634,11 @@ const (
 	codeInvalidQuery        = "invalid_query"
 	codeInternalError       = "internal_error"
 	codeInvalidLimit        = "invalid_limit"
+	codeInvalidCursor       = "invalid_cursor"
 	codeStoreRead           = "store_read_error"
 	codeDivergenceHistory   = "divergence_history_error"
 	codeRateLimited         = "rate_limited"
+	codeNoHistory           = "no_history"
 )
 
 // checkParams rejects any query parameter outside the endpoint's allow-list.
@@ -655,6 +737,7 @@ func wantsPretty(r *http.Request) bool {
 
 func writeJSON(w http.ResponseWriter, r *http.Request, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	enc := json.NewEncoder(w)
 	if wantsPretty(r) {
@@ -678,15 +761,38 @@ func writeError(w http.ResponseWriter, r *http.Request, status int, code, msg st
 // Serving a different shape would mean every consumer needed two parsers, and
 // the one that forgot would be the one that rendered a six-hour-old reading as
 // current.
-func (s *Server) staleFor(ctx context.Context, send, recv, pair string) (route.CorridorJSON, bool) {
+//
+// The record is returned alongside the document because the response's entity
+// tag is the record's own seal hash. The validator and the body are the same
+// bytes read two ways, and neither can be derived from the other.
+func (s *Server) staleFor(ctx context.Context, send, recv, pair string) (*runstore.Record, route.CorridorJSON, bool) {
+	rec, found, err := s.latestRun(ctx, send, recv)
+	if err != nil || !found {
+		return nil, route.CorridorJSON{}, false
+	}
+	return rec, staleJSON(rec, pair, time.Now().UTC()), true
+}
+
+// latestRun reads a corridor's most recent record and separates the three
+// answers a store can give, which staleFor deliberately collapses: a reading
+// to serve, no reading, and no answer.
+//
+// found is true only when a record exists. An unreadable store is an error
+// rather than an absence — "I could not tell" is not "there is nothing" — and
+// a caller that reports no history from a read failure would turn its own
+// outage into a finding about the corridor.
+func (s *Server) latestRun(ctx context.Context, send, recv string) (*runstore.Record, bool, error) {
 	if s.Store == nil {
-		return route.CorridorJSON{}, false
+		return nil, false, nil
 	}
 	rec, err := s.Store.Latest(ctx, runstore.CorridorKey(send, recv))
-	if err != nil || rec == nil {
-		return route.CorridorJSON{}, false
+	if err != nil {
+		return nil, false, err
 	}
-	return staleJSON(rec, pair, time.Now().UTC()), true
+	if rec == nil {
+		return nil, false, nil
+	}
+	return rec, true, nil
 }
 
 // staleJSON renders a stored record in the wire shape, marked not live.
@@ -739,6 +845,21 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 			AgeSeconds: int64(age.Seconds()),
 			AgeHuman:   humanAge(age),
 		},
+	}
+
+	// The diagnostic is served back from storage when the run carried one, so
+	// a history-served DISAGREE keeps the attribution the live document had.
+	// An older record predates the field and honestly carries none.
+	if rec.Reference.DiagnosticSource != "" || rec.Reference.DiagnosticReason != "" {
+		out.ReferenceDiagnostic = &route.ReferenceDiagnosticJSON{
+			Source:             rec.Reference.DiagnosticSource,
+			Mid:                rec.Reference.DiagnosticMid,
+			AsOf:               rec.Reference.DiagnosticAsOf,
+			Outlier:            rec.Reference.DiagnosticOutlier,
+			OutlierDistancePct: rec.Reference.DiagnosticOutlierDistancePct,
+			OtherDistancePct:   rec.Reference.DiagnosticOtherDistancePct,
+			Reason:             rec.Reference.DiagnosticReason,
+		}
 	}
 
 	// DependsOn entries are stored as codes alone, but an asset code
@@ -1043,7 +1164,54 @@ func (s *Server) handleMarketStructure(w http.ResponseWriter, r *http.Request) {
 		IssuerConcentrations:      concentration,
 		CorridorCount:             corridorCount,
 		ConcentratedCorridorCount: concentratedCount,
-		GeneratedAt:               time.Now().UTC().Format(time.RFC3339),
+		GeneratedAt:               s.clock().Format(time.RFC3339),
+	}
+
+	writeJSON(w, r, http.StatusOK, out)
+}
+
+// ThresholdsJSON publishes the project's code constants for divergence bands
+// and verdict thresholds on the wire (issue #626). Exposing them directly from
+// code constants ensures consumers do not have to hardcode them and makes any
+// change detectable.
+type ThresholdsJSON struct {
+	VerdictThresholds    VerdictThresholdsJSON    `json:"verdict_thresholds"`
+	DivergenceThresholds DivergenceThresholdsJSON `json:"divergence_thresholds"`
+}
+
+type VerdictThresholdsJSON struct {
+	Good string `json:"good"`
+	Fair string `json:"fair"`
+	Poor string `json:"poor"`
+}
+
+type DivergenceThresholdsJSON struct {
+	Agree       string `json:"agree"`
+	Malfunction string `json:"malfunction"`
+}
+
+// handleThresholds serves the verdict and divergence thresholds directly from
+// the constants defined in route and refrate packages.
+func (s *Server) handleThresholds(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET is supported")
+		return
+	}
+	if err := checkParams(r, "pretty"); err != nil {
+		writeError(w, r, http.StatusBadRequest, codeInvalidQuery, err.Error())
+		return
+	}
+
+	out := ThresholdsJSON{
+		VerdictThresholds: VerdictThresholdsJSON{
+			Good: route.ThresholdGood.String(),
+			Fair: route.ThresholdFair.String(),
+			Poor: route.ThresholdPoor.String(),
+		},
+		DivergenceThresholds: DivergenceThresholdsJSON{
+			Agree:       refrate.DivergenceAgree.String(),
+			Malfunction: refrate.DivergenceMalfunction.String(),
+		},
 	}
 
 	writeJSON(w, r, http.StatusOK, out)

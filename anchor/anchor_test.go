@@ -1,9 +1,14 @@
 package anchor
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -113,8 +118,9 @@ func TestReferenceAnchorIsPriceable(t *testing.T) {
 	if !p.Priceable {
 		t.Fatal("expected testanchor to be priceable")
 	}
-	if !p.SEP31 || !p.SEP6 || !p.SEP24 {
-		t.Errorf("expected all transfer flows: sep24=%v sep31=%v sep6=%v", p.SEP24, p.SEP31, p.SEP6)
+	if !p.SEP12 || !p.SEP31 || !p.SEP6 || !p.SEP24 {
+		t.Errorf("expected SEP-12 and all transfer flows: sep12=%v sep24=%v sep31=%v sep6=%v",
+			p.SEP12, p.SEP24, p.SEP31, p.SEP6)
 	}
 	if p.Mainnet {
 		t.Error("testanchor declares the test network, must not be reported as mainnet")
@@ -394,4 +400,107 @@ func TestTOMLURL(t *testing.T) {
 			t.Errorf("TOMLURL(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+func TestResolverRejectsOversizedTOML(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, strings.Repeat("x", maxTOMLBytes+1024))
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	body := &countedBody{}
+	client.Transport = countingTransport{base: client.Transport, body: body}
+	domain := strings.TrimPrefix(server.URL, "https://")
+
+	profile, err := (&Resolver{HTTPClient: client}).Resolve(context.Background(), domain)
+	if err == nil {
+		t.Fatalf("Resolve returned profile %+v for an oversized stellar.toml", profile)
+	}
+	if profile != nil {
+		t.Errorf("Resolve returned a partial profile after rejecting the response: %+v", profile)
+	}
+	if body.read != maxTOMLBytes+1 {
+		t.Errorf("Resolve read %d bytes, want exactly the %d-byte limit plus one", body.read, maxTOMLBytes+1)
+	}
+}
+
+func TestResolverBoundsStreamingTOML(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher := w.(http.Flusher)
+		chunk := strings.Repeat("x", 4096)
+		for r.Context().Err() == nil {
+			if _, err := io.WriteString(w, chunk); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	body := &countedBody{}
+	client.Transport = countingTransport{base: client.Transport, body: body}
+	domain := strings.TrimPrefix(server.URL, "https://")
+
+	profile, err := (&Resolver{HTTPClient: client}).Resolve(context.Background(), domain)
+	if err == nil {
+		t.Fatalf("Resolve returned profile %+v for an unbounded stellar.toml stream", profile)
+	}
+	if body.read != maxTOMLBytes+1 {
+		t.Errorf("Resolve read %d streaming bytes, want exactly the %d-byte limit plus one", body.read, maxTOMLBytes+1)
+	}
+}
+
+func TestResolverTimesOutSlowTOML(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher := w.(http.Flusher)
+		for r.Context().Err() == nil {
+			if _, err := io.WriteString(w, "x"); err != nil {
+				return
+			}
+			flusher.Flush()
+			time.Sleep(20 * time.Millisecond)
+		}
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	client.Timeout = 100 * time.Millisecond
+	domain := strings.TrimPrefix(server.URL, "https://")
+	started := time.Now()
+
+	profile, err := (&Resolver{HTTPClient: client}).Resolve(context.Background(), domain)
+	if err == nil {
+		t.Fatalf("Resolve returned profile %+v for a slow stellar.toml response", profile)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Errorf("Resolve took %s to time out, want less than one second", elapsed)
+	}
+}
+
+type countedBody struct {
+	io.ReadCloser
+	read int
+}
+
+func (b *countedBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	b.read += n
+	return n, err
+}
+
+type countingTransport struct {
+	base http.RoundTripper
+	body *countedBody
+}
+
+func (t countingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	t.body.ReadCloser = resp.Body
+	resp.Body = t.body
+	return resp, nil
 }

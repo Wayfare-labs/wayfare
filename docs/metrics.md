@@ -1,6 +1,6 @@
 # Metrics methodology
 
-**Status: v1, current as of 2026-08-27.** One page per metric: definition, unit,
+**Status: v1, current as of 2026-10-22.** One page per metric: definition, unit,
 data source, what it cannot determine, and what undetermined means for it.
 
 Every claim about the code is checked against the code at time of writing. Future
@@ -9,10 +9,20 @@ result and is reported as one.
 
 **Adding a metric** is a separate document:
 [docs/adding-a-metric.md](adding-a-metric.md) walks the interface, the evidence
-rules, the tests, and the one thing this page states in prose and nowhere else —
-that a metric is measurable but **not yet reachable** from `/api/corridor`. A
-metric's page belongs here once it is measured: this document is the figure's
-provenance, the guide is the implementation's.
+rules, the tests and how a metric reaches the wire. A metric's page belongs here
+once it is measured: this document is the figure's provenance, the guide is the
+implementation's.
+
+**Where these are measured.** Since 2026-10-22 every corridor sweep runs metrics
+beside its checks (`checks.Runner.ForCorridor`, [#577](https://github.com/Wayfare-labs/wayfare/issues/577)),
+so a measured corridor's `findings.metrics` block is non-empty. The default set
+is the four order-book metrics below — `spread.bid-ask`,
+`concentration.liquidity`, `depth.observed`, and `deviation.book-vs-reference` —
+because the ladder has already spent its pathfinding budget by the time they
+run. `price-impact.size` and `depth.executable` are reachable but not in the
+default set: each sweeps pathfinding at every probed size. A metric reported as
+undetermined was run and could not be measured; a metric absent from the block
+was not run at all, and the two are different facts.
 
 ---
 
@@ -234,6 +244,11 @@ direct pair by construction (NO-MARKET, or DERIVATIVE without an Underlying).
 
 ### depth.observed-executable — Order book depth
 
+> **On the wire as two metrics.** A registered `DepthMetric` publishes
+> `depth.observed` from `RunObserved`; the default set runs that half only.
+> `depth.executable` is produced by `RunExecutable` and is not in the default
+> set, because it sweeps pathfinding.
+
 **Definition.** Two measurements of depth:
 - **Observed:** the number of bid and ask levels on the direct order book.
 - **Executable:** the maximum destination amount reachable via pathfinding
@@ -345,8 +360,8 @@ repository supports today and what is planned.
 
 ## Related
 
-- [adding-a-metric.md](adding-a-metric.md) — how to add a metric, and the
-  reachability gap every metric currently sits behind
+- [adding-a-metric.md](adding-a-metric.md) — how to add a metric, and how one
+  reaches the wire
 - [checks.md](checks.md) — the two-shape contract metrics and checks share
 - [adding-a-check.md](adding-a-check.md) — the other shape, for facts
 - [liquidity-venues.md](liquidity-venues.md) — why two venues cannot be

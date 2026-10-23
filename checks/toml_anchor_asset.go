@@ -68,6 +68,14 @@ func (c AnchorAssetISO4217) Run(_ context.Context, s Subject) CheckResult {
 		return Undetermined(d, s, "no asset was named in the subject")
 	}
 
+	// Evidence about the cached document carries the time it was originally
+	// fetched, not the time this check runs, so assets sharing a domain
+	// within one sweep agree on when the stellar.toml was observed.
+	at := s.Profile.FetchedAt
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+
 	entry, found := findCurrency(s.Profile, s.Asset.Code, s.Asset.Issuer)
 	if !found {
 		return Undetermined(d, s,
@@ -76,7 +84,7 @@ func (c AnchorAssetISO4217) Run(_ context.Context, s Subject) CheckResult {
 			Evidence{
 				Source:     anchor.TOMLURL(s.Profile.Domain),
 				Observed:   "no matching [[CURRENCIES]] entry",
-				ObservedAt: time.Now().UTC(),
+				ObservedAt: at,
 			})
 	}
 
@@ -84,7 +92,7 @@ func (c AnchorAssetISO4217) Run(_ context.Context, s Subject) CheckResult {
 	ev := Evidence{
 		Source:     anchor.TOMLURL(s.Profile.Domain) + " → [[CURRENCIES]] code=" + entry.Code + " anchor_asset",
 		Observed:   quoteOrAbsent(declared),
-		ObservedAt: time.Now().UTC(),
+		ObservedAt: at,
 	}
 
 	// Absent is undetermined, not failed. A token that declares no peg has

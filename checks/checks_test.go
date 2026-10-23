@@ -95,7 +95,11 @@ func TestDescriptorRequiresItsLimits(t *testing.T) {
 		})
 	}
 
-	for _, c := range []Check{AnchorAssetISO4217{}, IssuerAuthFlags{}, SEP10EndpointResponds{}, HomeDomainRoundTrip{}} {
+	for _, c := range []Check{
+		AnchorAssetISO4217{}, SEP12ServerPublished{}, SEP31Info{}, IssuerAuthFlags{},
+		SEP10EndpointResponds{}, SEP24InfoListsAsset{}, SEP38QuoteServerPublished{},
+		IssuerFlagImmutability{}, HomeDomainRoundTrip{},
+	} {
 		d := c.Describe()
 		if err := d.Validate(); err != nil {
 			t.Errorf("%s: %v", d.ID, err)
@@ -807,7 +811,6 @@ func TestSEP24InfoListsAsset(t *testing.T) {
 		{name: "server error", status: 503, body: `{}`,
 			determined: true, passed: false, contains: "HTTP 503"},
 	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := flagServer(t, tc.status, tc.body)
@@ -832,6 +835,252 @@ func TestSEP24InfoNotDeclaredIsUndetermined(t *testing.T) {
 		t.Fatalf("result = determined=%v reason=%q, want undetermined absent server", r.Determined, r.Reason)
 	}
 }
+
+func TestSEP6InfoListsAssetFromSnapshot(t *testing.T) {
+	cases := []struct {
+		name       string
+		published  bool
+		status     int
+		body       string
+		determined bool
+		passed     bool
+		contains   string
+	}{
+		{
+			name:       "not published",
+			determined: false,
+			contains:   "declares no TRANSFER_SERVER",
+		},
+		{
+			name:      "published and lists asset",
+			published: true, status: http.StatusOK,
+			body:       `{"deposit":{"NGN":{"enabled":true}},"withdraw":{"NGN":{"enabled":false}}}`,
+			determined: true, passed: true,
+			contains: "deposit enabled; withdrawal disabled",
+		},
+		{
+			name:      "published and unavailable",
+			published: true, status: http.StatusServiceUnavailable,
+			body:       `{"error":"temporarily unavailable"}`,
+			determined: true, passed: false,
+			contains: "HTTP 503",
+		},
+		{
+			name:      "published but omits asset",
+			published: true, status: http.StatusOK,
+			body:       `{"deposit":{"USD":{"enabled":true}},"withdraw":{}}`,
+			determined: true, passed: false,
+			contains: "omits asset \"NGN\"",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := sep6SnapshotClient(t, tc.published, tc.status, tc.body)
+			runner := &Runner{
+				Checks:   []Check{SEP6InfoListsAsset{HTTPClient: client}},
+				Resolver: &anchor.Resolver{HTTPClient: client},
+			}
+			findings := runner.ForAsset(ctx(), asset.NGNC())
+			if len(findings.Checks) != 1 {
+				t.Fatalf("runner returned %d checks, want 1", len(findings.Checks))
+			}
+			result := findings.Checks[0]
+			if result.Determined != tc.determined || (tc.determined && result.Passed != tc.passed) {
+				t.Fatalf("result determined=%v passed=%v, want %v/%v (%s)",
+					result.Determined, result.Passed, tc.determined, tc.passed, result.Summary)
+			}
+			if !strings.Contains(result.Summary+" "+result.Reason, tc.contains) {
+				t.Errorf("result %q / %q does not mention %q", result.Summary, result.Reason, tc.contains)
+			}
+			if result.Determined && len(result.Evidence) == 0 {
+				t.Error("a determined result must carry evidence")
+			}
+		})
+	}
+}
+
+func TestSEP6CheckRunsInDefaultSuite(t *testing.T) {
+	for _, check := range (&Runner{}).Default() {
+		if _, ok := check.(SEP6InfoListsAsset); ok {
+			return
+		}
+	}
+	t.Error("SEP6InfoListsAsset is not in the default check set")
+}
+
+func sep6SnapshotClient(t *testing.T, published bool, infoStatus int, infoBody string) *http.Client {
+	t.Helper()
+
+	const currency = `[[CURRENCIES]]
+code="NGNC"
+issuer="GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+anchor_asset="NGN"
+`
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/stellar.toml":
+			if published {
+				_, _ = fmt.Fprintf(w, "TRANSFER_SERVER = %q\n\n%s", serverURL+"/sep6", currency)
+				return
+			}
+			_, _ = io.WriteString(w, currency)
+		case "/sep6/info":
+			w.WriteHeader(infoStatus)
+			_, _ = io.WriteString(w, infoBody)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	corridor := snapshot.Corridor{
+		Send:          snapshot.AssetRef{Code: "USDC", Issuer: asset.USDCIssuer},
+		Receive:       snapshot.AssetRef{Code: "NGNC", Issuer: asset.NGNCIssuer},
+		ReferencePair: "USD/NGN",
+	}
+	recorder := &snapshot.Recorder{
+		Corridor: corridor,
+		Sizes:    []string{"100"},
+		Notes:    []string{"Responses captured from the local SEP-6 test server."},
+	}
+	capture := &http.Client{Transport: recorder}
+	paths := []string{"/.well-known/stellar.toml"}
+	if published {
+		paths = append(paths, "/sep6/info")
+	}
+	for _, path := range paths {
+		resp, err := capture.Get(server.URL + path)
+		if err != nil {
+			t.Fatalf("capturing %s: %v", path, err)
+		}
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		if err := resp.Body.Close(); err != nil {
+			t.Fatalf("closing %s: %v", path, err)
+		}
+	}
+
+	dir := filepath.Join(t.TempDir(), snapshot.DirName(corridor, recorder.RecordedAt()))
+	if err := recorder.Save(dir); err != nil {
+		t.Fatalf("saving snapshot: %v", err)
+	}
+	manifest, err := snapshot.Load(dir)
+	if err != nil {
+		t.Fatalf("loading snapshot: %v", err)
+	}
+	return manifest.HTTPClient()
+}
+
+func TestSEP12ServerPublished(t *testing.T) {
+	cases := []struct {
+		name       string
+		profile    *anchor.Profile
+		determined bool
+		passed     bool
+	}{
+		{name: "published, without probing", profile: &anchor.Profile{
+			Domain: "example.test", TOML: anchor.TOML{KYCServer: "https://kyc.example.test"},
+		}, determined: true, passed: true},
+		{name: "not published", profile: &anchor.Profile{Domain: "example.test"}, determined: true},
+		{name: "profile missing", determined: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := Run(ctx(), SEP12ServerPublished{}, Subject{Profile: tc.profile})
+			if r.Determined != tc.determined {
+				t.Fatalf("Determined = %v, want %v", r.Determined, tc.determined)
+			}
+			if tc.determined && r.Passed != tc.passed {
+				t.Errorf("Passed = %v, want %v", r.Passed, tc.passed)
+			}
+			if tc.determined && len(r.Evidence) == 0 {
+				t.Error("determined publication result must carry evidence")
+			}
+		})
+	}
+}
+
+func TestSEP31Info(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		body       string
+		determined bool
+		passed     bool
+	}{
+		{name: "enabled asset", status: 200, body: `{"receive":{"NGNC":{"enabled":true}}}`,
+			determined: true, passed: true},
+		{name: "asset not listed", status: 200, body: `{"receive":{"OTHER":{"enabled":true}}}`,
+			determined: true},
+		{name: "asset disabled", status: 200, body: `{"receive":{"NGNC":{"enabled":false}}}`,
+			determined: true},
+		{name: "missing enabled flag", status: 200, body: `{"receive":{"NGNC":{}}}`,
+			determined: true},
+		{name: "server error", status: 503, body: `{}`, determined: true},
+		{name: "malformed info", status: 200, body: `not json`, determined: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := flagServer(t, tc.status, tc.body)
+			profile := &anchor.Profile{Domain: "example.test", TOML: anchor.TOML{
+				DirectPaymentServer: srv.URL + "/sep31/",
+			}}
+			var gotPath string
+			client := srv.Client()
+			originalTransport := client.Transport
+			client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				gotPath = req.URL.Path
+				return originalTransport.RoundTrip(req)
+			})
+			r := Run(ctx(), SEP31Info{HTTPClient: client}, Subject{
+				Profile: profile, Asset: asset.NGNC(),
+			})
+			if gotPath != "/sep31/info" {
+				t.Errorf("request path = %q, want /sep31/info", gotPath)
+			}
+			if r.Determined != tc.determined {
+				t.Fatalf("Determined = %v, want %v (summary %q, reason %q)",
+					r.Determined, tc.determined, r.Summary, r.Reason)
+			}
+			if tc.determined && r.Passed != tc.passed {
+				t.Errorf("Passed = %v, want %v (summary %q)", r.Passed, tc.passed, r.Summary)
+			}
+			if len(r.Evidence) == 0 {
+				t.Error("SEP-31 result must carry evidence")
+			}
+		})
+	}
+}
+
+func TestSEP31InfoUndeterminedInputs(t *testing.T) {
+	t.Run("profile missing", func(t *testing.T) {
+		r := Run(ctx(), SEP31Info{}, Subject{Asset: asset.NGNC()})
+		if r.Determined {
+			t.Error("missing profile must be undetermined")
+		}
+	})
+	t.Run("asset missing", func(t *testing.T) {
+		r := Run(ctx(), SEP31Info{}, Subject{Profile: &anchor.Profile{}})
+		if r.Determined {
+			t.Error("missing asset must be undetermined")
+		}
+	})
+	t.Run("server not published", func(t *testing.T) {
+		r := Run(ctx(), SEP31Info{}, Subject{Profile: &anchor.Profile{Domain: "example.test"}, Asset: asset.NGNC()})
+		if !r.Failed() {
+			t.Errorf("an anchor with no declared SEP-31 server should fail, got determined=%v passed=%v",
+				r.Determined, r.Passed)
+		}
+	})
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 // SSRF guard ------------------------------------------------------------------
 

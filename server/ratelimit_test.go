@@ -485,6 +485,7 @@ func TestHandlerRateLimitCoversEveryRoute(t *testing.T) {
 		"/api/corridor/trend",
 		"/api/chain-heads",
 		"/api/assets",
+		"/api/thresholds",
 		"/healthz",
 		"/",
 	}

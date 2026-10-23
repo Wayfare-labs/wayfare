@@ -5,6 +5,7 @@
 //	wayfared -schedule=0              # server only, no scheduled measurement
 //	wayfared -once                    # one sweep, record, exit (CI schedules this)
 //	wayfared -verify-store            # walk the hash chains and exit
+//	wayfared -export USDC-NGNC        # export one verified chain as CSV and exit
 //	wayfared -rotate-store            # trim chains over the window ceiling and exit
 //	wayfared -check-fresh             # exit non-zero if any record is stale
 //
@@ -26,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -38,6 +40,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
 	"github.com/Wayfare-labs/wayfare/server"
+	"github.com/Wayfare-labs/wayfare/snapshot"
 )
 
 func main() {
@@ -48,14 +51,20 @@ func main() {
 			"ceiling on a live measurement; the budget per request scales with rung count up to this")
 		shutdownGrace = flag.Duration("shutdown-grace", 30*time.Second,
 			"how long SIGTERM waits for in-flight requests before closing")
-		dataDir   = flag.String("data", envOr("WAYFARE_DATA_DIR", ""), "directory for the run store; empty disables history")
-		schedule  = flag.Duration("schedule", monitor.DefaultInterval, "measurement interval; 0 disables the scheduler")
+		dataDir        = flag.String("data", envOr("WAYFARE_DATA_DIR", ""), "directory for the run store; empty disables history")
+		schedule       = flag.Duration("schedule", monitor.DefaultInterval, "measurement interval; 0 disables the scheduler")
+		scheduleJitter = flag.Duration("schedule-jitter", monitor.DefaultJitter,
+			"maximum random delay added to each measurement interval; 0 disables jitter")
 		serve     = flag.Bool("serve", true, "serve HTTP")
 		verify    = flag.Bool("verify-store", false, "verify every corridor chain and exit")
 		rotate    = flag.Bool("rotate-store", false, "trim every chain over the window ceiling and exit")
 		rotateRec = flag.Int("rotate-records", runstore.MaxWindow,
 			"per-corridor record ceiling for -rotate-store")
-		once       = flag.Bool("once", false, "measure every corridor once, record, and exit")
+		once     = flag.Bool("once", false, "measure every corridor once, record, and exit")
+		exportTo = flag.String("export", "",
+			"export one corridor's verified history to stdout and exit, e.g. -export USDC-NGNC; requires -format")
+		exportFmt = flag.String("format", exportFormatCSV,
+			"export format for -export; csv is the only implemented format")
 		checkFresh = flag.Bool("check-fresh", false,
 			"report corridors whose newest record is older than -max-age (or missing) and exit; 1 stale, 2 check unavailable")
 		maxAge = flag.Duration("max-age", 2*monitor.DefaultInterval,
@@ -93,11 +102,19 @@ func main() {
 	}
 
 	if *verify {
-		os.Exit(verifyStore(store, logger))
+		os.Exit(verifyStore(store, *dataDir, logger))
 	}
 
 	if *rotate {
 		os.Exit(rotateStore(store, *rotateRec, logger))
+	}
+
+	// Export is a read-only answer like -verify-store: it writes the document
+	// to stdout and exits without serving or measuring. It refuses a chain
+	// that does not verify, so the artifact a researcher keeps is always one
+	// this project is willing to stand behind.
+	if *exportTo != "" {
+		os.Exit(exportChain(store, *exportTo, *exportFmt, os.Stdout, logger))
 	}
 
 	// The alerting hook for scheduled measurement (issue #310): a CI or cron
@@ -131,6 +148,12 @@ func main() {
 		RefRate: &refrate.Cross{
 			Primary:   &refrate.Cached{Inner: &refrate.ExchangeRateAPI{Logger: logger}},
 			Secondary: &refrate.Cached{Inner: &refrate.CurrencyAPI{Logger: logger}},
+			// The third provider is consulted only when the first two
+			// disagree, and only to attribute which of them is the outlier.
+			// It never contributes a scored mid (see refrate.Cross). Cached
+			// because a sweep prices many rungs and a diagnostic is a
+			// daily-published figure, not a per-rung one.
+			Diagnostic: &refrate.Cached{Inner: &refrate.FloatRates{Logger: logger}},
 		},
 	}
 
@@ -142,15 +165,7 @@ func main() {
 	// and the chain it appends to is the same one a hosted instance would
 	// write. Nothing about the measurement differs.
 	if *once {
-		sched := &monitor.Scheduler{
-			Engine: engine,
-			Store:  store,
-			Logger: logger,
-			// The same sweep the server runs: checks run alongside the
-			// measurement and are recorded with it, so scheduled history
-			// and live responses describe the same thing.
-			Checks: &checks.Runner{HorizonURL: *horizon},
-		}
+		sched := newScheduler(engine, store, *dataDir, *horizon, logger)
 		if err := sched.RunOnce(ctx); err != nil {
 			logger.Error("sweep failed", "error", err)
 			os.Exit(1)
@@ -161,15 +176,9 @@ func main() {
 	var wg sync.WaitGroup
 
 	if *schedule > 0 {
-		sched := &monitor.Scheduler{
-			Engine:   engine,
-			Store:    store,
-			Interval: *schedule,
-			Logger:   logger,
-			// Same sweep as the server (and as -once), so the horizon the
-			// shared checks runner targets matches the engine's.
-			Checks: &checks.Runner{HorizonURL: *horizon},
-		}
+		sched := newScheduler(engine, store, *dataDir, *horizon, logger)
+		sched.Interval = *schedule
+		sched.Jitter = *scheduleJitter
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -245,6 +254,55 @@ func shutdownServer(srv *http.Server, grace time.Duration, logger *slog.Logger) 
 	}
 }
 
+func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon string,
+	logger *slog.Logger) *monitor.Scheduler {
+	sched := &monitor.Scheduler{
+		Engine: engine, Store: store, Logger: logger,
+		Checks: &checks.Runner{HorizonURL: horizon},
+	}
+	if dataDir == "" {
+		return sched
+	}
+
+	sched.SnapshotDir = filepath.Join(dataDir, "snapshots")
+	horizonURL := horizon
+	if horizonURL == "" {
+		horizonURL = dex.DefaultHorizonURL
+	}
+	sched.SnapshotSources = snapshot.Sources{
+		Horizon: snapshot.SourceRef{BaseURL: horizonURL},
+		Reference: snapshot.SourceRef{
+			Provider: "exchangerate-api", BaseURL: refrate.DefaultExchangeRateAPI,
+		},
+	}
+	sched.SnapshotNotes = []string{
+		"secondary reference provider: currency-api at " + refrate.DefaultCurrencyAPI,
+		"diagnostic reference provider: floatrates at " + refrate.DefaultFloatRates,
+	}
+	guardedTransport := checks.GuardedClient(30 * time.Second).Transport
+	sched.SnapshotEngineFactory = func(recorder *snapshot.Recorder) *route.Engine {
+		recorder.Transport = guardedTransport
+		client := &http.Client{Transport: recorder, Timeout: 30 * time.Second}
+		return &route.Engine{
+			DEX: &dex.Client{HorizonURL: horizon, HTTPClient: client, Logger: logger},
+			RefRate: &refrate.Cross{
+				Primary: &refrate.Cached{Inner: &refrate.ExchangeRateAPI{Client: client, Logger: logger}},
+				Secondary: &refrate.Cached{
+					Inner: &refrate.CurrencyAPI{Client: client, Logger: logger},
+				},
+				Diagnostic: &refrate.Cached{Inner: &refrate.FloatRates{Client: client, Logger: logger}},
+			},
+		}
+	}
+	sched.SnapshotChecksFactory = func(recorder *snapshot.Recorder) *checks.Runner {
+		return &checks.Runner{
+			HorizonURL: horizon,
+			HTTPClient: &http.Client{Transport: recorder, Timeout: 30 * time.Second},
+		}
+	}
+	return sched
+}
+
 // openStore opens the run store, or returns a no-op store when history is off.
 //
 // A store that fails to open is fatal rather than silently degraded: on a
@@ -285,11 +343,12 @@ func openStore(dir string, logger *slog.Logger) (runstore.Store, error) {
 
 // verifyStore walks every chain and reports. Intended for use after a deploy
 // and after any restore from backup.
-func verifyStore(store runstore.Store, logger *slog.Logger) int {
+func verifyStore(store runstore.Store, dataDir string, logger *slog.Logger) int {
 	if store == nil {
 		logger.Error("-verify-store requires a store; none is configured")
 		return 2
 	}
+	fs, _ := store.(*runstore.FileStore)
 
 	ctx := context.Background()
 	corridors, err := store.Corridors(ctx)
@@ -309,14 +368,16 @@ func verifyStore(store runstore.Store, logger *slog.Logger) int {
 			failed++
 			continue
 		}
-		latest, err := store.Latest(ctx, c)
-		if err != nil {
-			fmt.Printf("FAIL %s: latest read error: %v\n", c, err)
-			failed++
-			continue
+		if fs != nil {
+			if err := fs.VerifySnapshots(ctx, c, filepath.Join(dataDir, "snapshots")); err != nil {
+				fmt.Printf("FAIL %s: %v\n", c, err)
+				failed++
+				continue
+			}
 		}
-		if latest == nil {
-			fmt.Printf("FAIL %s: no latest record available\n", c)
+		latest, err := store.Latest(ctx, c)
+		if err != nil || latest == nil {
+			fmt.Printf("FAIL %s: latest read error: %v\n", c, err)
 			failed++
 			continue
 		}

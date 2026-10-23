@@ -14,10 +14,17 @@ All endpoints are read-only. The service does not hold funds, issue tokens, sign
 | `GET` | `/api/chain-heads` | Publish the current hash-chain tip for each stored corridor |
 | `GET` | `/api/assets` | List verified assets configured in the binary |
 | `GET` | `/api/market-structure` | Identify shared issuer dependencies across corridors |
+| `GET` | `/api/thresholds` | Publish verdict and divergence band thresholds from code constants |
 | `GET` | `/healthz` | Return service health |
 | `GET` | `/` | Serve the embedded single-file UI |
 
 Unsupported methods return `405`. Requests beyond the per-client rate limit return `429` with a `Retry-After` header (seconds) and the error code `rate_limited` (see [Rate limiting](#rate-limiting)). JSON errors have the shape `{ "error": "...", "code": "..." }`; the machine-readable codes are the contract and are enumerated in [errors.md](errors.md).
+
+### Error codes
+
+Every endpoint emits one spelling: a lower-case `snake_case` token drawn from a single constant block in `server/api.go`, so the same cause carries the same code wherever it occurs (`invalid_query` for an unsupported query parameter on any endpoint, for example).
+
+**Change for consumers.** `/api/corridor/trend` previously emitted upper-case twins of causes the rest of the API named in lower case — `METHOD_NOT_ALLOWED`, `INVALID_QUERY_PARAM`, `BAD_LIMIT`, `STORE_READ_ERROR`, `UNKNOWN_ASSET`. Those spellings were replaced, not emitted alongside the new ones: a client switching on the old tokens must switch on `method_not_allowed`, `invalid_query`, `invalid_limit`, `store_read_error`, `unknown_send_asset` / `unknown_receive_asset` instead. The replacement was made once, deliberately, because a code is a contract rather than a label ([errors.md](errors.md)).
 
 ## `GET /api/corridor`
 
@@ -26,7 +33,7 @@ Query parameters:
 - `from` — send asset code; defaults to `USDC`.
 - `to` — receive asset code; defaults to `NGNC`.
 - `sizes` — optional comma-separated positive decimal send amounts. The server accepts at most 24 values. When omitted, the route ladder's default sizes are used.
-- `live=1` — when history-first mode is enabled, bypass stored history and request a live measurement.
+- `live=1` — when history-first mode is enabled, bypass stored history and request a live measurement. Without it, a history-first instance answers from the chain alone, and a corridor the scheduler has not swept yet returns `404` with `code: "no_history"` rather than a measurement the mode did not promise.
 
 The destination must be a configured asset with a verified fiat peg. Amounts, rates, percentages, and sizes are decimal strings, not JSON numbers.
 
@@ -37,6 +44,7 @@ A successful response contains:
 - `depends_on` — fiat-token dependencies for a derivative corridor.
 - `reference_mid`, `reference_source`, `reference_pair` — the benchmark used for scoring.
 - `reference_agreement`, optional secondary mid/source/divergence/note, and `scored` — the two-provider benchmark cross-check.
+- `reference_diagnostic` — optional third-provider attribution of a `DISAGREE`: `source`, `mid`, optional `as_of`, `outlier`, the two relative distances, and optional `reason`. It is evidence only; `reference_mid`, `reference_source` and `scored` are chosen exactly as they would be without it. See [reference providers](reference-providers.md).
 - `reference_fetched_at` — when the benchmark was obtained, when available.
 - `floor_loss_pct`, `floor_size`, `worst_loss_pct`, `worst_size` — ladder summary values.
 - `recommended` — the best acceptable quote, or JSON `null` when no size is recommendable.
@@ -57,6 +65,75 @@ Each rung includes `send_amount`, `priced`, `integrity`, optional `quote`, notes
 The first valid priced rung has no marginal cost. Missing rungs are skipped, never treated as zero. The current marginal classification is available on the internal ladder result as `improving`, `flat`, `worsening`, or `undetermined`; fewer than two valid priced points are undetermined.
 
 A live measurement failure is served from the latest stored run when one exists, labelled `live: false`. If no stored run exists, the request returns an error rather than fabricating a reading.
+
+On a history-first instance, a corridor with no stored run is answered before anything is measured:
+
+```http
+HTTP/1.1 404 Not Found
+Content-Type: application/json; charset=utf-8
+
+{"error":"no stored measurement for corridor USDC-NGNT on this history-first instance; request with live=1 to measure it now","code":"no_history","request_id":"…"}
+```
+
+The status is `404`, the code is `no_history`, and the body carries neither `integrity` nor `rungs` nor any figure — an error is never measurement-shaped ([the note in errors.md](errors.md#a-note-on-no_history)). This is the response a first deployment gives, and a corridor newly added to the registry gives until the scheduler's next sweep records it. Asking with `live=1` opts out: an explicit live request measures, and a failed explicit live request reports `measurement_failed` rather than `no_history`, because in that case something was attempted and did fail. `NO-MARKET` remains a third thing again — a `200` finding that the corridor has no path.
+
+### Conditional requests on history-served responses
+
+A response with `live: false` is served from a stored record. That record is
+immutable — it is hash-sealed, and a new measurement is a new link in the chain
+rather than an edit of the old one — so the server can tell a client exactly
+which record it is holding.
+
+- A `live: false` response carries an `ETag`: the record's own seal hash,
+  quoted (`ETag: "sha256:…"`). It is the same value the run store verifies the
+  chain against, not a digest invented for HTTP, so a reader can check it with
+  `sha256sum`.
+- It also carries `Cache-Control: no-cache`: the body may be stored, but it
+  must be revalidated before it is reused.
+- A request carrying `If-None-Match` with that value is answered `304 Not
+  Modified` — the same `ETag`, no body — and the client keeps the copy it has.
+  The comparison is the weak one RFC 9110 asks for, so `W/"…"` and a
+  comma-separated list both work, and `*` matches any current record.
+- A **live** response carries **no** `ETag` and is never answered `304`. Its
+  figures depend on the market at the moment of the request, so there is
+  nothing about it that can be reused. The absence of the tag is the signal.
+- A response that is not a measurement — `no_history`, or any error — carries no
+  `ETag` either: there is no representation to revalidate.
+
+The tag identifies the **record**, which is the measurement. The `stale`
+envelope's `age_seconds` and `age_human` are recomputed on every request, so
+two responses for the same record differ in those two fields and are not
+byte-identical; the figures they describe are identical. A `304` therefore
+leaves the client with the age its copy was served at.
+
+The `ETag` is listed in `Access-Control-Expose-Headers`, so a browser page on
+another origin can read the tag it is asked to send back.
+
+```http
+GET /api/corridor?from=USDC&to=NGNC HTTP/1.1
+→ 200 OK
+   ETag: "sha256:3f2c…"
+   Cache-Control: no-cache
+
+GET /api/corridor?from=USDC&to=NGNC HTTP/1.1
+   If-None-Match: "sha256:3f2c…"
+→ 304 Not Modified
+   ETag: "sha256:3f2c…"
+   Cache-Control: no-cache
+```
+
+**cURL — a polling client:**
+
+```bash
+# Fetch, and remember the tag. (-D - prints the response headers;
+# the endpoint answers GET only, so the header must come from a GET.)
+etag=$(curl -sD - -o /dev/null "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC" \
+  | awk -F': ' '/^ETag/ {print $2}' | tr -d '\r')
+
+# Ask again: nothing changed, so nothing is downloaded.
+curl -s -o /dev/null -w '%{http_code}\n' -H "If-None-Match: $etag" \
+  "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC"
+```
 
 **cURL:**
 
@@ -201,6 +278,88 @@ curl -s "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC&sizes=
 
 Every quote — `recommended` and each rung's `quote` — carries `hops`: the path as structured data, in execution order with both endpoints, each entry an asset with its `issuer` where one was established and its `peg` where known. `description` stays exactly as it was, for display and compatibility; `hops` is the field to consume, because an asset code identifies nothing without its issuer and a client must not parse prose or guess an issuer from a code. A hop whose issuing account could not be established says so with `issuer_unknown: true` instead of omitting the field silently; native and fiat assets have no issuer by nature and are identified in full by `asset`. A stored (stale) reading serves `hops: null` — the run store records the description string only, and “not recorded” is not the same claim as “no intermediate assets”.
 
+### Money fields: scale and rounding
+
+Money crosses the wire as decimal strings (ADR 006). Those strings are not all at the same scale, and a consumer that compares two of them without knowing each one's scale gets a wrong answer: `floor_loss_pct: "4.31"` beside a rung's `loss_pct: "4.31390625"` is the same measurement at two scales, not a movement. The tables below give the scale and rounding rule for every money field, field by field.
+
+Two renderings exist and which one a field uses is a property of the field, not of the value:
+
+- **Full precision** — `decimal.Decimal.String()`. Nothing is rounded when the value is written. Every digit the engine holds is published and trailing zeros are removed, so one field can arrive as `"4.31"` at one measurement and `"4.31390625"` at the next. A quotient (`effective_rate`, `loss_pct`, `marginal_cost`) is capped at 16 decimals by `decimal.DivisionPrecision`, and that cap is applied where the number is *computed*, not at the wire; products and sums (amounts derived by multiplying a size by a rate) keep the full scale of their inputs and can exceed 16 decimals. Amounts that come straight from Horizon carry its 7-decimal scale.
+- **Fixed scale** — `decimal.Decimal.StringFixed(n)`. Exactly `n` decimals, always, including on zero: a zero renders `"0.00"`, never `"0"`. Rounding is half away from zero, so `2.675` writes `2.68` and a negative `-2.675` writes `-2.68` (reachable on `parallel_gap_pct`, which is signed). These are display figures — reconcile against a full-precision field only after allowing for the rounding the fixed field already absorbed.
+
+An absent money field means the quantity was not determined, never that it is zero. The field is missing from the document rather than published as `"0"` — the same rule ADR 006 and `docs/metrics.md` state for the values themselves.
+
+Corridor document, headline fields:
+
+| Field | Decimals on the wire | Rounding |
+|---|---|---|
+| `reference_mid` | full precision | none at the wire |
+| `reference_secondary_mid` | full precision | none at the wire |
+| `reference_divergence_pct` | exactly 4 | half away from zero |
+| `reference_diagnostic.mid` | full precision | none at the wire |
+| `reference_diagnostic.outlier_distance_pct` | exactly 4 | half away from zero |
+| `reference_diagnostic.other_distance_pct` | exactly 4 | half away from zero |
+| `parallel_mid` | full precision | none at the wire |
+| `parallel_gap_pct` | exactly 4 | half away from zero, signed |
+| `floor_loss_pct` | exactly 2 | half away from zero |
+| `worst_loss_pct` | exactly 2 | half away from zero |
+| `floor_size` | full precision | none at the wire |
+| `worst_size` | full precision | none at the wire |
+| `recommended_size` | full precision | none at the wire |
+
+Quote objects — `recommended` and each `rungs[].quote`, one shape used in both places:
+
+| Field | Decimals on the wire | Rounding |
+|---|---|---|
+| `receive_amount` | full precision | none at the wire; a Horizon amount keeps its 7 decimals |
+| `effective_rate` | full precision | quotient: 16-decimal cap applied at computation |
+| `loss_pct` | full precision | quotient: 16-decimal cap applied at computation, then multiplied by 100; never negative — a route better than mid is reported as `0`, not as a negative cost |
+| `loss_amount` | exactly 2 | half away from zero; never negative, for the same reason as `loss_pct` |
+
+Rungs:
+
+| Field | Decimals on the wire | Rounding |
+|---|---|---|
+| `rungs[].send_amount` | full precision | none at the wire; a requested ladder size, so it reads as entered (`"0.1"`, `"5000"`) |
+| `rungs[].marginal_cost` | full precision | difference of two rates: no new rounding beyond what each rate already carries |
+| `rungs[].marginal_from` | full precision | none at the wire; a size |
+| `rungs[].marginal_to` | full precision | none at the wire; a size |
+
+Cost block, `rungs[].cost`:
+
+| Field | Decimals on the wire | Rounding |
+|---|---|---|
+| `total_loss_pct` | full precision | none at the wire; equals the rung's `loss_pct`, so the two always reconcile digit for digit |
+| `parts[].amount` | full precision | none at the wire |
+| `parts[].pct` | full precision | none at the wire |
+
+Undetermined cost parts publish neither field — they carry `determined: false` and a `reason`, which is the absence rule above applied inside the block.
+
+Execution-rate curve, `curve.points[]`:
+
+| Field | Decimals on the wire | Rounding |
+|---|---|---|
+| `size` | full precision | none at the wire |
+| `rate` | full precision | quotient: 16-decimal cap applied at computation |
+
+An unpriced point publishes `size` and no `rate` at all, with its `reason` beside it.
+
+The tables above cover the corridor document that `route/wire.go` renders. `route/wire_scale_test.go` prices one corridor in which every money field is the same probe value, reads the scale this section declares for each field straight out of this file, and fails if a renderer's output no longer matches what is written here — or if a money field reaches the wire that this section never names.
+
+`route/money.go`'s `MoneyStrings` walks the corridor document's money fields and the boundary tests feed every string it returns to `decimal.NewFromString`, so a producer cannot emit a malformed figure. Its list is the headline money — the quote, cost-block and corridor scalars. `rungs[].marginal_cost`, `rungs[].marginal_from`, `rungs[].marginal_to` and `curve.points[].size`/`rate` are money on the wire that the walker does not yet collect, so a malformed one of those is caught by the scale guard above and by the wire tests, not by the boundary walk. A field added to the wire shape must be added to that walker and to the tables above.
+
+### Trend money fields
+
+`GET /api/corridor/trend` money fields are stored verbatim: `runstore` records the string the corridor document already rendered (`runstore/convert.go` derives a record from `route.CorridorJSON`, not from the engine's numbers), and the trend endpoint copies those stored strings into its response without re-formatting them. So every `runs[]` figure — `reference.mid`, `reference.secondary_mid`, `reference.divergence_pct`, `floor_loss_pct`, `floor_size`, `worst_loss_pct`, `worst_size`, `recommended_size`, `rungs[].send_amount`, `rungs[].loss_pct` — has exactly the scale listed above for the same field on `/api/corridor`, and reading a trend series compares like with like across runs.
+
+The trend endpoint's own derived statistics are the exception, and they are all fixed scale:
+
+| Field | Decimals on the wire | Rounding |
+|---|---|---|
+| `divergence_stats.mean_pct` | exactly 4 | half away from zero |
+| `divergence_stats.stddev_pct` | exactly 4 | half away from zero |
+| `divergence_stats.trend_magnitude_pct` | exactly 4 | half away from zero |
+
 ## `GET /api/corridor/trend`
 
 Query parameters:
@@ -208,8 +367,12 @@ Query parameters:
 - `from` — send asset code; defaults to `USDC`.
 - `to` — receive asset code; defaults to `NGNC`.
 - `limit` — positive whole number; defaults to 100 and is capped at 500.
+- `before` — positive whole number sequence cursor (`seq`); returns runs strictly before this sequence number (`seq < before`). Used with `limit` for backwards cursor pagination across history.
+- `pretty` — optional boolean (`pretty=1`); indents the JSON response.
 
 This endpoint reads stored history only; it never measures. It returns `200` with `count: 0` and `runs: []` for an empty history. Runs are returned oldest first. Each run carries its sequence, timestamp, integrity, dependencies, reference details, ladder summary, finding, and rung loss/verdict values.
+
+When older runs exist before the oldest run returned in the current page, the response includes a `next` field containing the sequence cursor to pass to `?before=` to fetch the next older page. When the earliest stored run has been reached, `next` is omitted.
 
 `integrity_transitions` is an always-present array of structural changes
 between consecutive runs in that returned window, in chronological order. A
@@ -219,6 +382,25 @@ remaining `DERIVATIVE`. A pair involving `UNKNOWN` is omitted: it cannot
 establish that structure changed. An empty array means no such transition was
 established in the window. The series is descriptive and does not alter a
 verdict or integrity state.
+
+`latest_transition` is the most recent structural change in that window — the
+same event as the last entry of `integrity_transitions`, named on its own
+because "this corridor changed kind" is the one fact a reader should not have
+to diff two records by hand to find. It carries the same fields:
+`previous_integrity`, `current_integrity`, `previous_run_at`,
+`current_run_at`, `previous_depends_on`, `current_depends_on` and
+`transition_type` (`INTEGRITY_STATE_CHANGE` or `DEPENDS_ON_CHANGED`).
+
+It is `null` when the window establishes no transition: a history of one run
+has nothing to compare, and two runs that agree are not a change. It is
+`null` rather than absent, so a client can tell "nothing changed" from "this
+build does not report transitions". A window of fewer than two runs therefore
+always reports `null` — raise `limit` to at least 2 for the comparison to be
+possible.
+
+The monitor writes the same comparison to its log after every sweep
+(`docs/deployment.md`), so a reader who wants the event as it happened can
+watch the log rather than poll the endpoint.
 
 **cURL:**
 
@@ -236,6 +418,8 @@ curl -s "https://wayfare-cdb9.onrender.com/api/corridor/trend?to=NGNC&limit=7"
   "receive_asset": {"code": "NGNC", "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6", "peg": "NGN"},
   "reference_pair": "USD/NGN",
   "count": 1,
+  "integrity_transitions": [],
+  "latest_transition": null,
   "runs": [
     {
       "seq": 1,
@@ -409,6 +593,8 @@ curl -s https://wayfare-cdb9.onrender.com/healthz
 ```json
 {
   "status": "ok",
+  "code_commit": "c7436e2257ae391e6177e063a9012e631540e1d7",
+  "data_commit": "05b446626f6f169b927b18822bd08c700f4f80de",
   "data": {
     "USDC-NGNC": {
       "recorded_at": "2026-09-26T08:00:00Z",
@@ -428,6 +614,16 @@ curl -s https://wayfare-cdb9.onrender.com/healthz
 age of that run; a corridor with no stored run is omitted rather than
 reported as fresh, and the whole field is `null` when no history is
 configured.
+
+### Build provenance fields
+
+`code_commit` is the git commit the binary was built from, and `data_commit`
+is the git commit of `data/` that was embedded in the binary at build time.
+Both are stamped at build time with `-ldflags -X` (see the Dockerfile and
+Makefile `build-stamped` target); unstamped dev or test builds report the
+empty string. Together they answer "is the deploy stale or the pipeline
+dead?": if `data_commit` stops advancing while `code_commit` keeps moving, the
+measurement pipeline is not landing new history.
 
 This endpoint checks that the HTTP service is responding. It does not perform a live corridor measurement or validate upstream availability.
 
@@ -486,7 +682,7 @@ authenticate anyone.
 
 `live` is not a verdict. It describes where the response came from. A response with `live: false` is historical, and its `stale` envelope is authoritative for age. Consumers must not infer freshness from deployment time, request time, or the absence of an error.
 
-Reference rates are never averaged. The response identifies the provider and, when available, the second provider and divergence. `NO-MARKET` means no path was returned; it is not the same claim as a priced route with an `UNUSABLE` verdict.
+Reference rates are never averaged. The response identifies the provider and, when available, the second provider and divergence. On a `DISAGREE` it may also carry `reference_diagnostic`, which names an independent third provider and which of the two primaries is farther from it; that attribution never changes the scored mid. `NO-MARKET` means no path was returned; it is not the same claim as a priced route with an `UNUSABLE` verdict.
 
 ## API deprecation policy
 

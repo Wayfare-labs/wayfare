@@ -18,6 +18,7 @@ package route
 
 import (
 	"math/rand"
+	"sort"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -62,7 +63,7 @@ func TestPropsScoreRateAndLoss(t *testing.T) {
 			t.Fatalf("seed %d case %d: positive send and mid must produce a verdict, got UNKNOWN (send %s mid %s)",
 				propSeed, i, send, mid)
 		}
-		// Effective rate round-trips: send * rate ≈ receive.
+		// Effective rate round-trips: send * rate â‰ˆ receive.
 		if r := relErr(send.Mul(q.EffectiveRate), receive); r.GreaterThan(tol1e12) {
 			t.Fatalf("seed %d case %d: send*EffectiveRate off by %s (send %s receive %s rate %s)",
 				propSeed, i, r, send, receive, q.EffectiveRate)
@@ -89,7 +90,7 @@ func TestPropsScoreRateAndLoss(t *testing.T) {
 			}
 		}
 		// The loss percentage describes the same shortfall as the amounts:
-		// (1 - LossPct/100) * mid ≈ EffectiveRate.
+		// (1 - LossPct/100) * mid â‰ˆ EffectiveRate.
 		implied := decimal.NewFromInt(100).Sub(q.LossPct).Div(decimal.NewFromInt(100)).Mul(mid)
 		want := q.EffectiveRate
 		if beatsMid {
@@ -102,7 +103,7 @@ func TestPropsScoreRateAndLoss(t *testing.T) {
 			t.Fatalf("seed %d case %d: LossPct and EffectiveRate disagree by %s (loss %s eff %s mid %s)",
 				propSeed, i, r, q.LossPct, q.EffectiveRate, mid)
 		}
-		// LossAmount says the same thing in money: ≈ send*mid − receive,
+		// LossAmount says the same thing in money: â‰ˆ send*mid âˆ’ receive,
 		// clamped at zero.
 		wantAmt := send.Mul(mid).Sub(receive)
 		if wantAmt.IsNegative() {
@@ -148,11 +149,42 @@ func TestPropsVerdictThresholdsAndMonotonicity(t *testing.T) {
 	}
 
 	// Monotonicity: more loss never buys a better (lower-numbered) verdict.
+	// Test across the full domain including zero, negative (clamped), and boundaries.
+	monoCases := []decimal.Decimal{}
+	// Zero and negative (verdictFor clamps negative to zero via LessThanOrEqual logic)
+	monoCases = append(monoCases, decimal.Zero)
+	monoCases = append(monoCases, decimal.NewFromInt(-1))
+	monoCases = append(monoCases, decimal.New(-1, -2)) // -0.01
+	// Exact boundaries and immediate neighbors
+	for _, b := range []string{"3", "8", "20"} {
+		v, _ := decimal.NewFromString(b)
+		monoCases = append(monoCases, v)
+		monoCases = append(monoCases, v.Sub(decimal.New(1, -15)))
+		monoCases = append(monoCases, v.Add(decimal.New(1, -15)))
+	}
+	// Random positive values
+	for i := 0; i < 400; i++ {
+		monoCases = append(monoCases, randPositive(rng))
+	}
+	// Sort to test adjacent pairs
+	sort.Slice(monoCases, func(i, j int) bool {
+		return monoCases[i].LessThan(monoCases[j])
+	})
+	// Test all adjacent pairs: a <= b implies verdictFor(a) <= verdictFor(b)
+	for i := 0; i < len(monoCases)-1; i++ {
+		a := monoCases[i]
+		b := monoCases[i+1]
+		if verdictFor(a) > verdictFor(b) {
+			t.Fatalf("seed %d: monotonicity violated at adjacent pair (%sâ†’%s gives %vâ†’%v)",
+				propSeed, a, b, verdictFor(a), verdictFor(b))
+		}
+	}
+	// Also test random pairs (not just adjacent) for broader coverage
 	for i := 0; i < 500; i++ {
 		a := randPositive(rng)
 		b := a.Add(randPositive(rng).Abs()) // b > a
 		if verdictFor(a) > verdictFor(b) {
-			t.Fatalf("seed %d case %d: verdict got better with more loss (%s→%s gives %v→%v)",
+			t.Fatalf("seed %d case %d: verdict got better with more loss (%sâ†’%s gives %vâ†’%v)",
 				propSeed, i, a, b, verdictFor(a), verdictFor(b))
 		}
 	}

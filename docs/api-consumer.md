@@ -143,6 +143,12 @@ anyway presents an artefact as a measurement.
 | — | `STALE` | the fresher feed, when the two describe different moments |
 | — | `SINGLE` | the one that answered; uncorroborated, and says so |
 
+On a `DISAGREE`, an optional `reference_diagnostic` object may name a third
+independent provider and which of the two primaries is farther from it. It is
+evidence about the disagreement, not an input: `reference_mid`, `reference_source`
+and `scored` are exactly what they would be without it. See
+[reference providers](reference-providers.md).
+
 ### 3. `recommended: null` means "nothing is worth taking"
 
 Not "the best of a bad set", and not "no data". The engine recommends a quote
@@ -182,11 +188,42 @@ Two current limits worth knowing before reading `findings`:
 ### 6. An error body is not a measurement
 
 Errors have the shape `{"error": "...", "code": "..."}`. The code is what a
-program branches on (`measurement_failed`, `upstream_timeout`,
+program branches on (`measurement_failed`, `upstream_timeout`, `no_history`,
 `unknown_receive_asset`, `no_fiat_peg`, `invalid_query`, …); the message is what
 a human reads. Nothing is ever synthesised to fill a gap: when a live
 measurement fails and no stored run exists, the request errors rather than
 returning a plausible number.
+
+`no_history` deserves its own branch. A history-first instance returns it for a
+corridor it has never recorded, before contacting any upstream, so it is neither
+an outage (`measurement_failed`) nor a finding about the market (`NO-MARKET`,
+which arrives as a `200`). A consumer that retries on it is retrying a server
+that is working exactly as configured; the response names `live=1` as the
+request that does produce a reading.
+
+### 7. A `304` means the record has not changed — and only a record can say so
+
+A `live: false` response carries an `ETag`: the hash-sealed identity of the
+stored record it was served from. Sending it back as `If-None-Match` gets a
+`304` with no body when the store still holds that record, and a `200` with the
+new document when it does not. A polling consumer therefore downloads the
+body only when something actually changed.
+
+Two rules make this safe to rely on:
+
+- **A live response carries no `ETag`.** There is no validator on a fresh
+  measurement, so there is nothing to revalidate against, and no conditional
+  request is ever answered `304` on the live path — including `If-None-Match:
+  *`. A client that treats the absence of a tag as "nothing to check" and
+  simply re-reads the body is behaving correctly.
+- **A `304` means the measurement is unchanged, not that the age is.** The
+  `stale` envelope's age is recomputed on every request, so the copy a client
+  keeps after a `304` carries the age it was first served with. The figures it
+  describes are identical, and the record they came from is the one the store
+  still holds.
+
+An error — including `no_history` — carries no `ETag` either. There is no
+representation to revalidate, so there is nothing to answer `304` about.
 
 ---
 

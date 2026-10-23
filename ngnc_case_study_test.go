@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -552,16 +553,18 @@ func TestCaseStudyDoesNotClaimTheDecomposition(t *testing.T) {
 
 	// The structural claim itself, in the sentence that carries it. Checking
 	// only that the file names appear would pass on a document that had
-	// rewritten "no metric is reachable" into the opposite while still citing
-	// the same files.
+	// hardened "reachable but not decomposed" into "the decomposition is
+	// computed". The first sentence flipped on 2026-10-22 (metrics are
+	// reachable now); the second is what the section rests on.
 	for _, want := range []string{
-		"No market-quality metric is reachable",
-		"no way to run a `Metric`",
-		"called only from tests",
+		"reachability is not",
+		"None of that attributes the floor",
+		"excluded from the runner's default set",
 	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("the document no longer says %q; the reachability claim "+
-				"is what the whole section rests on", want)
+			t.Errorf("the document no longer says %q; the boundary between a "+
+				"reachable measurement and a computed decomposition is what the "+
+				"whole section rests on", want)
 		}
 	}
 
@@ -589,45 +592,99 @@ func TestCaseStudyDoesNotClaimTheDecomposition(t *testing.T) {
 		"proves it is spread",
 	} {
 		if strings.Contains(strings.ToLower(doc), forbidden) {
-			t.Errorf("the document asserts %q; the metric is unreachable and no "+
-				"spread or price impact has ever been measured", forbidden)
+			t.Errorf("the document asserts %q; no decomposition of the floor "+
+				"into spread and depth has been measured", forbidden)
 		}
 	}
 }
 
-// TestNoMarketQualityMetricIsReachableFromTheRunner is the code half of that
-// negative test, and it is the load-bearing structural claim in the document.
+// TestMarketQualityMetricsAreReachableFromTheRunner is the code half of that
+// section, and it has flipped: until 2026-10-22 the document's claim was that
+// no metric could reach a response, and this test failed if a Metric-carrying
+// field appeared on Runner. The wiring landed, the document now says so, and
+// the test asserts the claim it makes today — a metric-carrying field exists
+// AND a corridor sweep actually runs one.
 //
-// The document asserts that no market-quality metric has ever appeared in a
-// response. That is checked structurally, from the type rather than from the
-// prose: if a field able to carry a Metric is ever added to Runner, this fails.
-func TestNoMarketQualityMetricIsReachableFromTheRunner(t *testing.T) {
+// Asserting only the field would pass on wiring that is never called, which is
+// exactly the state the document used to describe.
+func TestMarketQualityMetricsAreReachableFromTheRunner(t *testing.T) {
 	rt := reflect.TypeOf(checks.Runner{})
 
+	found := false
 	for i := 0; i < rt.NumField(); i++ {
 		f := rt.Field(i)
-		// A field typed as a slice of a Metric implementation, or a single
-		// Metric, would be the wiring the document says does not exist.
-		if implementsMetric(f.Type) {
-			t.Errorf("checks.Runner has field %q of type %s; a metric would be "+
-				"reachable, and the case study says none is", f.Name, f.Type)
-		}
 		if f.Type.Kind() == reflect.Slice && implementsMetric(f.Type.Elem()) {
-			t.Errorf("checks.Runner has field %q of type %s; a metric would be "+
-				"reachable, and the case study says none is", f.Name, f.Type)
+			found = true
 		}
 	}
+	if !found {
+		t.Fatalf("checks.Runner has no field able to carry a Metric; the case " +
+			"study says metrics are reachable since 2026-10-22")
+	}
 
-	// RunAll is the only way findings are produced, and it takes checks.
+	// RunAll is still the only way check results are produced, and it takes
+	// checks. Metrics reach findings through RunMetric, which the runner
+	// calls — a structural fact by method set, not by naming a caller.
 	runAll := reflect.TypeOf(checks.RunAll)
 	if runAll.NumIn() < 2 {
 		t.Fatal("RunAll's signature changed; the case study cites it as the " +
-			"only path that produces findings")
+			"only path that produces check findings")
 	}
 	if got := runAll.In(1).String(); !strings.HasPrefix(got, "[]checks.Check") {
 		t.Errorf("RunAll's second parameter is %s, want []checks.Check; the "+
-			"case study says there is no metric equivalent", got)
+			"case study says check findings come from RunAll", got)
 	}
+
+	// The behavioural half: a corridor sweep whose metric would panic still
+	// returns findings, and the metric result is attributed. The stub proves
+	// ForCorridor — not some caller — ran it.
+	r := &checks.Runner{
+		Checks:  []checks.Check{stubCaseStudyCheck{}},
+		Metrics: []checks.Metric{stubCaseStudyMetric{}},
+	}
+	f := r.ForCorridor(context.Background(), checks.Corridor{})
+	if len(f.Metrics) != 1 || f.Metrics[0].ID != "case-study.stub" {
+		t.Fatalf("ForCorridor produced %d metrics (%v); the case study says the "+
+			"runner measures metrics", len(f.Metrics), f.Metrics)
+	}
+}
+
+// stubCaseStudyCheck pins the runner's check set so the reachability test
+// above never falls back to the defaults and their network calls.
+type stubCaseStudyCheck struct{}
+
+func (stubCaseStudyCheck) Describe() checks.Descriptor {
+	return checks.Descriptor{
+		ID:              "case-study.check",
+		Title:           "stub",
+		CanDetermine:    "nothing, it is a stub",
+		CannotDetermine: "nothing, it is a stub",
+	}
+}
+
+func (stubCaseStudyCheck) Run(_ context.Context, s checks.Subject) checks.CheckResult {
+	return checks.Pass(stubCaseStudyCheck{}.Describe(), s, "stub")
+}
+
+// stubCaseStudyMetric satisfies checks.Metric so the reachability test above
+// can observe that the runner ran something, without a network.
+type stubCaseStudyMetric struct{}
+
+func (stubCaseStudyMetric) Describe() checks.Descriptor {
+	return checks.Descriptor{
+		ID:              "case-study.stub",
+		Scope:           checks.ScopeCorridor,
+		Venue:           checks.VenueOrderBook,
+		Title:           "stub",
+		CanDetermine:    "nothing, it is a stub",
+		CannotDetermine: "nothing, it is a stub",
+	}
+}
+
+func (stubCaseStudyMetric) Run(context.Context, checks.Subject) checks.MetricResult {
+	return checks.MetricValue(stubCaseStudyMetric{}.Describe(), checks.Subject{},
+		decimal.NewFromInt(1), checks.UnitCount, "stub",
+		checks.Evidence{Source: "test", Observed: "1", ObservedAt: time.Now().UTC()})
 }
 
 // implementsMetric reports whether a type satisfies the Metric interface, by

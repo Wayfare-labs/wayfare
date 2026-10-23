@@ -36,6 +36,43 @@ const (
 	AgreementMalfunction
 )
 
+// Diagnostic attributes a DISAGREE using an independent third provider.
+//
+// It is evidence, not an input. The scored Mid and Source on the Rate remain
+// exactly what reconcile chose without it: the diagnostic names which of the
+// two primaries is farther from the third observation, and nothing more. A
+// provider configured here is never averaged with the others, never replaces
+// one of them, and never changes the conservative-selection rule.
+type Diagnostic struct {
+	// Source is the third provider that answered.
+	Source string
+
+	// Mid is that provider's rate for the same pair. It is carried so the
+	// attribution can be checked rather than trusted.
+	Mid decimal.Decimal
+
+	// AsOf is the diagnostic provider's own timestamp, when it published one.
+	AsOf time.Time
+
+	// Outlier is the source name of the primary farther from Mid. It is empty
+	// when the two primaries are exactly equidistant, in which case the third
+	// observation cannot attribute the disagreement to one side.
+	Outlier string
+
+	// OutlierDistancePct is how far the outlier sits from Mid, relative to
+	// the smaller of the two, so the figure does not depend on ordering.
+	OutlierDistancePct decimal.Decimal
+
+	// OtherDistancePct is the same measure for the primary not named Outlier.
+	OtherDistancePct decimal.Decimal
+
+	// Reason is set when the third provider was consulted but could not
+	// attribute the disagreement — an unavailable feed, a broken answer, or a
+	// tie. It is empty when Outlier names a side. This keeps "no outlier was
+	// determined" distinguishable from "no diagnostic was attempted".
+	Reason string
+}
+
 func (a Agreement) String() string {
 	switch a {
 	case AgreementAgree:
@@ -139,7 +176,9 @@ func errorDescription(err error) string {
 // A blended rate names no provider. Every figure Wayfare publishes has to be
 // traceable to a source a reader can check, and the mean of two feeds is
 // exactly the unattributable number this project refuses to produce. So one
-// mid is chosen, and the record says which.
+// mid is chosen, and the record says which. This is ADR 001
+// (docs/adr-reference-mids.md); consulting a third provider to diagnose a
+// disagreement is not averaging, and it is kept outside the scored mid.
 //
 // # Which one is chosen
 //
@@ -153,6 +192,16 @@ func errorDescription(err error) string {
 type Cross struct {
 	Primary   Provider
 	Secondary Provider
+
+	// Diagnostic is an optional third provider consulted only when the two
+	// scored providers land in AgreementDisagree. It reports which primary is
+	// the outlier; it never participates in reconciliation and never changes
+	// Mid, Source, AsOf or the secondary fields. Nil disables the diagnostic.
+	//
+	// It is deliberately not part of Name(): a diagnostic provider supplies
+	// no scored figure, so naming it beside the benchmark would imply a third
+	// input to a decision it does not influence.
+	Diagnostic Provider
 }
 
 // Name identifies the composite.
@@ -205,7 +254,85 @@ func (c *Cross) Rate(ctx context.Context, base, quote string) (Rate, error) {
 		return singleSource(primary, c.Secondary.Name(), secondaryErr), nil
 	}
 
-	return reconcile(primary, secondary), nil
+	out := reconcile(primary, secondary)
+	if out.Agreement == AgreementDisagree && c.Diagnostic != nil {
+		c.attributeDisagreement(ctx, &out, base, quote, primary, secondary)
+	}
+	return out, nil
+}
+
+// attributeDisagreement fills Rate.Diagnostic on a DISAGREE. It mutates only
+// the Diagnostic field: the scored mid, its source and every cross-check
+// field are already fixed by reconcile and are not touched here.
+func (c *Cross) attributeDisagreement(ctx context.Context, out *Rate, base, quote string, primary, secondary Rate) {
+	if err := ctx.Err(); err != nil {
+		return
+	}
+
+	third, err := c.Diagnostic.Rate(ctx, base, quote)
+	if err != nil {
+		out.Diagnostic = &Diagnostic{
+			Source: c.Diagnostic.Name(),
+			Reason: "diagnostic provider unavailable: " + err.Error(),
+		}
+		log().Debug("diagnostic reference provider unavailable",
+			"provider", c.Diagnostic.Name(),
+			"pair", base+"/"+quote,
+			"error", err)
+		return
+	}
+	if third.Mid.IsZero() {
+		out.Diagnostic = &Diagnostic{
+			Source: third.Source,
+			Reason: "diagnostic provider quoted a zero rate; a zero is a broken feed",
+		}
+		return
+	}
+
+	source := third.Source
+	if source == "" {
+		source = c.Diagnostic.Name()
+	}
+	primaryPct := pctApart(primary.Mid, third.Mid)
+	secondaryPct := pctApart(secondary.Mid, third.Mid)
+
+	d := &Diagnostic{
+		Source: source,
+		Mid:    third.Mid,
+		AsOf:   third.AsOf,
+	}
+	switch {
+	case primaryPct.GreaterThan(secondaryPct):
+		d.Outlier = primary.Source
+		d.OutlierDistancePct = primaryPct
+		d.OtherDistancePct = secondaryPct
+	case secondaryPct.GreaterThan(primaryPct):
+		d.Outlier = secondary.Source
+		d.OutlierDistancePct = secondaryPct
+		d.OtherDistancePct = primaryPct
+	default:
+		// Equidistant: the third observation supports neither side, so no
+		// side is named. The two distances are still published so a reader
+		// can see why the attribution is absent.
+		d.OutlierDistancePct = primaryPct
+		d.OtherDistancePct = secondaryPct
+		d.Reason = "the two primaries are equidistant from the diagnostic mid"
+	}
+	out.Diagnostic = d
+}
+
+// pctApart reports how far apart two mids are as a percentage of the smaller,
+// the same convention DivergencePct uses. It is diagnostic-only: the scored
+// divergence is still computed by reconcile exactly as before.
+func pctApart(a, b decimal.Decimal) decimal.Decimal {
+	lo, hi := a, b
+	if hi.LessThan(lo) {
+		lo, hi = hi, lo
+	}
+	if lo.IsZero() {
+		return decimal.Zero
+	}
+	return hi.Sub(lo).Div(lo).Mul(decimal.NewFromInt(100))
 }
 
 // singleSource records that only one provider produced the rate being returned.
@@ -241,6 +368,10 @@ func singleSource(survivor Rate, failedName string, failedErr error) Rate {
 	survivor.SecondarySource = ""
 	survivor.SecondaryAsOf = time.Time{}
 	survivor.DivergencePct = decimal.Zero
+	// A diagnostic belongs to a disagreement this composite observed. If the
+	// survivor is itself a nested Cross, its diagnostic describes that inner
+	// reconciliation, not this single-source rate.
+	survivor.Diagnostic = nil
 
 	if survivor.Mid.IsZero() {
 		survivor.Agreement = AgreementMalfunction
@@ -263,6 +394,9 @@ func reconcile(primary, secondary Rate) Rate {
 	out.SecondaryMid = secondary.Mid
 	out.SecondarySource = secondary.Source
 	out.SecondaryAsOf = secondary.AsOf
+	// This composite produces its own diagnostic, if any. A diagnostic
+	// inherited from a nested Cross describes a different reconciliation.
+	out.Diagnostic = nil
 
 	// Guard the division before anything else: a zero mid from either side
 	// is a broken feed, not a 100% disagreement.

@@ -953,6 +953,67 @@ func TestReadOnly_AlwaysRejectsAppend(t *testing.T) {
 	}
 }
 
+func TestConcurrentReadOnlyFSStoreReaders(t *testing.T) {
+	dir := t.TempDir()
+	writable, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		if err := writable.Append(ctx(), fixedRecord()); err != nil {
+			t.Fatalf("seed append %d: %v", i, err)
+		}
+	}
+
+	store, err := OpenFS(os.DirFS(dir), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const readerCount = 8
+	var readers sync.WaitGroup
+	readers.Add(readerCount)
+	start := make(chan struct{})
+	for i := 0; i < readerCount; i++ {
+		go func() {
+			defer readers.Done()
+			<-start
+			for j := 0; j < 25; j++ {
+				latest, err := store.Latest(ctx(), "USDC-NGNC")
+				if err != nil || latest == nil {
+					t.Errorf("Latest = %v, %v; want a stored record", latest, err)
+				} else if err := latest.VerifySelf(); err != nil {
+					t.Errorf("Latest returned an invalid record: %v", err)
+				}
+
+				recent, err := store.Recent(ctx(), "USDC-NGNC", 3)
+				if err != nil {
+					t.Errorf("Recent: %v", err)
+				} else {
+					for k, record := range recent {
+						if err := record.VerifySelf(); err != nil {
+							t.Errorf("Recent record %d is partial: %v", k, err)
+						}
+						if k > 0 && (recent[k-1].Seq != record.Seq+1 || record.Hash != recent[k-1].PrevHash) {
+							t.Errorf("Recent records are not a complete descending chain: seq %d then %d",
+								recent[k-1].Seq, record.Seq)
+						}
+					}
+				}
+
+				all, err := store.All(ctx(), "USDC-NGNC")
+				if err != nil {
+					t.Errorf("All: %v", err)
+				} else if err := verifyChain("USDC-NGNC", all); err != nil {
+					t.Errorf("All returned a partial chain: %v", err)
+				}
+			}
+		}()
+	}
+	close(start)
+	readers.Wait()
+}
+
 // ---------------------------------------------------------------------------
 // Non-.ndjson files are ignored
 // ---------------------------------------------------------------------------

@@ -92,7 +92,10 @@ idempotent, compares exactly two consecutive runs, and excludes UNKNOWN
 (`transition.go:98-104`). This is the strongest primitive the repository has
 for "something changed that matters".
 
-**Gap:** the detector has no caller and no delivery channel. An attestation
+**Gap:** the detector had no caller and no delivery channel. It gained a
+caller in issue #579, which wired it into the scheduler (a transition is
+logged after each sweep) and into the trend endpoint (`latest_transition`);
+delivery is still absent. An attestation
 would need to (a) define the window (two consecutive runs), (b) bind the two
 run hashes, (c) assert the transition type. This is *implementable* on current
 data but does not exist.
@@ -300,7 +303,7 @@ does not require a publisher-trust model the project has not adopted.**
 The repository provides:
 - Per-run measurements with full provenance (`CorridorJSON`)
 - Tamper-evident history of those measurements (`runstore.Record` chain)
-- A state-transition detector with no caller (`runstore.DetectLatestTransition`)
+- A state-transition detector, now called by the scheduler and published on the trend endpoint (`runstore.DetectLatestTransition`)
 - A health-score composition with no live inputs (`route/HealthScore`)
 
 What it does not provide, and what an attestation would need:

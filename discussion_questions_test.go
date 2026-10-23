@@ -58,19 +58,19 @@ func TestQuestionsDocQuotesTheCodeItRestsOn(t *testing.T) {
 		quote string
 	}{
 		{
-			claim: "the ladder is 'a dozen round trips to Horizon' in server/api.go",
+			claim: "the ladder scales with DefaultSizes in server/api.go",
 			file:  "server/api.go",
-			quote: "A full ladder is a dozen round trips to Horizon",
+			quote: "One Horizon call per rung, plus a two-call slippage probe",
 		},
 		{
-			claim: "deployment.md puts a sweep at 'roughly three dozen Horizon calls'",
+			claim: "deployment.md puts a sweep at 'roughly sixty-eight Horizon calls'",
 			file:  "docs/deployment.md",
-			quote: "One sweep is roughly three dozen Horizon calls per corridor",
+			quote: "One sweep is roughly sixty-eight Horizon calls across the three corridors",
 		},
 		{
-			claim: "deployment.md puts a sweep at 'about 110 requests every six hours'",
+			claim: "deployment.md puts a sweep at 'near eighty requests every six hours'",
 			file:  "docs/deployment.md",
-			quote: "110 requests every six hours",
+			quote: "near eighty requests every six hours",
 		},
 		{
 			claim: "writeError publishes a machine-readable code alongside the prose",

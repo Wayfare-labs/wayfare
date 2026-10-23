@@ -83,16 +83,20 @@ func readChain(fsys fs.FS, path, corridor string) ([]*Record, error) {
 		if err := json.Unmarshal([]byte(raw), &r); err != nil {
 			return nil, fmt.Errorf("runstore: %s line %d: %w", corridor, line, err)
 		}
-		// Versions 1, 2 and 3 are all loadable: each migration added its
+		// Versions 1 through 4 are loadable: each migration added its
 		// fields with omitempty after every earlier field, so older records
 		// encode byte-for-byte as they did when they were written and
 		// verify unchanged (see Record and docs/run-store.md). Any other
 		// version is a schema this build does not understand and must be
 		// refused, never guessed at.
-		if r.Version != 1 && r.Version != 2 && r.Version != Version {
+		if r.Version < 1 || r.Version > Version {
 			return nil, fmt.Errorf(
 				"runstore: %s line %d has record version %d, this build understands %d",
 				corridor, line, r.Version, Version)
+		}
+		if r.Version < Version && r.Snapshot != "" {
+			return nil, fmt.Errorf("runstore: %s line %d has a snapshot hash in legacy record version %d",
+				corridor, line, r.Version)
 		}
 		out = append(out, &r)
 	}
@@ -116,12 +120,23 @@ func (s *ReadOnly) Latest(_ context.Context, corridor string) (*Record, error) {
 	return rs[len(rs)-1], nil
 }
 
-// Recent returns up to n records, newest first.
-func (s *ReadOnly) Recent(_ context.Context, corridor string, n int) ([]*Record, error) {
+// RecentBefore returns up to n records strictly before sequence number
+// 'before' (i.e. Seq < before), newest first. When before <= 0, it returns
+// up to n most recent records.
+func (s *ReadOnly) RecentBefore(_ context.Context, corridor string, n int, before int64) ([]*Record, error) {
 	if n <= 0 {
 		return nil, nil
 	}
 	rs := s.records[strings.ToUpper(corridor)]
+	if before > 0 {
+		filtered := make([]*Record, 0, len(rs))
+		for _, r := range rs {
+			if r.Seq < before {
+				filtered = append(filtered, r)
+			}
+		}
+		rs = filtered
+	}
 	if len(rs) > n {
 		rs = rs[len(rs)-n:]
 	}
@@ -130,6 +145,11 @@ func (s *ReadOnly) Recent(_ context.Context, corridor string, n int) ([]*Record,
 		out = append(out, rs[i])
 	}
 	return out, nil
+}
+
+// Recent returns up to n records, newest first.
+func (s *ReadOnly) Recent(ctx context.Context, corridor string, n int) ([]*Record, error) {
+	return s.RecentBefore(ctx, corridor, n, 0)
 }
 
 // All returns the complete corridor history in chronological order

@@ -80,6 +80,9 @@ func TestErrorCodeContract(t *testing.T) {
 		{"trend unknown receive asset", http.MethodGet, "/api/corridor/trend?to=SCAMC", codeUnknownReceiveAsset, http.StatusBadRequest},
 		{"trend no fiat peg", http.MethodGet, "/api/corridor/trend?to=USDC", codeNoFiatPeg, http.StatusBadRequest},
 		{"trend invalid limit", http.MethodGet, "/api/corridor/trend?limit=abc", codeInvalidLimit, http.StatusBadRequest},
+		{"trend invalid cursor", http.MethodGet, "/api/corridor/trend?before=abc", codeInvalidCursor, http.StatusBadRequest},
+		{"trend zero cursor", http.MethodGet, "/api/corridor/trend?before=0", codeInvalidCursor, http.StatusBadRequest},
+		{"trend negative cursor", http.MethodGet, "/api/corridor/trend?before=-1", codeInvalidCursor, http.StatusBadRequest},
 
 		// Read-only endpoints still share the method/param contract.
 		{"market-structure method", http.MethodPost, "/api/market-structure", codeMethodNotAllowed, http.StatusMethodNotAllowed},
@@ -87,6 +90,8 @@ func TestErrorCodeContract(t *testing.T) {
 		{"health unknown param", http.MethodGet, "/healthz?tp=x", codeInvalidQuery, http.StatusBadRequest},
 		{"chain-heads method", http.MethodPost, "/api/chain-heads", codeMethodNotAllowed, http.StatusMethodNotAllowed},
 		{"chain-heads unknown param", http.MethodGet, "/api/chain-heads?tp=x", codeInvalidQuery, http.StatusBadRequest},
+		{"thresholds method", http.MethodPost, "/api/thresholds", codeMethodNotAllowed, http.StatusMethodNotAllowed},
+		{"thresholds unknown param", http.MethodGet, "/api/thresholds?tp=x", codeInvalidQuery, http.StatusBadRequest},
 	}
 
 	for _, tc := range cases {
@@ -118,9 +123,11 @@ func TestErrorCodesAreLowerSnakeCase(t *testing.T) {
 		codeInvalidQuery,
 		codeInternalError,
 		codeInvalidLimit,
+		codeInvalidCursor,
 		codeStoreRead,
 		codeDivergenceHistory,
 		codeRateLimited,
+		codeNoHistory,
 	}
 	for _, c := range codes {
 		for _, r := range c {

@@ -120,3 +120,35 @@ func TestUISplitAssetsAreServed(t *testing.T) {
 		}
 	}
 }
+
+func TestUIPrintableCorridorReport(t *testing.T) {
+	raw, err := uiFS.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+
+	for _, want := range []string{
+		"@page { size: A4 landscape;",
+		"@media print {",
+		".print-report {",
+		"#out > :not(.print-report) { display: none !important; }",
+		"aria-label=\"Printable corridor report\"",
+		"Measured ladder",
+		"d.reference_as_of",
+		"d.reference_fetched_at",
+		"d.stale?.recorded_at",
+		"/healthz",
+		"/api/chain-heads",
+		"window.print();",
+		"$('print-report-button').disabled = true;",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("print report is missing %q", want)
+		}
+	}
+
+	if strings.Contains(page, "@media print") && strings.Contains(page, "@media print {\n    @import") {
+		t.Error("print layout must not introduce print-time imports")
+	}
+}
