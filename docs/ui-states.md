@@ -3,6 +3,14 @@
 The four interaction states of the interface's controls, specified concretely
 enough to implement without guessing (issue #285, backlog #227).
 
+> **Dependency note (issue #230, dark mode).** Dark mode is specified here as
+> a designed palette, not an inversion of light mode. The tokens in the table
+> below are tuned per scheme; the dark block is not derived from the light one.
+> Surface, border and chart intent for dark mode is owned by the theming
+> section of this file, and this spec defers to that section for any surface
+> colour. Dark-mode focus and press tokens already follow the designed values
+> above and are not inverted from light.
+
 **Status: implemented.** The canonical rules live in `server/index.html` in
 the block titled *"Interactive state contract (issue #285)"*. This document is
 the spec that block implements; when the two disagree, the code is wrong.

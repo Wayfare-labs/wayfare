@@ -1,7 +1,13 @@
 # The chart palette
 
 The colours the two line charts draw with, specified concretely enough to
-implement without guessing (issue #284, backlog #226).
+implement without guessing (issue #284, backlog #226; dark-mode design
+backlog #230, blocked on #287 and deliberately not started).
+
+> **Scope note:** this document specifies chart colours only. The broader
+> dark-mode design (surfaces, borders, breakpoints) tracked in backlog #230 is
+> out of scope here and must not be implemented until its #287 dependency
+> lands.
 
 **Status: implemented.** The canonical tokens live in `server/index.html` in
 the `:root` blocks. This document is the spec those tokens implement; when the
