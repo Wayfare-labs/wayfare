@@ -52,7 +52,7 @@ ones; every arrow is a call that exists in the tree.
     monitor.Scheduler            server.Server
     monitor/monitor.go           server/api.go
     every 6h, no HTTP            /api/corridor  /api/assets  /healthz
-           │                     /  → embedded index.html (server/ui.go)
+           │                     /  → embedded UI (server/ui.go)
            ▼                           │
     runstore  ◀──────────────────────  ┘  on live failure: staleJSON(), live:false
     hash-chained NDJSON
@@ -169,7 +169,7 @@ claims live. Nothing here adds a capability.
 They have drifted, and the deployed instance serves only the second.
 
 **#1 — UI presents a stored reading as a live measurement** *(filed: [#79](https://github.com/Wayfare-labs/wayfare/issues/79))*
-`server/index.html` never reads `live` or `stale`; a 45-hour-old reading renders
+`server/app.js` never reads `live` or `stale`; a 45-hour-old reading renders
 as current under a footer claiming nothing is cached.
 `V1` `area:ui` `bug` `difficulty:medium` `ready`
 
@@ -457,7 +457,7 @@ Add `Metrics []Metric`, a corridor-scoped subject populating `Subject.Send` and
 `V2` `area:pricing` `difficulty:medium` `blocked` — on #49
 
 **#51 — Render metrics in the UI** *(filed: [#94](https://github.com/Wayfare-labs/wayfare/issues/94))*
-`findings(f)` in `server/index.html` maps `f.checks` and never reads
+`findings(f)` in `server/app.js` maps `f.checks` and never reads
 `f.metrics`; an undetermined metric must not look like a failed check.
 `V2` `area:ui` `difficulty:medium` `blocked` — on #50
 
@@ -1494,9 +1494,11 @@ only for the values someone thought to write down.
 
 ## I. Cross-cutting — UI, UX and visual design
 
-`server/index.html` is a single 15KB file with no build step — a deliberate
-architecture (`server/ui.go`: "the binary is the whole deployment"). Everything
-here must preserve that.
+The UI is three files — `server/index.html`, `server/app.css`,
+`server/app.js` — with no build step, embedded via `embed.FS`
+(`server/ui.go`: "the binary is the whole deployment"). The no-build-step,
+single-binary property is the deliberate architecture; the file count is not
+sacred, and everything here must preserve the former rather than the latter.
 
 **The semantic boundary, which no UI issue may cross:** designers and frontend
 contributors decide **how a state looks**. The measurement engine and the check

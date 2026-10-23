@@ -215,7 +215,7 @@ deterministic measurements, and answers no on the evidence the repository has:
               ┌──────────────┴───────────────┐
               ▼                              ▼
      monitor.Scheduler                 server.Server
-     every 6h, headless                /api/corridor, single-file UI
+     every 6h, headless                /api/corridor, embedded UI
               │                              │ on failure: last stored run,
               ▼                              │ labelled live:false
      runstore ── hash-chained NDJSON ◀───────┘
@@ -450,7 +450,7 @@ What verification looks like — including broken-chain output: **[docs/verify-s
 | `runstore` | Hash-chained measurement history |
 | `monitor` | Scheduled measurement, independent of HTTP |
 | `snapshot` | Record and replay upstream responses |
-| `server` | HTTP surface and the embedded single-file UI |
+| `server` | HTTP surface and the embedded UI (index.html, app.css, app.js) |
 | `cmd/ladder` | Measurement CLI |
 | `cmd/wayfared` | Server and scheduler |
 | `examples/api-consumer` | Worked example of reading the API correctly |
@@ -505,63 +505,21 @@ Deployment, cost and backup: **[docs/deployment.md](docs/deployment.md)**
 
 ### HTTP API
 
-- [GET /healthz](docs/api.md#get-healthz)
-- [GET /api/assets](docs/api.md#get-api-assets)
-- [GET /api/corridor](docs/api.md#get-apicorridor)
-- [GET /api/corridor/trend](docs/api.md#get-apicorridortrend)
-- [GET /api/chain-heads](docs/api.md#get-apichain-heads) — pin the current stored chain tips
-- Error responses and their machine-readable codes: [docs/errors.md](docs/errors.md)
-- `GET /` single-file UI, no build step
+```
+GET /api/corridor?to=NGNC[&from=USDC][&sizes=1,10,100]
+GET /api/corridor/trend?to=NGNC[&from=USDC][&limit=100]
+GET /api/assets
+GET /healthz
+GET /                            embedded UI (index.html + app.css + app.js),
+                                 no build step
+GET /app.css                     UI stylesheet
+GET /app.js                      UI script
+```
 
-Beyond the contracts above, two fields to know. **`live`** is on every
-response: `false` means the reading came from history because a live
-measurement failed, and `stale` then carries its age. With no stored run, the
-request errors — nothing is ever synthesised to fill the gap.
-
-Every quote also carries **`kind`** — `"dex"` for value settled entirely
-on-chain through path payments, or `"anchor-sep38"` for a priced quote from an
-anchor's own RFQ endpoint. The two can price the same pair differently, and a
-client that conflated them would misattribute the loss to the wrong rail.
-Every quote in a response is `"dex"` today — live pathfinding is the only
-thing this project prices — but the field is on the wire from the start so a
-caller never has to guess which rail a figure came from once anchor pricing
-lands (a live SEP-38 round-trip has never been performed — see
-[#180](https://github.com/Wayfare-labs/wayfare/issues/180)).
-The API is public, keyless and read-only, and answers cross-origin requests
-from any origin (`Access-Control-Allow-Origin: *`), so browser consumers on
-another origin can call it directly. No credentials are ever attached to a
-cross-origin read. A worked consumer — one small program that reads a corridor,
-respects `live` and `scored`, and refuses to render a verdict it should not —
-lives in `examples/api-consumer`, and the reading rules it encodes are written
-out in **[docs/api-consumer.md](docs/api-consumer.md)**.
-
-The `sizes` parameter overrides the default ladder (0.1 → 5000 USDC across
-12 rungs). The default sizes and the rationale for each rung are documented
-in **[docs/ladder-sizes.md](docs/ladder-sizes.md)**.
-
-**`/healthz`** answers liveness and data age. `status` is process liveness;
-`data` reports each corridor's newest stored record and its age
-(`recorded_at`, `age_seconds`, `age_human`) — the thing actually at risk on a
-`-history-first` deployment, whose served history is only as fresh as its last
-deploy. `data` is `null` when no history exists to describe: unknown, never a
-fabricated age. Alongside it, `freshness` reports the cross-corridor view in
-one place: `chain_head` (the ledger Horizon is on right now),
-`newest_record_at` and `record_count` over the whole run store. Each is
-`null` when it cannot be known — Horizon unreachable, store unreadable or
-empty — never a zero that would read as "very old" or "ledger 0".
-
-Bodies are compact by default; append `&pretty=1` (or `?pretty` on an
-endpoint with no other parameters) to any of the JSON endpoints to get an
-indented body for a human reader.
-
-Query parameters are strict: a parameter an endpoint does not recognise is a
-`400`, so a typo like `?tp=NGNC` fails loudly instead of silently measuring
-the default corridor.
-
-Beyond the contracts above, key reference timestamps and fields on corridor responses include:
-- **`live`**: present on every response. `false` means the reading came from history because a live measurement failed, and `stale` then carries its age. With no stored run, the request errors — nothing is ever synthesised to fill the gap.
-- **`reference_as_of`** and **`reference_secondary_as_of`**: RFC3339 timestamps from the primary and secondary reference rate providers indicating when their respective rate was established by the upstream source. Completely omitted if the provider supplied no timestamp.
-- **`reference_fetched_at`**: RFC3339 timestamp indicating when Wayfare last obtained the rate from the provider.
+Beyond the contracts above, one field to know: **`live`** is on every response.
+`false` means the reading came from history because a live measurement failed,
+and `stale` then carries its age. With no stored run, the request errors —
+nothing is ever synthesised to fill the gap.
 
 **The trend endpoint** answers "is this getting worse?" from the stored runs:
 every run comes back oldest first, each carrying its integrity state, its

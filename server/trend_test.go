@@ -834,11 +834,7 @@ func TestTrendRejectsOtherMethods(t *testing.T) {
 // snapshots would be the one dishonesty this project exists to refuse, so
 // the honesty caption is pinned too.
 func TestUITrendIsSelfContained(t *testing.T) {
-	raw, err := uiFS.ReadFile("index.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	page := string(raw)
+	page := uiSource(t)
 
 	for _, want := range []string{
 		"/api/corridor/trend",                          // the endpoint the trend reads
