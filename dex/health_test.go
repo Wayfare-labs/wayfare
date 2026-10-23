@@ -177,6 +177,76 @@ func TestUnparseableOfferIsSkippedNotFatal(t *testing.T) {
 	}
 }
 
+// TestMalformedAmountIsNotAPricedLevel pins the amount side of "a malformed
+// level must become undetermined, never a priced level" (#589): an offer
+// whose amount could not fill — unparseable, zero, or negative — is skipped
+// exactly like an unparseable price, and never inflates the level counts or
+// reaches a best price.
+func TestMalformedAmountIsNotAPricedLevel(t *testing.T) {
+	body := `{"bids":[{"price":"100","amount":"oops"},
+	          {"price":"101","amount":"0"},
+	          {"price":"102","amount":"-5"},
+	          {"price":"103","amount":"7"}],
+	          "asks":[{"price":"200","amount":"1"}]}`
+
+	c := bookServer(t, body)
+	h, err := c.OrderBook(context.Background(), asset.Native(), asset.NGNC())
+	if err != nil {
+		t.Fatalf("OrderBook: %v", err)
+	}
+	if h.BidLevels != 1 {
+		t.Errorf("BidLevels = %d, want 1; malformed amounts were counted as levels", h.BidLevels)
+	}
+	if !h.BestBid.Equal(decFromString(t, "103")) {
+		t.Errorf("BestBid = %s, want 103 from the only level that could fill", h.BestBid)
+	}
+}
+
+// TestExtremeExponentIsNotAPricedLevel pins the guard fuzzing forced into
+// the decoder (#589): shopspring/decimal parses exponents lazily, so a level
+// priced at 1e999999999 is cheap to decode but materialises to a billion-digit
+// number the first time it is compared against the dust threshold. Such a
+// level is corrupted bytes, not a market fact, and must be dropped before
+// any arithmetic touches it — without hanging the process doing so.
+func TestExtremeExponentIsNotAPricedLevel(t *testing.T) {
+	body := `{"bids":[{"price":"1e999999999","amount":"1"},
+	          {"price":"100","amount":"1e-999999999"}],
+	          "asks":[{"price":"200","amount":"1"}]}`
+
+	c := bookServer(t, body)
+	done := make(chan struct{})
+	var (
+		h   *dex.BookHealth
+		err error
+	)
+	go func() {
+		defer close(done)
+		h, err = c.OrderBook(context.Background(), asset.Native(), asset.NGNC())
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("OrderBook materialised a billion-digit decimal; the exponent guard is missing")
+	}
+	if err != nil {
+		t.Fatalf("OrderBook: %v", err)
+	}
+	if h.BidLevels != 0 {
+		t.Errorf("BidLevels = %d, want 0; one bid carried an impossible price exponent, the other an impossible amount exponent", h.BidLevels)
+	}
+	if h.AskLevels != 1 || !h.BestAsk.Equal(decFromString(t, "200")) {
+		t.Errorf("ask side = %d levels at %s, want the one sane level at 200",
+			h.AskLevels, h.BestAsk)
+	}
+	if h.DustLevels != 0 {
+		t.Errorf("DustLevels = %d, want 0; corrupted bytes are neither priced nor dust", h.DustLevels)
+	}
+	if h.Functional() {
+		t.Error("a book whose bid side is all corrupted bytes reported a functional market")
+	}
+}
+
 // TestMalformedOrderBookJSONReturnsError ensures a successful HTTP response
 // with invalid JSON is not treated as an empty, no-market book.
 func TestMalformedOrderBookJSONReturnsError(t *testing.T) {

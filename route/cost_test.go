@@ -547,6 +547,290 @@ func TestAnchorFeeSeparateFromNetworkFees(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Ladder-level slippage (issue #97 / backlog #79)
+// ---------------------------------------------------------------------------
+//
+// Slippage is the excess loss a size added over the corridor's structural
+// floor, and a floor only exists across sizes — so it is determined at the
+// ladder level, where the neighbours are measured, not by Decompose on a
+// lone quote. These tests pin the ladder-level contract: determined for
+// every priced rung when at least two priced, a determined zero at the floor
+// rung, undetermined with the real reason below that, and no interpolation
+// between rungs.
+
+// slippageRung builds a priced rung whose quote figures are internally
+// consistent with a mid of 1000: LossAmount is what send*mid minus the
+// receive amount leaves behind, and LossPct is that amount against send*mid.
+// decomposeSlippage reads only LossPct and LossAmount, but a fixture that
+// could not have been produced by the engine is a fixture that lies.
+func slippageRung(size, lossPct, lossAmount string) Rung {
+	send := decimal.RequireFromString(size)
+	pct := decimal.RequireFromString(lossPct)
+	amt := decimal.RequireFromString(lossAmount)
+	mid := decimal.NewFromInt(1000)
+	receive := send.Mul(mid).Sub(amt)
+	return Rung{
+		SendAmount: send,
+		Result: &Result{
+			Quotes: []Quote{
+				{
+					Kind:          KindDEX,
+					Description:   "USDC -> NGNC",
+					Source:        "stellar-dex",
+					SendAsset:     testUSDC(),
+					SendAmount:    send,
+					ReceiveAsset:  testNGNC(),
+					ReceiveAmount: receive,
+					EffectiveRate: receive.Div(send),
+					ReferenceMid:  mid,
+					LossPct:       pct,
+					LossAmount:    amt,
+					Verdict:       verdictFor(pct),
+				},
+			},
+			Integrity: IntegrityDirect,
+		},
+	}
+}
+
+// foundryLadder is the README's founding measurement as a ladder: 25.02%
+// loss at 0.1 USDC — the structural floor, price impact negligible — and
+// 97.68% at 5000, which is that floor plus slippage. A 100 rung at 30.30%
+// sits between them, and a 25 rung failed to reach an upstream, so the
+// curve has a hole that no figure may be invented for.
+func foundryLadder() *LadderResult {
+	return &LadderResult{
+		ReferenceMid: decimal.NewFromInt(1000),
+		Rungs: []Rung{
+			slippageRung("0.1", "25.02", "25.02"),
+			{SendAmount: decimal.NewFromInt(25), Err: errors.New("transport error")},
+			slippageRung("100", "30.30", "30300"),
+			slippageRung("5000", "97.68", "4884000"),
+		},
+	}
+}
+
+// TestLadderSlippageDeterminedAcrossPricedRungs pins the headline
+// requirement: when at least two rungs priced, every priced rung's
+// slippage is determined, computed as the excess over the floor at the
+// smallest priced size.
+func TestLadderSlippageDeterminedAcrossPricedRungs(t *testing.T) {
+	res := foundryLadder()
+	res.summarise()
+
+	for _, i := range []int{0, 2, 3} {
+		p := findPart(&res.Rungs[i].Decomposition, CostSlippage)
+		if p == nil {
+			t.Fatalf("rung %s carries no slippage part", res.Rungs[i].SendAmount)
+		}
+		if !p.Determined {
+			t.Errorf("rung %s: slippage must be determined when at least two rungs priced", res.Rungs[i].SendAmount)
+		}
+	}
+
+	// The floor is the loss at the smallest priced size.
+	if res.Floor.StringFixed(2) != "25.02" || res.FloorSize.String() != "0.1" {
+		t.Errorf("floor = %s%% at %s, want 25.02%% at 0.1", res.Floor, res.FloorSize)
+	}
+
+	// fx_loss is re-scoped to the floor on every priced rung, so the
+	// determined components partition the total instead of overlapping it.
+	for _, i := range []int{0, 2, 3} {
+		fx := findPart(&res.Rungs[i].Decomposition, CostFXLoss)
+		if fx == nil {
+			t.Fatalf("rung %s carries no fx_loss part", res.Rungs[i].SendAmount)
+		}
+		if fx.Pct.StringFixed(2) != "25.02" {
+			t.Errorf("rung %s: fx_loss = %s%%, want the structural floor 25.02%%",
+				res.Rungs[i].SendAmount, fx.Pct)
+		}
+	}
+
+	// Slippage is the excess over the floor, per measured size.
+	want := map[int][2]string{
+		2: {"5.28", "30274.98"},
+		3: {"72.66", "4883974.98"},
+	}
+	for i, w := range want {
+		p := findPart(&res.Rungs[i].Decomposition, CostSlippage)
+		if p.Pct.String() != w[0] {
+			t.Errorf("rung %s: slippage pct = %s, want %s",
+				res.Rungs[i].SendAmount, p.Pct, w[0])
+		}
+		if p.Amount.String() != w[1] {
+			t.Errorf("rung %s: slippage amount = %s, want %s",
+				res.Rungs[i].SendAmount, p.Amount, w[1])
+		}
+	}
+
+	// The errored rung learned nothing and carries nothing.
+	if len(res.Rungs[1].Decomposition.Parts) != 0 {
+		t.Errorf("an errored rung must not carry a decomposition, got %d parts",
+			len(res.Rungs[1].Decomposition.Parts))
+	}
+}
+
+// TestFloorRungSlippageIsDeterminedZero pins the distinction the issue
+// exists for: the floor rung's slippage is a measured zero — the size was
+// priced and at the floor there is nothing beneath it to compare against —
+// never an undetermined blank, and never confused with one.
+func TestFloorRungSlippageIsDeterminedZero(t *testing.T) {
+	res := foundryLadder()
+	res.summarise()
+
+	p := findPart(&res.Rungs[0].Decomposition, CostSlippage)
+	if p == nil {
+		t.Fatal("the floor rung carries no slippage part")
+	}
+	if !p.Determined {
+		t.Error("the floor rung's slippage is a determined zero: the size was " +
+			"measured, and at the floor there is by definition no excess loss")
+	}
+	if !p.Amount.IsZero() || !p.Pct.IsZero() {
+		t.Errorf("the floor rung's slippage must be zero, got amount %s pct %s",
+			p.Amount, p.Pct)
+	}
+	if strings.TrimSpace(p.Reason) == "" {
+		t.Error("the determined zero must say it is the floor, so a reader can " +
+			"tell it apart from an unmeasured component at a glance")
+	}
+}
+
+// TestSlippageUndeterminedWithFewerThanTwoPricedRungs pins the other side
+// of the distinction: one priced rung leaves nothing to compare, and the
+// undetermined figure must carry a reason naming the real shortfall — how
+// many sizes priced and how many were needed — not a generic placeholder.
+func TestSlippageUndeterminedWithFewerThanTwoPricedRungs(t *testing.T) {
+	res := &LadderResult{
+		ReferenceMid: decimal.NewFromInt(1000),
+		Rungs: []Rung{
+			slippageRung("0.1", "25.02", "25.02"),
+			{SendAmount: decimal.NewFromInt(5000), Err: errors.New("transport error")},
+		},
+	}
+	res.summarise()
+
+	p := findPart(&res.Rungs[0].Decomposition, CostSlippage)
+	if p == nil {
+		t.Fatal("the single priced rung carries no slippage part")
+	}
+	if p.Determined {
+		t.Error("slippage must be undetermined when only one rung priced: " +
+			"there is no second size to compare against")
+	}
+	if !strings.Contains(p.Reason, "1 of 2") {
+		t.Errorf("reason must name the shortfall (1 of 2 priced), got: %s", p.Reason)
+	}
+	if !strings.Contains(p.Reason, "at least two") {
+		t.Errorf("reason must say what would determine it, got: %s", p.Reason)
+	}
+
+	// With nothing priced at all there is no decomposition to patch.
+	empty := &LadderResult{
+		Rungs: []Rung{
+			{SendAmount: decimal.NewFromInt(1), Err: errors.New("boom")},
+			{SendAmount: decimal.NewFromInt(5000), Err: errors.New("boom")},
+		},
+	}
+	empty.summarise()
+	for i := range empty.Rungs {
+		if len(empty.Rungs[i].Decomposition.Parts) != 0 {
+			t.Errorf("an unmeasured rung must carry no decomposition, got %d parts",
+				len(empty.Rungs[i].Decomposition.Parts))
+		}
+	}
+}
+
+// TestSlippageUsesOnlyMeasuredSizes pins the no-interpolation rule:
+// slippage at a size is its loss minus the floor's loss — both measured —
+// and never a difference against the previous priced rung, a curve fitted
+// between rungs, or a figure for a rung that did not price. The ladder has
+// holes at 25 (transport error); nothing may be invented to fill them.
+func TestSlippageUsesOnlyMeasuredSizes(t *testing.T) {
+	res := &LadderResult{
+		ReferenceMid: decimal.NewFromInt(1000),
+		Rungs: []Rung{
+			slippageRung("0.1", "25.02", "25.02"),
+			slippageRung("100", "30.30", "30300"),
+			{SendAmount: decimal.NewFromInt(2500), Result: &Result{Integrity: IntegrityNoMarket}},
+			slippageRung("5000", "97.68", "4884000"),
+		},
+	}
+	res.summarise()
+
+	p := findPart(&res.Rungs[3].Decomposition, CostSlippage)
+	if p == nil {
+		t.Fatal("the 5000 rung carries no slippage part")
+	}
+	// Measured against the floor (97.68 - 25.02 = 72.66), not against the
+	// previous priced rung (97.68 - 30.30 = 67.38), and not interpolated
+	// across the NO-MARKET hole at 2500.
+	if !p.Pct.Equal(decimal.RequireFromString("97.68").Sub(decimal.RequireFromString("25.02"))) {
+		t.Errorf("slippage pct = %s, want the exact excess over the floor 72.66", p.Pct)
+	}
+	if p.Pct.String() == "67.38" {
+		t.Error("slippage must be measured against the floor, not the previous priced rung")
+	}
+
+	// The NO-MARKET rung is measured but unpriced: it contributes no
+	// figure and carries no decomposition.
+	if len(res.Rungs[2].Decomposition.Parts) != 0 {
+		t.Errorf("an unpriced rung must carry no decomposition, got %d parts",
+			len(res.Rungs[2].Decomposition.Parts))
+	}
+}
+
+// TestSlippageReconcilesWithPublishedFloor pins the acceptance criterion
+// the wire must satisfy: for every priced rung, the published floor plus
+// the published slippage equals the rung's published total loss within the
+// stated tolerance. The tolerance is zero in exact arithmetic — both
+// components are differences of the same two measured decimals — so it is
+// stated as 1e-7 only to survive a future consumer's string rounding.
+func TestSlippageReconcilesWithPublishedFloor(t *testing.T) {
+	const tolerance = "0.0000001"
+	tol := decimal.RequireFromString(tolerance)
+
+	res := foundryLadder()
+	res.summarise()
+	doc := ToCorridorJSON(res, "USD/NGN")
+
+	floorPct := decimal.RequireFromString(doc.Floor)
+	for _, rj := range doc.Rungs {
+		if !rj.Priced || rj.Cost == nil {
+			continue
+		}
+		var slip, total decimal.Decimal
+		for _, p := range rj.Cost.Parts {
+			switch p.Component {
+			case string(CostSlippage):
+				if !p.Determined {
+					t.Errorf("rung %s: slippage must be determined on the wire when "+
+						"at least two rungs priced", rj.SendAmount)
+					continue
+				}
+				var err error
+				slip, err = decimal.NewFromString(p.Pct)
+				if err != nil {
+					t.Fatalf("rung %s: slippage pct %q is not a decimal: %v",
+						rj.SendAmount, p.Pct, err)
+				}
+			}
+		}
+		var err error
+		total, err = decimal.NewFromString(rj.Cost.TotalLossPct)
+		if err != nil {
+			t.Fatalf("rung %s: total_loss_pct %q is not a decimal: %v",
+				rj.SendAmount, rj.Cost.TotalLossPct, err)
+		}
+		if diff := floorPct.Add(slip).Sub(total).Abs(); diff.GreaterThan(tol) {
+			t.Errorf("rung %s: floor %s + slippage %s = %s, total loss %s "+
+				"(differs by %s, tolerance %s)",
+				rj.SendAmount, floorPct, slip, floorPct.Add(slip), total, diff, tolerance)
+		}
+	}
+}
+
 // TestCostNoDeterminedComponentDefaultsToZero pins the project's rule that an
 // unavailable quantity is unknown, not a default: every component that is
 // genuinely unmeasured must report Determined: false, so that no consumer is

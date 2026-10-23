@@ -203,6 +203,56 @@ nothing: not a single hash in the chain depends on it.
 
 ---
 
+## Path concentration over time
+
+Issue [#197](https://github.com/Wayfare-labs/wayfare/issues/197) (entry 126
+of docs/backlog.md): whether a corridor's executable value is concentrating
+into fewer paths.
+
+**The figure is measured per run, and stored where every metric is.** The
+`fragmentation.paths` metric (`checks.FragmentationMetric`; definition in
+[metrics.md](metrics.md#fragmentationpaths--concentration-of-executable-value-across-paths))
+is a measured quantity like any other, so a sweep that registers it writes it
+into the record's existing `metrics` block. **The record layout does not
+change**: no field is added, `Version` does not move, and every existing hash
+still verifies. A record written before the metric existed simply has no
+reading.
+
+`runstore.FragmentationHistory` returns one reading per stored run, oldest
+first; `runstore.FragmentationOfRecord` reads one record:
+
+- **`determined`** / **`hhi`** — the stored value as written, never
+  re-derived. `hhi` is present only when determined.
+- **`source`** — the stored evidence source: endpoint, pair and probed size.
+- **`reason`** — why a reading is unknown. A run whose record carries no
+  `fragmentation.paths` metric is `not measured`; a run that measured it and
+  could not determine it carries the stored reason; a stored value that does
+  not parse, or is outside (0, 1], is reported as unusable rather than
+  repaired. None of these is ever a zero, and none is dropped to make the
+  series look continuous.
+
+`runstore.FragmentationOf` summarises the chain:
+
+- **`total_runs`**, **`determined_runs`**, **`unknown_runs`** — always
+  present, so a reader can see what the comparison stands on.
+- **`source`** and **`comparable_runs`** — the comparison is made only between
+  determined readings sharing the latest determined reading's source. A
+  reading at 100 USDC and one at 5000 answer different questions, so a
+  history that changed its probe size is not compared across the change.
+- **`first_*`** / **`last_*`** — the earliest and latest comparable readings,
+  with their sequence numbers and timestamps.
+- **`change_hhi`** — `last_hhi − first_hhi`, in `decimal.Decimal`. A measured
+  `"0"` is a finding. It is empty — **unknown, never zero** — when fewer than
+  two comparable readings exist, and **`reason`** says so.
+- **`direction`** — `CONCENTRATING` (the HHI rose), `DISPERSING` (it fell) or
+  `UNCHANGED`: the sign of `change_hhi` and nothing more. It is a comparison
+  of two stored figures, not a trend fit, and says nothing about the runs in
+  between; there is no threshold, and it moves no verdict or integrity state.
+
+Derived on read; appends nothing.
+
+---
+
 ## The preimage rule
 
 ```

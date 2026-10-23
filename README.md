@@ -597,7 +597,10 @@ Two are deliberately not in the default set because each costs a pathfinding
 sweep the ladder has already paid for: executable depth
 (`DepthMetric.RunExecutable`) and price impact (`PriceImpactMetric`). Those are
 reachable to a caller who registers them, and the CLI and UI do not render
-metrics yet. Effective transfer cost (`route.Decompose`) is still merged with no
+metrics yet. Path concentration (`fragmentation.paths`, one pathfinding
+request) is reachable the same way, and `runstore.FragmentationOf` reads it
+back across stored runs to say whether a corridor's executable value is
+concentrating into fewer paths ([docs/run-store.md](docs/run-store.md#path-concentration-over-time)). Effective transfer cost (`route.Decompose`) is still merged with no
 caller, and the health score that would blend these numbers is unreachable by
 decision ([ADR 009](docs/adr/009-why-the-health-score-stays-off-the-wire.md)).
 Layers 1 and 2.

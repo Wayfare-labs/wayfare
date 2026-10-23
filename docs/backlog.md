@@ -890,6 +890,20 @@ Whether a corridor's executable value is concentrating into fewer paths is a
 structural risk signal that needs no inference.
 `V3` `area:pricing` `difficulty:medium` `blocked` — on #83, #62
 
+> **Drafted without #83.** #62 has landed, and #83 turned out not to be on
+> the path: the alternatives #83 would publish are discarded inside
+> `route.Engine.quoteDEX`, but a metric can read them straight from Horizon.
+> `checks.FragmentationMetric` (`fragmentation.paths`, one `/paths/strict-send`
+> request at a fixed size) reports the HHI of the distinct paths' destination
+> amounts, unknown — never zero — when no path exists; it rides in the
+> existing `metrics` block, so the record layout does not change.
+> `runstore.FragmentationHistory` / `runstore.FragmentationOf` read it back
+> per run and compare the first and last comparable readings. Not in
+> `DefaultMetrics`: adding a request to every sweep is a maintainer budget
+> decision. Once #83 retains the alternatives per rung,
+> `checks.ConcentrationOfPaths` can be fed from the ladder for free. See
+> docs/metrics.md and docs/run-store.md, "Path concentration over time".
+
 **#127 — Cross-corridor comparison on shared fields only** *(filed: [#198](https://github.com/Wayfare-labs/wayfare/issues/198))*
 Two corridors may be compared only on measurements both actually have; a missing
 field is not a zero and must not be filled to complete a table.

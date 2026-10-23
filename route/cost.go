@@ -127,13 +127,18 @@ func Decompose(q Quote, mid decimal.Decimal) CostDecomposition {
 		Reason:     anchorFeeReason,
 	})
 
-	// Slippage: undetermined without a comparison across sizes.
+	// Slippage: undetermined from a lone quote, and only from a lone
+	// quote. A single size cannot show what the size itself cost — the
+	// comparison is across sizes, and the ladder holds the neighbours.
+	// This reason is accurate about Decompose's inputs, not about the
+	// system: the ladder determines slippage wherever at least two sizes
+	// priced (see LadderResult.decomposeSlippage).
 	parts = append(parts, CostPart{
 		Component:  CostSlippage,
 		Amount:     decimal.Zero,
 		Pct:        decimal.Zero,
 		Determined: false,
-		Reason:     "single quote available; slippage requires a comparison across sizes",
+		Reason:     "single quote available; slippage requires a comparison across sizes, which the ladder computes where at least two sizes priced",
 	})
 
 	// Expected failure cost: explicitly unknown.
