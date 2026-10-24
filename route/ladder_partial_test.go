@@ -111,6 +111,10 @@ func TestPartialLadderMeasuresOnlyWhatAnswered(t *testing.T) {
 		t.Errorf("curve spans %s..%s, want only the measured sizes 0.1..1",
 			res.FloorSize, res.WorstSize)
 	}
+	if !res.FloorEffectiveRate.Equal(res.Rungs[0].Result.Quotes[0].EffectiveRate) {
+		t.Errorf("floor effective rate = %s, want the smallest priced rung's rate %s",
+			res.FloorEffectiveRate, res.Rungs[0].Result.Quotes[0].EffectiveRate)
+	}
 	want := decimal.RequireFromString("50").Div(decimal.RequireFromString("1350")).Mul(decimal.NewFromInt(100))
 	if !res.Floor.Equal(want.Round(4)) && !res.Floor.Equal(want) {
 		t.Errorf("Floor = %s, want %s (the loss at the smallest measured size)",

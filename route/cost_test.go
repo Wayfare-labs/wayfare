@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +13,7 @@ import (
 
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/checks"
+	"github.com/Wayfare-labs/wayfare/sep38"
 )
 
 func testUSDC() asset.Asset { return asset.USDC() }
@@ -545,6 +548,173 @@ func TestAnchorFeeSeparateFromNetworkFees(t *testing.T) {
 	if netFees.Component == anchorFee.Component {
 		t.Error("network_fees and anchor_fee must be distinct components")
 	}
+}
+
+func TestAnchorFeeUsesSEP38GoldenIdentity(t *testing.T) {
+	type goldenFee struct {
+		SellAmount    string `json:"sell_amount"`
+		BuyAmount     string `json:"buy_amount"`
+		Price         string `json:"price"`
+		GrossBuy      string `json:"gross_buy_amount"`
+		FeeTotal      string `json:"fee_total"`
+		FeeAsset      string `json:"fee_asset"`
+		FeeInBuyAsset string `json:"fee_in_buy_asset"`
+	}
+
+	for _, name := range []string{
+		"fee-in-sell-reversed.json", "fee-in-buy.json", "fee-absent.json",
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join(
+				"..", "sep38", "testdata", "golden", name))
+			if err != nil {
+				t.Fatalf("reading SEP-38 golden %s: %v", name, err)
+			}
+			var golden goldenFee
+			if err := json.Unmarshal(raw, &golden); err != nil {
+				t.Fatalf("parsing SEP-38 golden %s: %v", name, err)
+			}
+
+			var feeAsset asset.Asset
+			if golden.FeeAsset != "" {
+				feeAsset, err = asset.ParseSEP38(golden.FeeAsset)
+				if err != nil {
+					t.Fatalf("parsing golden fee asset %q: %v", golden.FeeAsset, err)
+				}
+			}
+			sellAmount := decimal.RequireFromString(golden.SellAmount)
+			buyAmount := decimal.RequireFromString(golden.BuyAmount)
+			price := decimal.RequireFromString(golden.Price)
+			grossBuy := decimal.RequireFromString(golden.GrossBuy)
+			feeInBuy := decimal.RequireFromString(golden.FeeInBuyAsset)
+			mid := decimal.NewFromInt(6)
+			effectiveRate := buyAmount.Div(sellAmount)
+			lossPct := mid.Sub(effectiveRate).Div(mid).Mul(decimal.NewFromInt(100))
+			lossAmount := sellAmount.Mul(mid).Sub(buyAmount)
+
+			q := Quote{
+				Kind:          KindAnchorSEP38,
+				SendAsset:     asset.USDC(),
+				SendAmount:    sellAmount,
+				ReceiveAsset:  asset.Fiat("BRL"),
+				ReceiveAmount: buyAmount,
+				EffectiveRate: effectiveRate,
+				ReferenceMid:  mid,
+				LossPct:       lossPct,
+				LossAmount:    lossAmount,
+				SEP38Quote: &sep38.Quote{
+					SellAsset:      asset.USDC(),
+					BuyAsset:       asset.Fiat("BRL"),
+					SellAmount:     sellAmount,
+					BuyAmount:      buyAmount,
+					Price:          price,
+					GrossBuyAmount: grossBuy,
+					FeeInBuyAsset:  feeInBuy,
+					Fee: sep38.Fee{
+						Total: decimal.RequireFromString(golden.FeeTotal),
+						Asset: feeAsset,
+					},
+				},
+			}
+
+			decomposition := Decompose(q, mid)
+			var anchorFee, fxLoss *CostPart
+			for i := range decomposition.Parts {
+				switch decomposition.Parts[i].Component {
+				case CostAnchorFee:
+					anchorFee = &decomposition.Parts[i]
+				case CostFXLoss:
+					fxLoss = &decomposition.Parts[i]
+				}
+			}
+			if anchorFee == nil || fxLoss == nil {
+				t.Fatal("decomposition must include anchor_fee and fx_loss")
+			}
+			if !anchorFee.Determined {
+				t.Fatalf("anchor fee is undetermined: %s", anchorFee.Reason)
+			}
+			if !anchorFee.Amount.Equal(feeInBuy) {
+				t.Errorf("anchor fee amount = %s, want golden FeeInBuyAsset %s",
+					anchorFee.Amount, feeInBuy)
+			}
+			wantFeePct := feeInBuy.Div(sellAmount.Mul(mid)).Mul(decimal.NewFromInt(100))
+			if !anchorFee.Pct.Equal(wantFeePct) {
+				t.Errorf("anchor fee pct = %s, want %s", anchorFee.Pct, wantFeePct)
+			}
+			if !anchorFee.Amount.Add(fxLoss.Amount).Equal(q.LossAmount) {
+				t.Errorf("determined loss amounts sum to %s, want %s",
+					anchorFee.Amount.Add(fxLoss.Amount), q.LossAmount)
+			}
+			if !anchorFee.Pct.Add(fxLoss.Pct).Equal(q.LossPct) {
+				t.Errorf("determined loss percentages sum to %s, want %s",
+					anchorFee.Pct.Add(fxLoss.Pct), q.LossPct)
+			}
+		})
+	}
+}
+
+func TestSEP38AnchorFeeRemainsUndeterminedWithoutQuote(t *testing.T) {
+	q := Quote{
+		Kind:          KindAnchorSEP38,
+		SendAsset:     testUSDC(),
+		SendAmount:    decimal.NewFromInt(100),
+		ReceiveAsset:  asset.Fiat("BRL"),
+		ReceiveAmount: decimal.NewFromInt(500),
+		LossPct:       decimal.NewFromInt(10),
+		LossAmount:    decimal.NewFromInt(50),
+	}
+	decomposition := Decompose(q, decimal.NewFromInt(6))
+	for _, part := range decomposition.Parts {
+		if part.Component != CostAnchorFee {
+			continue
+		}
+		if part.Determined {
+			t.Fatal("SEP-38 anchor fee was determined without a normalized SEP-38 quote")
+		}
+		if !strings.Contains(part.Reason, "quote is not attached") {
+			t.Errorf("reason = %q, want missing SEP-38 quote to be explained", part.Reason)
+		}
+		return
+	}
+	t.Fatal("decomposition is missing anchor_fee")
+}
+
+func TestSEP38AnchorFeeRejectsMismatchedRouteQuote(t *testing.T) {
+	sepQuote := &sep38.Quote{
+		SellAsset:      testUSDC(),
+		BuyAsset:       asset.Fiat("BRL"),
+		SellAmount:     decimal.NewFromInt(100),
+		BuyAmount:      decimal.NewFromInt(500),
+		Price:          decimal.RequireFromString("0.18"),
+		GrossBuyAmount: decimal.RequireFromString("555.5555555555555556"),
+		Fee: sep38.Fee{
+			Total: decimal.NewFromInt(10),
+			Asset: testUSDC(),
+		},
+		FeeInBuyAsset: decimal.RequireFromString("55.5555555555555556"),
+	}
+	q := Quote{
+		Kind:          KindAnchorSEP38,
+		SendAsset:     testUSDC(),
+		SendAmount:    decimal.NewFromInt(100),
+		ReceiveAsset:  asset.Fiat("BRL"),
+		ReceiveAmount: decimal.NewFromInt(499),
+		SEP38Quote:    sepQuote,
+	}
+	decomposition := Decompose(q, decimal.NewFromInt(6))
+	for _, part := range decomposition.Parts {
+		if part.Component != CostAnchorFee {
+			continue
+		}
+		if part.Determined {
+			t.Fatal("mismatched SEP-38 quote was accepted as an anchor fee measurement")
+		}
+		if !strings.Contains(part.Reason, "buy amount does not match") {
+			t.Errorf("reason = %q, want mismatched buy amount to be explained", part.Reason)
+		}
+		return
+	}
+	t.Fatal("decomposition is missing anchor_fee")
 }
 
 // TestCostNoDeterminedComponentDefaultsToZero pins the project's rule that an

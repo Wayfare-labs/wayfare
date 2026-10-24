@@ -359,12 +359,14 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	// nothing — see the composition rule in docs/checks.md.
 	if s.Checks != nil {
 		out = route.WithFindings(out, s.Checks.ForCorridor(ctx, checks.Corridor{
-			Send:       sendAsset,
-			Receive:    recvAsset,
-			Integrity:  res.Integrity.String(),
-			Underlying: underlyingPair(res),
-			Reference:  res.Reference,
-			Baseline:   s.issuerDriftBaseline(ctx, sendAsset.Code, recvAsset.Code),
+			Send:               sendAsset,
+			Receive:            recvAsset,
+			Integrity:          res.Integrity.String(),
+			Underlying:         underlyingPair(res),
+			Reference:          res.Reference,
+			Baseline:           s.issuerDriftBaseline(ctx, sendAsset.Code, recvAsset.Code),
+			FloorSize:          res.FloorSize,
+			FloorEffectiveRate: res.FloorEffectiveRate,
 		}))
 	}
 

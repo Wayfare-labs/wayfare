@@ -84,10 +84,16 @@ and an anchor that publishes no quote server has no machine-readable rate — th
 absence is a fact about the anchor, not a zero fee.
 
 Reason (when a quote is `kind: anchor-sep38`): *anchor fee available via SEP-38
-but no corridor with a published quote server has been priced yet.* No live
-SEP-38 quote has ever been produced by a production caller (see the ecosystem
-map and issue #180); the `sep38.Quote.FeeInBuyAsset` field is the input that
-would fill this component.
+but the normalized quote is not attached.* When a normalized SEP-38 quote is
+attached, `FeeInBuyAsset` is reported as the anchor fee and subtracted from
+`fx_loss`, so the determined components do not overlap. The fee is only
+determined when its sell/buy assets and amounts match the route quote and the
+reference mid is available. `anchor_fee.amount` is in buy-asset units, and its
+percentage is relative to the reference value of the send amount. The remaining
+`fx_loss` may be negative when a better-than-mid pre-fee rate offsets some or
+all of the fee. No production caller currently creates an
+anchor-sep38 quote (see the ecosystem map and issue #180), so current measured
+corridors remain DEX-only.
 
 ### `slippage` — undetermined
 

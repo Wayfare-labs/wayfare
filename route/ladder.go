@@ -121,6 +121,9 @@ type LadderResult struct {
 	// FloorSize is the size Floor was measured at.
 	FloorSize decimal.Decimal
 
+	// FloorEffectiveRate is the effective rate at the smallest priced rung.
+	FloorEffectiveRate decimal.Decimal
+
 	// WorstLoss and WorstSize record the other end of the curve.
 	WorstLoss decimal.Decimal
 	WorstSize decimal.Decimal
@@ -478,7 +481,9 @@ func (l *LadderResult) summarise() {
 		l.Rungs[i].Decomposition = Decompose(q, l.ReferenceMid)
 
 		if l.FloorSize.IsZero() {
-			l.Floor, l.FloorSize = q.LossPct, r.SendAmount
+			l.Floor = q.LossPct
+			l.FloorSize = r.SendAmount
+			l.FloorEffectiveRate = q.EffectiveRate
 		}
 		if q.LossPct.GreaterThanOrEqual(l.WorstLoss) {
 			l.WorstLoss, l.WorstSize = q.LossPct, r.SendAmount

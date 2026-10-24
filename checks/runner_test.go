@@ -528,7 +528,14 @@ func TestRunnerForCorridorRunsMetrics(t *testing.T) {
 // still publishes quantities rather than an empty block.
 func TestRunnerForCorridorDefaultsToAMetricSet(t *testing.T) {
 	r := &Runner{}
-	got := r.DefaultMetrics(Corridor{})
+	reference := refrate.Rate{
+		Base: "USD", Quote: "NGN", Mid: decimal.NewFromInt(1350), Source: "provider",
+	}
+	got := r.DefaultMetrics(Corridor{
+		FloorSize:          decimal.RequireFromString("0.1"),
+		FloorEffectiveRate: decimal.NewFromInt(1000),
+		Reference:          reference,
+	})
 	if len(got) == 0 {
 		t.Fatal("a runner with no metrics must fall back to the default set")
 	}
@@ -536,6 +543,20 @@ func TestRunnerForCorridorDefaultsToAMetricSet(t *testing.T) {
 		if err := m.Describe().ValidateAsMetric(); err != nil {
 			t.Errorf("default metric %q is invalid: %v", m.Describe().ID, err)
 		}
+	}
+	foundFloorLoss := false
+	for _, m := range got {
+		if floor, ok := m.(FloorLossMetric); ok {
+			foundFloorLoss = true
+			if !floor.Size.Equal(decimal.RequireFromString("0.1")) ||
+				!floor.EffectiveRate.Equal(decimal.NewFromInt(1000)) ||
+				floor.Reference.Source != "provider" {
+				t.Errorf("floor metric did not receive the ladder context: %+v", floor)
+			}
+		}
+	}
+	if !foundFloorLoss {
+		t.Fatal("default metric set does not include floor-loss.reference-mid")
 	}
 }
 

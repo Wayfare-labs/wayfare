@@ -63,8 +63,8 @@ not take down a sweep.
 ## Step 1 — Name it, and choose a unit and a venue
 
 IDs are `<source>.<fact>`, lower-case and hyphenated, matching the metric
-implementation written as `<Source>Metric`. Five metric types are in the tree
-today, declaring seven IDs between them — the worked-example library:
+implementation written as `<Source>Metric`. Seven metric types are in the tree
+today, declaring nine IDs between them — the worked-example library:
 
 | ID | File | Scope | Cost | Venue | Unit |
 |:---|:---|:---|:---|:---|:---|
@@ -75,6 +75,8 @@ today, declaring seven IDs between them — the worked-example library:
 | `price-impact.size` | `metric_price_impact.go` | corridor | expensive | pathfinding | percent |
 | `concentration.liquidity` | `metric_concentration.go` | corridor | one-request | order-book | ratio |
 | `deviation.book-vs-reference` | `metric_deviation.go` | corridor | one-request | order-book | percent |
+| `floor-loss.reference-mid` | `metric_floor_loss.go` | corridor | free | pathfinding | percent |
+| `fragmentation.paths` | `metric_fragmentation.go` | corridor | one-request | pathfinding | ratio |
 
 \* `DepthMetric.Describe` declares `VenueOrderBook`; its `RunExecutable`
 measurement declares `VenuePathfinding`. Both are in the tree, and the
@@ -296,6 +298,7 @@ context a metric is handed.
     Subject.Send / Subject.Receive     <- populated by ForCorridor
     Subject.Integrity/Underlying       <- from the ladder's result
     Subject.ReferenceAgreement         <- from the reference cross-check
+    Corridor.FloorSize/FloorEffectiveRate <- smallest priced rung from ladder
 
   server.Server, monitor.Scheduler     -> both call ForCorridor, so a live
                                           response and a recorded run carry
@@ -313,19 +316,20 @@ that was not run leaves no key at all — "not measured" and "measured, nothing
 found" stay distinguishable.
 
 **What `DefaultMetrics` contains, and why.** Four order-book metrics: spread,
-concentration, observed depth, and deviation from the reference mid. The ladder
-has already spent a dozen pathfinding round trips before they run, so the
-default set reads one endpoint and nothing else. `price-impact.size` and
+concentration, observed depth, and deviation from the reference mid. It also
+includes `floor-loss.reference-mid`, which reuses the smallest priced rung the
+ladder already measured, with no additional request. `price-impact.size` and
 `depth.executable` are reachable but excluded: each sweeps pathfinding at every
 probed size, which is a cost a caller opts into (`Runner.Metrics`) rather than
 inherits.
 
 What this means for a contributed metric:
 
-- **Adding it to the default set is a budget change.** One more metric on the
-default path is another request against the shared public Horizon for every
-measured corridor, in the API and on the schedule. Say so in the PR, with the
-request count, rather than only that the metric works.
+- **Adding it to the default set is a budget decision.** A metric that fetches
+from a shared public Horizon endpoint adds a request for every measured
+corridor, in the API and on the schedule. Say so in the PR, with the request
+count. `floor-loss.reference-mid` is the exception: it reuses the rung and
+reference already measured by the ladder.
 - **A metric can also be added without touching the default set.** A caller
 whose needs justify the cost can register it through `Runner.Metrics`; that is
 the path for the two pathfinding metrics above. Either way, cite the test that

@@ -81,6 +81,10 @@ denominations because the identity is the same in both cases.
 
 `FeeInBuyAsset` is the figure shown to users: the fee expressed in the
 currency the recipient is counting, whatever denomination the anchor used.
+`route.Decompose` consumes this normalized field for an attached
+`KindAnchorSEP38` quote, and subtracts the fee from `fx_loss` to avoid counting
+the same loss twice. The `route` tests read the existing golden outputs for
+both sell-asset and buy-asset fees to pin this integration.
 
 ---
 

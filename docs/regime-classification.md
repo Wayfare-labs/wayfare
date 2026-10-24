@@ -46,8 +46,9 @@ different statistic, so it deliberately does not reuse 3/8/20:
 
 The bands are **round-number conventions, documented here and chosen once**;
 they are not derived from an empirical distribution and this document does not
-claim otherwise. If they are ever changed it is a maintainer decision on the
-analysis layer, not a contributor refactor.
+claim otherwise. No measurement in the repository was used to fit them. If they
+are ever changed it is a maintainer decision on the analysis layer, not a
+contributor refactor.
 
 **They are not verdict thresholds.** Changing them cannot change a published
 verdict, an integrity state, a check result or a metric: the analysis layer

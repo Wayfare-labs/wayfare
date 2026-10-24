@@ -37,6 +37,7 @@ func allCorridorMetricDescribers() []struct {
 		{"concentration.liquidity", ConcentrationMetric{}.Describe()},
 		{"price-impact.size", PriceImpactMetric{}.Describe()},
 		{"deviation.book-vs-reference", DeviationMetric{}.Describe()},
+		{"floor-loss.reference-mid", FloorLossMetric{}.Describe()},
 		{"fragmentation.paths", FragmentationMetric{}.Describe()},
 	}
 }
