@@ -342,6 +342,7 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 		// report which rungs finished (CompletedSizes). It is not summarised
 		// and must not be presented as a measurement.
 		return out, err
+		return out, err
 	}
 	out.summarise()
 	return out, nil
