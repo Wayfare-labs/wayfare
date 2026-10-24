@@ -343,7 +343,7 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 		// and must not be presented as a measurement.
 		return out, err
 	}
-	out.summarise()
+
 	return out, nil
 }
 
