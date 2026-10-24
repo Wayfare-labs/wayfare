@@ -172,6 +172,10 @@ Rendering cannot be proven from Go: `docs/qa/README.md` is the harness that
 drives the real binary in Chromium, Firefox and WebKit, and a states pass
 there is the follow-up for visual confirmation.
 
+## Corridor comparison on shared fields only
+
+Blocked on #198 (backlog `#127`): the corridor comparison needs a per-field contract the API does not yet expose. Until that lands, no comparison may fill a blank cell with a synthetic score. Where a corridor lacks a field another corridor has, the cell renders as missing, not zero, and the comparison is restricted to the fields both corridors share. UNDETERMINED is not failure and is not styled as failure. This section is a spec placeholder only; no rendering change is made here.
+
 ## Execution-curve visualisation (issue #238, backlog #228)
 
 The execution-curve panel (`P_exec(q)`, `Loss(q)`, `MC(q)`) is blocked on
