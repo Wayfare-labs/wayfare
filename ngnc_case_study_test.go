@@ -554,12 +554,12 @@ func TestCaseStudyDoesNotClaimTheDecomposition(t *testing.T) {
 	// The structural claim itself, in the sentence that carries it. Checking
 	// only that the file names appear would pass on a document that had
 	// hardened "reachable but not decomposed" into "the decomposition is
-	// computed". The first sentence flipped on 2026-10-22 (metrics are
-	// reachable now); the second is what the section rests on.
+	// computed". The metric is reachable and measures the floor against the
+	// reference, but the spread/depth attribution is still not established.
 	for _, want := range []string{
 		"reachability is not",
 		"None of that attributes the floor",
-		"excluded from the runner's default set",
+		"reuses the smallest priced rung",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("the document no longer says %q; the boundary between a "+

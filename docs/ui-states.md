@@ -3,6 +3,14 @@
 The four interaction states of the interface's controls, specified concretely
 enough to implement without guessing (issue #285, backlog #227).
 
+> **Dependency note (issue #230, dark mode).** Dark mode is specified here as
+> a designed palette, not an inversion of light mode. The tokens in the table
+> below are tuned per scheme; the dark block is not derived from the light one.
+> Surface, border and chart intent for dark mode is owned by the theming
+> section of this file, and this spec defers to that section for any surface
+> colour. Dark-mode focus and press tokens already follow the designed values
+> above and are not inverted from light.
+
 **Status: implemented.** The canonical rules live in `server/index.html` in
 the block titled *"Interactive state contract (issue #285)"*. This document is
 the spec that block implements; when the two disagree, the code is wrong.
@@ -163,6 +171,26 @@ embedded file with no build step and no JS test runner in CI):
 Rendering cannot be proven from Go: `docs/qa/README.md` is the harness that
 drives the real binary in Chromium, Firefox and WebKit, and a states pass
 there is the follow-up for visual confirmation.
+
+## Execution-curve visualisation (issue #238, backlog #228)
+
+The execution-curve panel (`P_exec(q)`, `Loss(q)`, `MC(q)`) is blocked on
+issue #98 (backlog `#73`), which supplies the measured-size contract. Until
+that lands, this file specifies only the interaction rules the curve must
+follow, so the eventual implementation does not guess:
+
+- **Measured points only.** Hover reveals the value at a size that actually
+  priced. Between two priced sizes the curve is not drawn as a continuous line;
+  a size that did not price is shown as a gap, never interpolated.
+- **Hover is informational, not state.** Hover and focus on a point surface
+  its measured values; they do not change any verdict or integrity state.
+- **Keyboard reachable.** Each priced point is focusable in order of size and
+  announces its values; the curve is not conveyed by colour alone.
+- **Structural states are not severities.** DIRECT, DERIVATIVE and NO-MARKET
+  render as structure (a note in place of a curve), never as a warning colour.
+  UNDETERMINED is neutral, not failure.
+
+The panel itself is not implemented here; `server/index.html` is unchanged.
 
 ## Related
 

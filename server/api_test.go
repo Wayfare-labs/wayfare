@@ -1179,15 +1179,25 @@ func TestLiveCorridorCarriesMetrics(t *testing.T) {
 			"nowhere on the production path")
 	}
 
-	var sawSpread bool
+	var sawSpread, sawFloorLoss bool
 	for _, m := range corridor.Findings.Metrics {
 		if m.ID == "spread.bid-ask" && m.Determined && m.Value != "" {
 			sawSpread = true
+		}
+		if m.ID == "floor-loss.reference-mid" && m.Determined && m.Value != "" &&
+			len(m.Evidence) == 2 &&
+			strings.Contains(m.Evidence[0].Observed, "size=100") &&
+			strings.Contains(m.Evidence[1].Observed, "mid=1500") {
+			sawFloorLoss = true
 		}
 	}
 	if !sawSpread {
 		t.Errorf("findings.metrics = %v, want a determined spread.bid-ask from the "+
 			"served order book", corridor.Findings.Metrics)
+	}
+	if !sawFloorLoss {
+		t.Errorf("findings.metrics = %v, want floor-loss.reference-mid with rung and "+
+			"reference evidence", corridor.Findings.Metrics)
 	}
 }
 
