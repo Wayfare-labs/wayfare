@@ -1,7 +1,13 @@
 # The chart palette
 
 The colours the two line charts draw with, specified concretely enough to
-implement without guessing (issue #284, backlog #226).
+implement without guessing (issue #284, backlog #226; dark-mode design
+backlog #230, blocked on #287 and deliberately not started).
+
+> **Scope note:** this document specifies chart colours only. The broader
+> dark-mode design (surfaces, borders, breakpoints) tracked in backlog #230 is
+> out of scope here and must not be implemented until its #287 dependency
+> lands.
 
 **Status: implemented.** The canonical tokens live in `server/index.html` in
 the `:root` blocks. This document is the spec those tokens implement; when the
@@ -59,6 +65,16 @@ Anything the engine did not determine — including an UNDETERMINED state — st
 The legend beneath the trend chart draws its three swatches from the same
 tokens, so the legend and the strip can never disagree.
 
+## Execution curve: measured points only
+
+The execution curve (`P_exec(q)`, `Loss(q)`, `MC(q)`) plots only sizes the
+engine actually priced. A size that did not price is shown as a gap, never
+interpolated, and no line is drawn through it. Hover reveals the measured value
+at a priced size and nothing at an unpriced one. Priced points use
+`--chart-point`; the Unusable threshold keeps `--chart-threshold`. An
+UNDETERMINED or stale curve is rendered with `--muted` and carries its state as
+text, never as failure colour.
+
 ## Both schemes and every breakpoint
 
 Every chart token is declared in the light `:root` and overridden in the dark
@@ -81,7 +97,9 @@ what it is painted with.
 
 Rendering cannot be proven from Go: `docs/qa/README.md` is the harness that
 drives the real binary in Chromium, Firefox and WebKit, and a chart pass there
-is the follow-up for visual confirmation.
+is the follow-up for visual confirmation. The execution curve's keyboard
+reachability and state checks against real API responses (including the
+undetermined and stale ones) belong to that same harness.
 
 ## Related
 

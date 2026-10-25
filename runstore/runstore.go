@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/Wayfare-labs/wayfare/checks"
+	"github.com/Wayfare-labs/wayfare/route"
 )
 
 // Version is the current record schema version.
@@ -179,6 +180,13 @@ type Record struct {
 	// Snapshot is the content hash of the exact upstream snapshot artifact.
 	// It is optional and follows every Version 3 field to preserve old hashes.
 	Snapshot string `json:"snapshot,omitempty"`
+
+	// DependencyChain is the full dependency tree, stored word-for-word
+	// from the wire so the stale path can serve it back identically.
+	// Absent (nil) for corridors that are not derivative, and absent for
+	// records written before this field existed — the stale path treats
+	// nil as "chain not available", which is honest rather than fabricated.
+	DependencyChain *route.DependencyChainJSON `json:"dependency_chain,omitempty"`
 
 	PrevHash string `json:"prev_hash"`
 	Hash     string `json:"hash"`

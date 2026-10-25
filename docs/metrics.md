@@ -1,6 +1,6 @@
 # Metrics methodology
 
-**Status: v1, current as of 2026-10-23.** One page per metric: definition, unit,
+**Status: v1, current as of 2026-10-23.** *(Metric `#119` — structural floor over time — is blocked on #93 and not yet measured; no figure is published for it here.)* One page per metric: definition, unit,
 data source, what it cannot determine, and what undetermined means for it.
 
 Every claim about the code is checked against the code at time of writing. Future
@@ -16,11 +16,12 @@ implementation's.
 **Where these are measured.** Since 2026-10-22 every corridor sweep runs metrics
 beside its checks (`checks.Runner.ForCorridor`, [#577](https://github.com/Wayfare-labs/wayfare/issues/577)),
 so a measured corridor's `findings.metrics` block is non-empty. The default set
-is the four order-book metrics below — `spread.bid-ask`,
+includes the four order-book metrics below — `spread.bid-ask`,
 `concentration.liquidity`, `depth.observed`, and `deviation.book-vs-reference` —
-because the ladder has already spent its pathfinding budget by the time they
-run. `price-impact.size` and `depth.executable` are reachable but not in the
-default set: each sweeps pathfinding at every probed size. `fragmentation.paths`
+plus `floor-loss.reference-mid`, which reuses the smallest priced ladder rung
+without another pathfinding request. `price-impact.size` and `depth.executable`
+are reachable but not in the default set: each sweeps pathfinding at every
+probed size. `fragmentation.paths`
 is reachable and not in the default set either: it costs one pathfinding
 request per corridor, and adding it is the budget decision described in
 [maintainer-owned-areas.md](maintainer-owned-areas.md#5-check-engine-and-composition). A metric reported as
@@ -89,6 +90,34 @@ as a recommendation.
 
 **Source checked:** `route/route.go` lines 97–108, `route/route_test.go`
 `TestLossPctReconcilesWithVerdict`.
+
+---
+
+### floor-loss.reference-mid — Smallest priced rung vs reference mid
+
+**Definition.** The loss at the smallest priced ladder rung, computed against
+the scorable reference mid:
+
+```
+loss = max(0, (reference_mid - effective_rate) / reference_mid × 100)
+```
+
+**Unit.** Percent (decimal).
+
+**Data source.** The effective rate and send size of the ladder's smallest
+priced rung, plus the mid and provider from `refrate`. The metric reuses the
+ladder measurement and makes no additional pathfinding request. Its evidence
+records the rung size, effective rate, reference mid, and provider.
+
+**What it cannot determine.** Whether the observed floor is caused by market
+pricing or route structure. It measures the loss at one rung; it does not
+attribute that loss to spread or depth.
+
+**Undetermined.** When no rung was priced, the reference mid is missing or
+unscorable, or the reference provider is unavailable. An unscorable reference
+is never treated as a valid benchmark.
+
+**Source checked:** `checks/metric_floor_loss.go`, `route/ladder.go`.
 
 ---
 

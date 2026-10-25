@@ -177,22 +177,25 @@
 
   /* Explicit dark, chosen via the theme selector (#287): applies whatever
      the OS says. Token set mirrors the prefers-color-scheme block above;
-     keep the two in sync. */
+     keep the two in sync. Re-specified per docs/ui-states.md (#230):
+     surfaces are lifted from the page in steps, chart roles keep their
+     meaning, and the UNDETERMINED role is a neutral cool grey, not a warm
+     caution tone, so it never reads as failure. */
   :root[data-theme="dark"] {
       --bg: #020817;
       --panel: #0F172A;
-      --panel-alt: #111827;
+      --panel-alt: #131D33;
       --border: #334155;
       --ink: #F8FAFC;
       --muted: #CBD5E1;
-      --accent: var(--brand-teal);
+      --accent: #2DD4BF;
       --bad: #FCA5A5;
       --warn: #FCD34D;
       --ok: #6EE7B7;
-      --ok-soft: rgba(16, 185, 129, 0.18);
-      --bad-soft: rgba(185, 28, 28, 0.18);
+      --ok-soft: rgba(16, 185, 129, 0.16);
+      --bad-soft: rgba(185, 28, 28, 0.16);
       --unknown: #CBD5E1;
-      --unknown-soft: rgba(148, 163, 184, 0.18);
+      --unknown-soft: rgba(148, 163, 184, 0.14);
       --grid: #1E293B;
       --chart-grid: #334155;
       --chart-line: #E2E8F0;
@@ -204,11 +207,12 @@
       --chart-move-corridor: #34D399;
       --chart-move-benchmark: #94A3B8;
       --inset: #1E293B;
-      --critical-soft: rgba(185, 28, 28, 0.18);
-      --warning-soft: rgba(245, 158, 11, 0.18);
-      --success-soft: rgba(16, 185, 129, 0.18);
-      --neutral-soft: rgba(148, 163, 184, 0.18);
-      --focus-ring: rgba(110, 231, 183, 0.35);
+      --critical-soft: rgba(185, 28, 28, 0.16);
+      --warning-soft: rgba(245, 158, 11, 0.16);
+      --success-soft: rgba(16, 185, 129, 0.16);
+      --neutral-soft: rgba(148, 163, 184, 0.14);
+      --focus-ring: rgba(94, 234, 212, 0.35);
+      --focus-outline: #5EEAD4;
       --press-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
@@ -692,6 +696,41 @@
     a { color: #111 !important; text-decoration: none !important; }
     * { animation: none !important; }
   }
+  @media (max-width: 640px) {
+    html, body { overflow-x: hidden; }
+    .wrap { padding: 1.5rem 1rem 3rem; max-width: 100%; }
+    .controls select { flex: 1 1 0; min-height: 44px; font-size: 1rem; }
+    .controls button { flex: 1 1 calc(50% - .3rem); min-height: 44px; font-size: 1rem; }
+    .panel { padding: .9rem 1rem; }
+    .scroll table { border: 0; }
+    .scroll table thead {
+      clip: rect(0 0 0 0); height: 1px; margin: -1px;
+      overflow: hidden; position: absolute; width: 1px;
+    }
+    .scroll table tr {
+      display: block; margin-bottom: .75rem;
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: .6rem .7rem; background: var(--panel);
+    }
+    .scroll table td {
+      display: flex; justify-content: space-between; align-items: baseline;
+      padding: .3rem .15rem; border-bottom: 1px solid var(--grid);
+      text-align: right; font-size: .85rem;
+    }
+    .scroll table td:last-child { border-bottom: 0; }
+    .scroll table td::before {
+      content: attr(data-label); font-weight: 550; text-align: left;
+      color: var(--muted); font-size: .72rem; text-transform: uppercase;
+      letter-spacing: .04em; flex-shrink: 0; margin-right: .75rem;
+    }
+    .scroll table td:first-child {
+      display: block; text-align: left; font-weight: 600; font-size: .95rem;
+      border-bottom: 1px solid var(--grid); padding-bottom: .45rem; margin-bottom: .1rem;
+    }
+    .legend-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .finding-row { flex-wrap: wrap; gap: .4rem; }
+    .f-state { min-width: auto; }
+  }
 </style>
 <script>
   // Issue #287: apply a stored explicit theme before first paint so a reload
@@ -761,6 +800,12 @@
     <button id="market-structure">Market structure</button>
     <button id="print-report-button" type="button" disabled>Print report</button>
     <span id="status" class="sub" role="status"></span>
+    <label for="theme">Theme</label>
+    <select id="theme" aria-label="Colour theme">
+      <option value="system">System</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
   </div>
 
   <details class="compare-controls">
@@ -2108,13 +2153,13 @@ function table(rungs, scored, depends) {
       // the row from overflowing the table.
       const cell = integrityCell(r.integrity, depends);
       if (scored) {
-        return `<tr><td class="num">${esc(r.send_amount)}</td>
-          <td colspan="4" class="err">${why}</td>
-          <td class="integrity-cell">${cell}</td></tr>`;
+        return `<tr><td class="num" data-label="Send">${esc(r.send_amount)}</td>
+          <td colspan="4" class="err" data-label="Status">${why}</td>
+          <td class="integrity-cell" data-label="Integrity">${cell}</td></tr>`;
       }
-      return `<tr><td class="num">${esc(r.send_amount)}</td>
-        <td colspan="2" class="err">${why}</td>
-        <td class="integrity-cell">${cell}</td></tr>`;
+      return `<tr><td class="num" data-label="Send">${esc(r.send_amount)}</td>
+        <td colspan="2" class="err" data-label="Status">${why}</td>
+        <td class="integrity-cell" data-label="Integrity">${cell}</td></tr>`;
     }
     const q = r.quote;
     const pathCount = (typeof r.path_count === 'number' && r.path_count > 0)
@@ -2129,24 +2174,24 @@ function table(rungs, scored, depends) {
       // word and the mark are the verdict, and only the last two survive
       // the loss of colour.
       return `<tr>
-        <td class="num">${esc(r.send_amount)}</td>
-        <td class="num">${amountCell(q.receive_amount)}</td>
-        <td class="num">${esc(q.effective_rate)}</td>
-        <td class="num ${verdictClass(q.verdict)}">${formatPct(q.loss_pct)}%</td>
-        <td class="${verdictClass(q.verdict)}"><span class="v-cell">${verdictMark(q.verdict)}${esc(q.verdict)}</span></td>
-        <td class="num">${pathCount}</td>
-        <td>${esc(q.description)}${decomp}</td>
+        <td class="num" data-label="Send">${esc(r.send_amount)}</td>
+        <td class="num" data-label="Receive">${amountCell(q.receive_amount)}</td>
+        <td class="num" data-label="Rate">${esc(q.effective_rate)}</td>
+        <td class="num ${verdictClass(q.verdict)}" data-label="Loss">${formatPct(q.loss_pct)}%</td>
+        <td class="${verdictClass(q.verdict)}" data-label="Verdict"><span class="v-cell">${verdictMark(q.verdict)}${esc(q.verdict)}</span></td>
+        <td class="num" data-label="Paths">${pathCount}</td>
+        <td data-label="Path">${esc(q.description)}${decomp}</td>
       </tr>`;
     }
     // When not scored, show structural facts only: send, receive, rate, paths, path.
     // Loss and verdict are omitted — they are derived from a benchmark the
     // engine refused to stand behind.
     return `<tr>
-      <td class="num">${esc(r.send_amount)}</td>
-      <td class="num">${amountCell(q.receive_amount)}</td>
-      <td class="num">${esc(q.effective_rate)}</td>
-      <td class="num">${pathCount}</td>
-      <td>${esc(q.description)}${decomp}</td>
+      <td class="num" data-label="Send">${esc(r.send_amount)}</td>
+      <td class="num" data-label="Receive">${amountCell(q.receive_amount)}</td>
+      <td class="num" data-label="Rate">${esc(q.effective_rate)}</td>
+      <td class="num" data-label="Paths">${pathCount}</td>
+      <td data-label="Path">${esc(q.description)}${decomp}</td>
     </tr>`;
   }).join('');
 
@@ -2807,12 +2852,12 @@ function runsTable(runs) {
     const div = ref.divergence_pct
       ? ` <span class="case">div ${esc(ref.divergence_pct)}%</span>` : '';
     return `<tr>
-      <td class="num">${esc(r.recorded_at)}</td>
-      <td class="num">${r.seq}</td>
-      <td class="num">${esc(r.floor_loss_pct)}%</td>
-      <td class="num">${esc(r.worst_loss_pct)}%</td>
-      <td class="integrity-cell">${integrityCell(r.integrity, r.depends_on || [])}</td>
-      <td>${esc(src)}${div}</td>
+      <td class="num" data-label="Recorded">${esc(r.recorded_at)}</td>
+      <td class="num" data-label="#">${r.seq}</td>
+      <td class="integrity-cell" data-label="Integrity">${integrityCell(r.integrity, r.depends_on || [])}</td>
+      <td class="num" data-label="Floor loss">${esc(r.floor_loss_pct)}%</td>
+      <td class="num" data-label="Worst loss">${esc(r.worst_loss_pct)}%</td>
+      <td data-label="Reference">${esc(src)}${div}</td>
     </tr>`;
   }).join('');
 

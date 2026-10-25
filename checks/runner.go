@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/Wayfare-labs/wayfare/anchor"
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/dex"
@@ -104,6 +106,10 @@ type Corridor struct {
 	// this corridor, if any. With it the issuer.drift check reports what
 	// changed since then; nil means there is nothing to compare against yet.
 	Baseline *IssuerDriftBaseline
+	// FloorSize and FloorEffectiveRate identify the smallest priced ladder
+	// rung. They are carried into the metric set rather than fetched again.
+	FloorSize          decimal.Decimal
+	FloorEffectiveRate decimal.Decimal
 }
 
 func (r *Runner) checks() []Check {
@@ -125,13 +131,13 @@ func (r *Runner) metrics(c Corridor) []Metric {
 // DefaultMetrics returns the metrics a corridor sweep runs when none were
 // configured.
 //
-// Deliberately small, and deliberately four metrics over one endpoint. The
-// ladder has already spent a dozen pathfinding round trips by the time a
-// corridor reaches this point, so the default set reads the order book and
-// nothing else: spread, concentration, observed depth, and the book's deviation
-// from the reference mid. Each metric fetches the book itself (metrics do not
-// share a fetch, so one cannot silently answer from another's data), which
-// makes the default set four /order_book requests per measured corridor.
+// Deliberately small: four order-book metrics plus a free metric using the
+// ladder's existing floor rung. The ladder has already spent a dozen
+// pathfinding round trips by the time a corridor reaches this point, so the
+// order-book metrics read the book:
+// spread, concentration, observed depth, and deviation from the reference
+// mid. The floor-loss metric reuses the measured smallest rung and makes no
+// additional upstream request.
 //
 // PriceImpactMetric and DepthMetric.RunExecutable are excluded on purpose: both
 // sweep pathfinding at every probed size, and repeating a ladder that was just
@@ -143,6 +149,10 @@ func (r *Runner) DefaultMetrics(c Corridor) []Metric {
 		ConcentrationMetric{DEX: d},
 		DepthMetric{DEX: d},
 		DeviationMetric{DEX: d, Reference: c.Reference},
+		FloorLossMetric{
+			Size: c.FloorSize, EffectiveRate: c.FloorEffectiveRate,
+			Reference: c.Reference,
+		},
 	}
 }
 

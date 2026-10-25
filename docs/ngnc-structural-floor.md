@@ -129,25 +129,29 @@ number, and it is called out here so nobody reads it as a good corridor.
 ## What the tool cannot yet establish
 
 The sentence in the README is that the floor *"is the corridor's spread, not its
-depth"*. That is a reasonable reading of the table above, and **the tool does
-not compute it**. Three code facts, each checkable:
+depth"*. That is a reasonable reading of the table above, but the tool does not
+compute a spread/depth attribution. It now measures the loss at the dust rung
+against the reference mid, which makes the structural floor a metric with
+evidence without claiming to explain its cause. Three code facts, each
+checkable:
 
 **1. Market-quality metrics are reachable, and reachability is not
 decomposition.** Since 2026-10-22 the runner carries a `Metrics []Metric` field
 and `ForCorridor` runs them beside the checks (`checks/runner.go`), so a live
 `/api/corridor?live=1` response and every recorded run behind it can carry a
-`findings.metrics` block. The default set reads the direct order book — spread,
-concentration, observed depth and the book's deviation from the reference mid —
-and an unscorable reference or a corridor with no direct pair reports
-undetermined rather than a number.
+`findings.metrics` block. Four default metrics read the direct order book —
+spread, concentration, observed depth and deviation from the reference mid.
+The new floor-loss metric reuses the smallest priced rung from the ladder, and
+reports undetermined when its reference is unscorable or the ladder produced no
+priced rung.
 
-None of that attributes the floor. A spread on the book and a loss on the ladder
-are two measurements of the same corridor; nothing in the tree computes the
-share of the loss that is spread and the share that is depth, which is what the
-README's sentence claims. Reachability was also the repository's V2 milestone
-(`docs/why-wayfare.md`, `docs/market-structure.md`), and the chains this
-document reads predate it: their records carry no metrics at all, so a
-recorded-history reader still cannot check the attribution here.
+The floor-loss metric records the rung, reference mid, and provider. A spread on
+the book and a loss on the ladder are still two measurements of the same
+corridor. None of that attributes the floor to spread or depth: the metric
+measures the loss against the reference, not its cause. Reachability was also
+the repository's V2 milestone (`docs/why-wayfare.md`, `docs/market-structure.md`),
+and the chains this document reads predate it: their records carry no metrics
+at all, so a recorded-history reader still cannot check the attribution here.
 
 **2. Price impact is defined against its own baseline, not against the
 reference.** `PriceImpactMetric` defines impact as degradation *from the rate
@@ -155,10 +159,12 @@ at the smallest size it probes* — `defaultPriceImpactSizes` starts at 1
 (`checks/metric_price_impact.go:28`), and `points[0].ImpactPct` is set to zero
 by construction (`checks/metric_price_impact.go:251-253`). Impact is therefore
 zero at its own baseline and cannot distinguish a size-independent floor from
-size-dependent slippage. Decomposing the floor needs a comparison against the
-*reference mid* at the dust size, not against the smallest probed size. The
-metric is also excluded from the runner's default set, because it sweeps
-pathfinding at every probed size after the ladder has already priced them.
+size-dependent slippage. The separate `floor-loss.reference-mid` metric
+compares the ladder's smallest priced rung against the *reference mid* and
+reuses that rung rather than making another probe.
+The floor measurement has been promoted from inference to an evidence-bearing
+reference-mid figure; its spread/depth attribution remains an inference, rather
+than a result.
 
 **3. The attribution is fixed prose, not a computed result.** When no size is
 viable, `route/ladder.go:528-536` emits:
@@ -218,17 +224,30 @@ concrete:
   and let the recorded chain carry metrics.~~ Done since 2026-10-22: the runner
   measures the default order-book set and recorded runs carry it. The chains
   this document cites predate the change, so they do not carry one.
-- Add a metric that measures the dust-size rung's loss **against the reference
-  mid** rather than against the smallest probed size. That is the figure that
-  separates a floor from slippage, and the current `PriceImpactMetric`
-  definition cannot produce it.
-- Only then can the spread/depth attribution be promoted from inference to
-  result, and until then the finding above states it as an inference.
+- ~~Add a metric that measures the dust-size rung's loss **against the reference
+  mid** rather than against the smallest probed size.~~ Done:
+  `floor-loss.reference-mid` reports the metric with evidence for the rung,
+  reference mid, and provider.
+- Spread/depth attribution remains an inference: the metric does not compute
+  the share of loss attributable to either.
+- Record that metric into the hash-chained store so the decomposition is
+  reproducible from committed bytes rather than from this document.
 
-Until those land, the honest summary is the one this document is built on: at
-0.1 USDC, on three dates and three different routes, USDC → NGNC loses about a
-quarter of its value — and the tool can show you that, but cannot yet tell you
-which part of the market it comes from.
+The honest summary remains that at 0.1 USDC, on three dates and three different
+routes, USDC → NGNC loses about a quarter of its value. The metric now records
+that loss against the reference with evidence, but still cannot tell which part
+of the market causes it.
+
+---
+
+## Longitudinal tracking
+
+The floor is the single most meaningful series the store could produce: its
+movement over time tells a reader whether the corridor's spread is widening,
+narrowing or stable. Tracking it requires that each recorded run carry the
+dust-size loss and its benchmark in a form that can be compared across dates.
+The three dated observations above are the seed of that series; they are not
+yet a continuous one, and they are not yet computed by the tool.
 
 ---
 

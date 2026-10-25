@@ -361,12 +361,14 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	// nothing — see the composition rule in docs/checks.md.
 	if s.Checks != nil {
 		out = route.WithFindings(out, s.Checks.ForCorridor(ctx, checks.Corridor{
-			Send:       sendAsset,
-			Receive:    recvAsset,
-			Integrity:  res.Integrity.String(),
-			Underlying: underlyingPair(res),
-			Reference:  res.Reference,
-			Baseline:   s.issuerDriftBaseline(ctx, sendAsset.Code, recvAsset.Code),
+			Send:               sendAsset,
+			Receive:            recvAsset,
+			Integrity:          res.Integrity.String(),
+			Underlying:         underlyingPair(res),
+			Reference:          res.Reference,
+			Baseline:           s.issuerDriftBaseline(ctx, sendAsset.Code, recvAsset.Code),
+			FloorSize:          res.FloorSize,
+			FloorEffectiveRate: res.FloorEffectiveRate,
 		}))
 	}
 
@@ -883,6 +885,9 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 	// live document did. See assetFromStoredCode.
 	for _, code := range rec.DependsOn {
 		out.DependsOn = append(out.DependsOn, assetFromStoredCode(code))
+	}
+	if rec.DependencyChain != nil {
+		out.DependencyChain = rec.DependencyChain
 	}
 	for _, r := range rec.Rungs {
 		rj := route.RungJSON{
