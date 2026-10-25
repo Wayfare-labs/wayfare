@@ -138,6 +138,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/corridor", s.handleCorridor)
 	mux.HandleFunc("/api/corridor/trend", s.handleTrend)
+	mux.HandleFunc("/og/corridor.svg", s.handleSocialPreview)
+	mux.HandleFunc("/api/corridor/image", s.handleCorridorImage)
 	mux.HandleFunc("/api/chain-heads", s.handleChainHeads)
 	mux.HandleFunc("/api/assets", s.handleAssets)
 	mux.HandleFunc("/api/market-structure", s.handleMarketStructure)
