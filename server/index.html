@@ -468,13 +468,11 @@
   }
   .m-unknown { color: var(--unknown); }
   .meta { color: var(--muted); font-size: .82rem; margin-top: var(--space-4); }
-  .panel.err, .panel.warn, .panel.info, .panel.neutral {
+  .panel.err, .panel.warn {
     border-left: 4px solid currentColor;
   }
   .panel.err { color: var(--bad); background: var(--bad-soft); }
   .panel.warn { color: var(--warn); background: var(--warning-soft); }
-  .panel.info { color: var(--accent); background: var(--ok-soft); }
-  .panel.neutral { color: var(--unknown); background: var(--neutral-soft); }
   .err { color: var(--bad); }
   .provenance { margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
                 border: 1px solid var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
@@ -1240,10 +1238,8 @@ function errorBannerClass(code) {
     case 'method_not_allowed':
     case 'rate_limited':
       return 'warn';
-    case 'no_history':
-      return 'neutral';
     default:
-      return 'info';
+      return 'err';
   }
 }
 
@@ -3024,7 +3020,6 @@ async function loadCorridor(to) {
           'on request and nothing is borrowed from another corridor. Choose ' +
           'Measure live to take a reading now, or wait for the next sweep.',
       })}</div>`);
-      showErrorBanner('No measurement recorded yet for this corridor. Choose Measure live to take a reading now.', 'no_history');
       announce('No measurement recorded yet for this corridor. Choose Measure live to take a reading now.');
     } else {
       showErrorBanner(
