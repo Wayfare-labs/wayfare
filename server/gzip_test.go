@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"html/template"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,10 +16,13 @@ import (
 // — the embedded index.html rendered through uiTemplate with a nil Summary.
 // Round-trip tests use this so they compare against what the handler actually
 // serves, not the raw embedded file (which carries template directives).
-func renderedIndexHTML(t *testing.T) []byte {
+// renderedIndexHTML renders the page exactly as the handler serves it to a
+// store-less server at srvURL: the Open Graph block names the request host.
+func renderedIndexHTML(t *testing.T, srvURL string) []byte {
 	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, srvURL+"/", nil)
 	var buf bytes.Buffer
-	if err := uiTemplate.Execute(&buf, uiPageData{}); err != nil {
+	if err := uiTemplate.Execute(&buf, uiPageData{SocialMeta: template.HTML(socialMetadata(req, nil))}); err != nil {
 		t.Fatalf("rendering template: %v", err)
 	}
 	return buf.Bytes()
@@ -81,7 +85,7 @@ func TestGzipAccepted_IndexHTML(t *testing.T) {
 		t.Fatalf("decompressing body: %v", err)
 	}
 
-	rawExpected := renderedIndexHTML(t)
+	rawExpected := renderedIndexHTML(t, srv.URL)
 
 	if !bytes.Equal(decompressed, rawExpected) {
 		t.Errorf("decompressed body length %d != expected %d", len(decompressed), len(rawExpected))
@@ -128,7 +132,7 @@ func TestGzipNotAccepted_IndexHTML(t *testing.T) {
 		t.Fatalf("reading body: %v", err)
 	}
 
-	rawExpected := renderedIndexHTML(t)
+	rawExpected := renderedIndexHTML(t, srv.URL)
 
 	if !bytes.Equal(body, rawExpected) {
 		t.Errorf("uncompressed body length %d != expected %d", len(body), len(rawExpected))
