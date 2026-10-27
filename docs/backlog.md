@@ -1019,6 +1019,14 @@ Today a figure is either measured or unknown. A third category — measured with
 an interval — needs a wire representation before it needs a calculation.
 `V4+` `area:research` `difficulty:hard` `research`
 
+> **Finding written:** [docs/spike-measured-intervals.md](spike-measured-intervals.md)
+> (2026-10-26). The current wire contract publishes point corridor figures
+> and point reference observations, not source-supported bounds. Historical
+> spread and provider disagreement are not intervals around one measurement;
+> no bounds should be synthesized. A future wire contract must distinguish
+> point, source-reported interval, and undetermined states; no implementation
+> or record-layout change is proposed.
+
 ### E2 — Predictive intelligence (V5)
 
 **#141 — Spike: what a route failure actually is, observationally** *(filed: [#339](https://github.com/Wayfare-labs/wayfare/issues/339))*
