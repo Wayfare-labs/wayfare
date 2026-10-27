@@ -419,6 +419,16 @@
      word it stands for. The table already scrolls sideways there. */
   .v-cell { white-space: nowrap; }
   .scroll { overflow-x: auto; }
+  .route-hops { margin-top: var(--space-2); max-width: 100%; }
+  .route-hops summary { color: var(--accent); cursor: pointer; font-size: var(--text-sm); font-weight: 600; }
+  .route-hop-list { margin: var(--space-2) 0 0; padding-left: 1.5rem; }
+  .route-hop-list li { padding: var(--space-1) 0; overflow-wrap: anywhere; }
+  .route-hop-identity { display: block; color: var(--muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+  .route-hops-unavailable {
+    margin: var(--space-2) 0 0; padding: var(--space-2);
+    border-left: 2px solid var(--unknown); background: var(--unknown-soft);
+    color: var(--unknown); font-size: var(--text-xs); overflow-wrap: anywhere;
+  }
   .finding-row { display: flex; gap: var(--space-3); align-items: baseline; padding: var(--space-2) 0;
                  border-bottom: 1px solid var(--grid); }
   .finding-row:last-child { border-bottom: 0; }
@@ -562,7 +572,6 @@
      cannot be seen, which makes the association depend on the keyboard user
      already knowing it is there. */
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .trend-legend { display: flex; gap: 1.1rem; margin-top: .4rem;
   .trend-legend { display: flex; gap: var(--space-4); margin-top: var(--space-2);
                   font: 550 .72rem/1 var(--mono); letter-spacing: .05em; color: var(--muted); }
   .trend-legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: var(--radius-xs);
@@ -723,6 +732,8 @@
       color: var(--muted); font-size: .72rem; text-transform: uppercase;
       letter-spacing: .04em; flex-shrink: 0; margin-right: .75rem;
     }
+    .scroll table td[data-label="Path"] { display: block; text-align: left; overflow-wrap: anywhere; }
+    .scroll table td[data-label="Path"]::before { display: block; margin: 0 0 var(--space-2); }
     .scroll table td:first-child {
       display: block; text-align: left; font-weight: 600; font-size: .95rem;
       border-bottom: 1px solid var(--grid); padding-bottom: .45rem; margin-bottom: .1rem;
@@ -2142,6 +2153,35 @@ function costDecompositionBlock(rung) {
   return `<details class="cost-decomp"><summary>Cost breakdown</summary><ul class="cost-list">${parts.join('')}</ul></details>`;
 }
 
+function routeHops(quote) {
+  if (!Array.isArray(quote.hops) || quote.hops.length === 0) {
+    const message = quote.hops === null
+      ? 'Hop details were not recorded with this stored quote.'
+      : Array.isArray(quote.hops)
+      ? 'This quote contains no structured hop records.'
+      : 'Hop details were not included in this quote.';
+    return `<p class="route-hops-unavailable">${message}</p>`;
+  }
+
+  const hops = quote.hops.map(hop => {
+    const identity = [];
+    if (hop.issuer) identity.push(`Issuer ${esc(hop.issuer)}`);
+    else if (hop.issuer_unknown) identity.push('Issuer not established');
+    if (hop.peg) identity.push(`Peg ${esc(hop.peg)}`);
+    if (!hop.issuer && !hop.issuer_unknown && hop.asset)
+      identity.push(`Asset ${esc(hop.asset)}`);
+
+    return `<li><strong>${esc(hop.code)}</strong>${identity.length
+      ? `<span class="route-hop-identity">${identity.join(' · ')}</span>`
+      : ''}</li>`;
+  }).join('');
+
+  return `<details class="route-hops">
+    <summary>Explore route hops</summary>
+    <ol class="route-hop-list" aria-label="Route hops in execution order">${hops}</ol>
+  </details>`;
+}
+
 function table(rungs, scored, depends) {
   const rows = rungs.map(r => {
     if (!r.priced) {
@@ -2180,7 +2220,7 @@ function table(rungs, scored, depends) {
         <td class="num ${verdictClass(q.verdict)}" data-label="Loss">${formatPct(q.loss_pct)}%</td>
         <td class="${verdictClass(q.verdict)}" data-label="Verdict"><span class="v-cell">${verdictMark(q.verdict)}${esc(q.verdict)}</span></td>
         <td class="num" data-label="Paths">${pathCount}</td>
-        <td data-label="Path">${esc(q.description)}${decomp}</td>
+        <td data-label="Path"><span>${esc(q.description)}</span>${routeHops(q)}${decomp}</td>
       </tr>`;
     }
     // When not scored, show structural facts only: send, receive, rate, paths, path.
@@ -2191,7 +2231,7 @@ function table(rungs, scored, depends) {
       <td class="num" data-label="Receive">${amountCell(q.receive_amount)}</td>
       <td class="num" data-label="Rate">${esc(q.effective_rate)}</td>
       <td class="num" data-label="Paths">${pathCount}</td>
-      <td data-label="Path">${esc(q.description)}${decomp}</td>
+      <td data-label="Path"><span>${esc(q.description)}</span>${routeHops(q)}${decomp}</td>
     </tr>`;
   }).join('');
 
