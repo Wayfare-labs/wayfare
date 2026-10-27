@@ -469,6 +469,11 @@
   }
   .m-unknown { color: var(--unknown); }
   .meta { color: var(--muted); font-size: .82rem; margin-top: var(--space-4); }
+  .panel.err, .panel.warn {
+    border-left: 4px solid currentColor;
+  }
+  .panel.err { color: var(--bad); background: var(--bad-soft); }
+  .panel.warn { color: var(--warn); background: var(--warning-soft); }
   .err { color: var(--bad); }
   .provenance { margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-3); border-radius: var(--radius-sm);
                 border: 1px solid var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
@@ -1219,13 +1224,39 @@ function fmtISOTime(v) {
 // first, so banners never stack when a reader retries and fails again.
 //
 // The banner is role="alert" (announced to assistive tech) and always
-// carries the failure reason in text, never colour alone.
-function showErrorBanner(message) {
+// carries the failure reason in text, never colour alone. The machine-readable
+// error code is also kept on the element so the DOM distinguishes one cause
+// from another without reading the English prose.
+function errorBannerClass(code) {
+  switch (code) {
+    case 'measurement_failed':
+    case 'upstream_timeout':
+    case 'internal_error':
+    case 'store_read_error':
+    case 'divergence_history_error':
+      return 'err';
+    case 'unknown_send_asset':
+    case 'unknown_receive_asset':
+    case 'no_fiat_peg':
+    case 'invalid_query':
+    case 'invalid_sizes':
+    case 'invalid_limit':
+    case 'invalid_cursor':
+    case 'method_not_allowed':
+    case 'rate_limited':
+      return 'warn';
+    default:
+      return 'err';
+  }
+}
+
+function showErrorBanner(message, code = '') {
   const out = $('out');
-  const prior = out.querySelector('.panel.err');
+  const prior = out.querySelector('.panel[data-code]');
   if (prior) prior.remove();
+  const bannerClass = errorBannerClass(code);
   out.insertAdjacentHTML('afterbegin',
-    `<div class="panel err" role="alert">${message}</div>`);
+    `<div class="panel ${bannerClass}" data-code="${esc(code)}" role="alert">${message}</div>`);
 }
 
 // The sizes control lets the reader choose the send amounts a live ladder
@@ -1426,10 +1457,10 @@ async function measure() {
         recordedAt: cached.recorded_at,
         fetchedAt: cached.fetched_at,
       });
-      showErrorBanner(`Could not measure: ${esc(e.message)}. Showing cached corridor data (${formatReadingAge(cached.recorded_at)}).`);
+      showErrorBanner(`Could not measure: ${esc(e.message)}. Showing cached corridor data (${formatReadingAge(cached.recorded_at)}).`, e.code);
       announce(`Could not measure: ${e.message}. Showing cached reading from ${formatReadingAge(cached.recorded_at)}.`);
     } else {
-      showErrorBanner(`Could not measure: ${esc(e.message)}`);
+      showErrorBanner(`Could not measure: ${esc(e.message)}`, e.code);
       announce(`Could not measure: ${e.message}`);
     }
     $('status').textContent = '';
@@ -2981,7 +3012,7 @@ async function loadCorridor(to) {
         recordedAt: cached.recorded_at,
         fetchedAt: cached.fetched_at,
       });
-      showErrorBanner(`Could not load corridor data: ${esc(e.message)}. Showing cached data (${formatReadingAge(cached.recorded_at)}).`);
+      showErrorBanner(`Could not load corridor data: ${esc(e.message)}. Showing cached data (${formatReadingAge(cached.recorded_at)}).`, e.code);
       announce(`Could not load corridor data: ${e.message}. Showing cached reading from ${formatReadingAge(cached.recorded_at)}.`);
     } else if (e.code === 'no_history') {
       // A history-first instance with nothing recorded for this corridor is
@@ -2999,7 +3030,7 @@ async function loadCorridor(to) {
       announce('No measurement recorded yet for this corridor. Choose Measure live to take a reading now.');
     } else {
       showErrorBanner(
-        `Could not load corridor data: ${esc(e.message)}. If the instance is still waking up, wait a moment and <a href="" style="color:inherit">reload</a>.`);
+        `Could not load corridor data: ${esc(e.message)}. If the instance is still waking up, wait a moment and <a href="" style="color:inherit">reload</a>.`, e.code);
       announce(`Could not load corridor data: ${e.message}. If the instance is still waking up, wait a moment and reload.`);
     }
   }

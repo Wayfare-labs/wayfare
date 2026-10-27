@@ -93,14 +93,14 @@ func TestQuestionsDocQuotesTheCodeItRestsOn(t *testing.T) {
 			quote: "throw Object.assign(new Error(data.error",
 		},
 		{
-			claim: "the error code is read only to mark the sizes field invalid",
+			claim: "invalid_sizes marks the sizes field invalid",
 			file:  "server/index.html",
 			quote: "if (e.code === 'invalid_sizes')",
 		},
 		{
-			claim: "the rendered banner is still built from the English alone",
+			claim: "the rendered banner keeps human-readable prose and passes through the machine-readable code",
 			file:  "server/index.html",
-			quote: "showErrorBanner(`Could not measure: ${esc(e.message)}`)",
+			quote: "showErrorBanner(`Could not measure: ${esc(e.message)}`, e.code)",
 		},
 		{
 			claim: "the legend item is granted a min-width",
