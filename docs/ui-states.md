@@ -172,6 +172,26 @@ Rendering cannot be proven from Go: `docs/qa/README.md` is the harness that
 drives the real binary in Chromium, Firefox and WebKit, and a states pass
 there is the follow-up for visual confirmation.
 
+## Theme persistence (backlog #231)
+
+The theme choice (System / Light / Dark) is persisted in `localStorage` under
+a single key, defaulting to System when nothing is stored. The stored value is
+read defensively: if `localStorage` is unavailable (blocked, disabled, or
+throwing on access) or the stored string is not one of the three known values,
+the UI silently falls back to System and never surfaces an error. The choice
+only controls the page's colour scheme; it has no bearing on verdicts,
+integrity, or check semantics, and no state in this file is keyed to it.
+
+This work is blocked on #287 (backlog `#229`) as the issue states. The
+persistence contract itself is pure client-side preference storage, so it does
+not depend on any API field; the section is recorded here so the theme-related
+states above (both schemes carry the same interactive contract) have a
+documented home.
+
+## Corridor comparison on shared fields only
+
+Blocked on #198 (backlog `#127`): the corridor comparison needs a per-field contract the API does not yet expose. Until that lands, no comparison may fill a blank cell with a synthetic score. Where a corridor lacks a field another corridor has, the cell renders as missing, not zero, and the comparison is restricted to the fields both corridors share. UNDETERMINED is not failure and is not styled as failure. This section is a spec placeholder only; no rendering change is made here.
+
 ## Execution-curve visualisation (issue #238, backlog #228)
 
 The execution-curve panel (`P_exec(q)`, `Loss(q)`, `MC(q)`) is blocked on

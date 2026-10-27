@@ -230,11 +230,24 @@ concrete:
   reference mid, and provider.
 - Spread/depth attribution remains an inference: the metric does not compute
   the share of loss attributable to either.
+- Record that metric into the hash-chained store so the decomposition is
+  reproducible from committed bytes rather than from this document.
 
 The honest summary remains that at 0.1 USDC, on three dates and three different
 routes, USDC → NGNC loses about a quarter of its value. The metric now records
 that loss against the reference with evidence, but still cannot tell which part
 of the market causes it.
+
+---
+
+## Longitudinal tracking
+
+The floor is the single most meaningful series the store could produce: its
+movement over time tells a reader whether the corridor's spread is widening,
+narrowing or stable. Tracking it requires that each recorded run carry the
+dust-size loss and its benchmark in a form that can be compared across dates.
+The three dated observations above are the seed of that series; they are not
+yet a continuous one, and they are not yet computed by the tool.
 
 ---
 
