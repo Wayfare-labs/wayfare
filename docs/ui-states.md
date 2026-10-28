@@ -215,6 +215,7 @@ The panel itself is not implemented here; `server/index.html` is unchanged.
 ## Related
 
 - [docs/qa/README.md](qa/README.md) — browser harness for visual confirmation
+- Stale-banner QA (backlog #209): the state matrix for a stale reading must confirm a stale value never renders as live. This issue is blocked on #79 (backlog `#1`); work does not start until that lands, and any defects found are filed separately rather than fixed here.
 - [docs/qa/artifacts/272-color-schemes.md](qa/artifacts/272-color-schemes.md) — the recorded palette both schemes implement
 - [docs/checks.md](checks.md) — the check contract these styles never touch
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — the invariants this stays behind
