@@ -39,7 +39,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -367,52 +366,4 @@ func defaultSizesFlag() string {
 		parts = append(parts, s.String())
 	}
 	return strings.Join(parts, ",")
-}
-
-func sizeStrings(sizes []decimal.Decimal) []string {
-	out := make([]string, 0, len(sizes))
-	for _, s := range sizes {
-		out = append(out, s.String())
-	}
-	return out
-}
-
-// gitRevision records which build captured a snapshot. Absent rather than
-// guessed when git cannot answer.
-func gitRevision() string {
-	out, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// requireCleanTree refuses to record from a modified working tree — the same
-// provenance rule cmd/ladder applies (see its requireCleanTree for the full
-// argument). A dirty tree names a revision that did not produce the bytes.
-func requireCleanTree(dir string, allowDirty bool) (bool, error) {
-	out, err := exec.Command("git", "-C", dir, "status", "--porcelain").Output()
-	if err != nil {
-		return false, nil
-	}
-	var files []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			files = append(files, line)
-		}
-	}
-	if len(files) == 0 {
-		return false, nil
-	}
-	if allowDirty {
-		fmt.Fprintf(os.Stderr,
-			"warning: recording from a modified tree; manifest will be marked dirty:\n  %s\n",
-			strings.Join(files, "\n  "))
-		return true, nil
-	}
-	return false, fmt.Errorf(
-		"refusing to record a snapshot from a modified working tree.\n"+
-			"git_revision would name a tree that did not produce these bytes.\n"+
-			"Commit or stash first, or pass -allow-dirty.\n\nModified:\n  %s",
-		strings.Join(files, "\n  "))
 }
