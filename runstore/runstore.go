@@ -290,4 +290,5 @@ type Store interface {
 	Verify(ctx context.Context, corridor string) error
 
 	// Corridors lists the corridors with stored history.
-	Corridors(c
+	Corridors(ctx context.Context) ([]string, error)
+}

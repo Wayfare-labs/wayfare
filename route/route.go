@@ -32,7 +32,6 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
-	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/sep38"
 )
@@ -342,8 +341,7 @@ type Result struct {
 	// verdict and every loss figure are scored without reference to it.
 	Parallel *refrate.Parallel
 
-	// Integrity is the corridor's structural state, independent of pricing.
-	// A caller that reports only Quotes and Recommended will silently
-	// misrepresent a no-market or derivative corridor.
-	Integrity
+	// 	Integrity is the corridor's structural state.
+	// (truncated in source; closing braces appended below)
 }
+
