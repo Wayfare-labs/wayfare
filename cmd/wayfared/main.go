@@ -32,7 +32,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Wayfare-labs/wayfare"
 	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/monitor"
@@ -298,5 +297,3 @@ func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon s
 	}
 	return sched
 }
-
-// openStore 
