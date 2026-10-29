@@ -211,6 +211,8 @@ func TestToCorridorJSONOmitsAbsentReferenceDiagnostic(t *testing.T) {
 }
 
 func TestToCorridorJSONPropagatesQuoteKind(t *testing.T) {
+	// The existing single-path case must keep its PathCount and carry no
+// alternatives. See the multi-path variant below.
 	send, recv := asset.USDC(), asset.NGNC()
 	q := Quote{
 		Kind:          KindDEX,
@@ -313,6 +315,150 @@ func TestToAssetJSONPublishesSEP38WireForm(t *testing.T) {
 				t.Errorf("round trip produced %+v, want %+v", back, tc.a)
 			}
 		})
+	}
+}
+
+// TestToCorridorJSONRendersAlternatives renders a rung whose Horizon
+// returned several distinct paths and asserts the wire carries the count
+// plus each alternative's description and effective rate as decimal strings.
+func TestToCorridorJSONRendersAlternatives(t *testing.T) {
+	send, recv := asset.USDC(), asset.NGNC()
+	mid := decimal.RequireFromString("1500")
+
+	best := Quote{
+		Kind:          KindDEX,
+		Description:   "USDC -> XLM -> NGNC",
+		Source:        "stellar-dex",
+		SendAsset:     send,
+		SendAmount:    decimal.RequireFromString("100"),
+		ReceiveAsset:  recv,
+		ReceiveAmount: decimal.RequireFromString("65100.137955"),
+		EffectiveRate: decimal.RequireFromString("651.00137955"),
+		LossPct:       decimal.RequireFromString("56.6"),
+		Verdict:       VerdictUnusable,
+		QuotedAt:      time.Now(),
+	}
+	alt := Quote{
+		Kind:          KindDEX,
+		Description:   "USDC -> NGNC",
+		Source:        "stellar-dex",
+		SendAsset:     send,
+		SendAmount:    decimal.RequireFromString("100"),
+		ReceiveAsset:  recv,
+		ReceiveAmount: decimal.RequireFromString("21785.7821141"),
+		EffectiveRate: decimal.RequireFromString("217.857821141"),
+		LossPct:       decimal.RequireFromString("85.4761452369"),
+		Verdict:       VerdictUnusable,
+		QuotedAt:      time.Now(),
+	}
+
+	lr := &LadderResult{
+		Request: LadderRequest{SendAsset: send, ReceiveAsset: recv, ReferenceBase: "USD", ReferenceQuote: "NGN"},
+		Rungs: []Rung{{
+			SendAmount: decimal.RequireFromString("100"),
+			Result: &Result{
+				Quotes:    []Quote{best, alt},
+				Integrity: IntegrityDirect,
+				ReferenceMid:    mid,
+				ReferenceSource: "exchangerate-api",
+			},
+		}},
+		Integrity:       IntegrityDirect,
+		ReferenceMid:    mid,
+		ReferenceSource: "exchangerate-api",
+	}
+
+	out := ToCorridorJSON(lr, "USD/NGN")
+	r := out.Rungs[0]
+	if r.PathCount != len([]Quote{best, alt}) {
+		t.Errorf("path_count = %d, want %d", r.PathCount, len([]Quote{best, alt}))
+	}
+	if r.Quote == nil {
+		t.Fatal("expected the headline quote to carry the best path")
+	}
+	if r.Quote.Description != best.Description {
+		t.Errorf("headline quote description = %q, want %q", r.Quote.Description, best.Description)
+	}
+	if len(r.Alternatives) != 1 {
+		t.Fatalf("expected 1 alternative, got %d", len(r.Alternatives))
+	}
+	a := r.Alternatives[0]
+	if a.Description != alt.Description {
+		t.Errorf("alternative description = %q, want %q", a.Description, alt.Description)
+	}
+	if a.EffectiveRate != alt.EffectiveRate.String() {
+		t.Errorf("alternative effective_rate = %q, want %q", a.EffectiveRate, alt.EffectiveRate.String())
+	}
+	if a.PathCount != len([]Quote{best, alt}) {
+		t.Errorf("alternative path_count = %d, want %d", a.PathCount, len([]Quote{best, alt}))
+	}
+	// The headline is the best path by receive amount, unchanged by this change.
+	if got, want := r.Quote.ReceiveAmount, best.ReceiveAmount.String(); got != want {
+		t.Errorf("headline receive_amount = %q, want %q", got, want)
+	}
+}
+
+// TestToCorridorJSONAlternativesEmptyWhenOnePath asserts that a rung with
+// exactly one priced path reports path_count = 1 and carries no alternatives
+// block, so the fragmentation signal is explicit when it is present and
+// absent otherwise.
+func TestToCorridorJSONAlternativesEmptyWhenOnePath(t *testing.T) {
+	send, recv := asset.USDC(), asset.NGNC()
+	mid := decimal.RequireFromString("1500")
+	q := Quote{
+		Kind:          KindDEX,
+		Description:   "USDC -> XLM -> NGNC",
+		Source:        "stellar-dex",
+		SendAsset:     send,
+		SendAmount:    decimal.RequireFromString("100"),
+		ReceiveAsset:  recv,
+		ReceiveAmount: decimal.RequireFromString("65100.137955"),
+		EffectiveRate: decimal.RequireFromString("651.00137955"),
+		LossPct:       decimal.RequireFromString("56.6"),
+		Verdict:       VerdictUnusable,
+		QuotedAt:      time.Now(),
+	}
+
+	lr := &LadderResult{
+		Request: LadderRequest{SendAsset: send, ReceiveAsset: recv, ReferenceBase: "USD", ReferenceQuote: "NGN"},
+		Rungs: []Rung{{
+			SendAmount: decimal.RequireFromString("100"),
+			Result: &Result{
+				Quotes:    []Quote{q},
+				Integrity: IntegrityDirect,
+				ReferenceMid:    mid,
+				ReferenceSource: "exchangerate-api",
+			},
+		}},
+		Integrity:       IntegrityDirect,
+		ReferenceMid:    mid,
+		ReferenceSource: "exchangerate-api",
+	}
+
+	out := ToCorridorJSON(lr, "USD/NGN")
+	r := out.Rungs[0]
+	if r.PathCount != 1 {
+		t.Errorf("path_count = %d, want 1", r.PathCount)
+	}
+	if r.Alternatives != nil {
+		t.Errorf("expected no alternatives for a single-path rung, got %d", len(r.Alternatives))
+	}
+}
+
+// TestQuoteJSONCarriesPathCount asserts that ToQuoteJSON reports the
+// count of distinct priced paths for the quote. Today that is always 1,
+// because one Quote equals one path; the field exists so a fragmentation
+// figure can ride on every quote without the wire having to recompute
+// the count.
+func TestQuoteJSONCarriesPathCount(t *testing.T) {
+	q := &Quote{
+		Kind:        KindDEX,
+		Description: "USDC -> NGNC",
+		Source:      "stellar-dex",
+	}
+	got := ToQuoteJSON(q)
+	if got.PathCount != 1 {
+		t.Errorf("PathCount = %d, want 1", got.PathCount)
 	}
 }
 

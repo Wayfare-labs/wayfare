@@ -65,6 +65,11 @@ type QuoteJSON struct {
 	Verdict       string   `json:"verdict"`
 	PathCount     int      `json:"path_count,omitempty"`
 	Warnings      []string `json:"warnings"`
+	// PathCount is how many distinct paths priced at the rung that produced
+	// this quote. It duplicates RungJSON.path_count so both shapes carry the
+	// same fragmentation fact; the intent is that the field is most useful on
+	// a quote a client already printed and does not want to re-derive it.
+	PathCount     int      `json:"path_count,omitempty"`
 }
 
 // CostPartJSON is one component of a rung's effective transfer cost.
@@ -113,6 +118,11 @@ type RungJSON struct {
 	Integrity    string         `json:"integrity"`
 	PathCount    int            `json:"path_count,omitempty"`
 	Quote        *QuoteJSON     `json:"quote"`
+	// PathCount is how many distinct paths priced at this rung. It is
+	// redundant with quote.path_count but lives here so a client that only
+	// wants the fragmentation signal does not need to walk into every quote.
+	PathCount    int            `json:"path_count"`
+	Alternatives []QuoteJSON    `json:"alternatives,omitempty"`
 	Cost         *CostBlockJSON `json:"cost,omitempty"`
 	Notes        []string       `json:"notes"`
 	Error        string         `json:"error,omitempty"`
@@ -376,6 +386,7 @@ func ToQuoteJSON(q *Quote) *QuoteJSON {
 		Verdict:       q.Verdict.String(),
 		PathCount:     q.PathCount,
 		Warnings:      w,
+		PathCount:     1,
 	}
 }
 
