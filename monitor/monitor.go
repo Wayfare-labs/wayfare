@@ -342,5 +342,5 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 		"agreement", ref.Agreement.String(),
 		"took", s.now().Sub(started).Round(time.Millisecond).String())
 
-	// A storage failure must not lose the measurement 
+	// A storage failure must not lose the measurement.
 }
