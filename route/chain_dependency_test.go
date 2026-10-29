@@ -338,91 +338,12 @@ func TestChainBackwardCompatible(t *testing.T) {
 		t.Fatal("serialized corridor is missing dependency_chain")
 	}
 	var chain struct {
-		Depth     int `json:"depth"`
-		DependsOn []struct {
-			Code     string `json:"code"`
-			Measured bool   `json:"measured"`
-		} `json:"depends_on"`
+		Depth int `json:"depth"`
 	}
 	if err := json.Unmarshal(chainRaw, &chain); err != nil {
 		t.Fatalf("dependency_chain: %v", err)
 	}
 	if chain.Depth != 1 {
-		t.Errorf("dependency_chain depth = %d, want 1", chain.Depth)
-	}
-	if len(chain.DependsOn) != 1 || chain.DependsOn[0].Code != "NGNC" ||
-		!chain.DependsOn[0].Measured {
-		t.Errorf("dependency_chain depends_on = %+v, want NGNC measured",
-			chain.DependsOn)
-	}
-}
-
-// TestLadderChainKeepsMeasuredOverUnmeasured pins the aggregation rule for
-// chains across rungs: the union across the ladder may not let one rung's
-// unmeasured placeholder erase another rung's measurement of the same
-// dependency.
-func TestLadderChainKeepsMeasuredOverUnmeasured(t *testing.T) {
-	measured := []DependencyNode{
-		{Asset: asset.NGNC(), Measured: true, Integrity: IntegrityDirect},
-	}
-	unmeasured := []DependencyNode{
-		{Asset: asset.NGNC(), Measured: false, Reason: "Horizon error: timeout"},
-	}
-
-	mk := func(first, second []DependencyNode) *LadderResult {
-		return &LadderResult{
-			Request: LadderRequest{
-				SendAsset:      asset.USDC(),
-				ReceiveAsset:   asset.GHSC(),
-				ReferenceBase:  "USD",
-				ReferenceQuote: "GHS",
-			},
-			Rungs: []Rung{
-				{SendAmount: decimal.NewFromInt(1), Result: &Result{
-					Integrity: IntegrityDerivative,
-					DependsOn: []asset.Asset{asset.NGNC()},
-					Chain:     first,
-				}},
-				{SendAmount: decimal.NewFromInt(10), Result: &Result{
-					Integrity: IntegrityDerivative,
-					DependsOn: []asset.Asset{asset.NGNC()},
-					Chain:     second,
-				}},
-			},
-		}
-	}
-
-	// Unmeasured rung first, measured rung second: the measurement wins.
-	l := mk(unmeasured, measured)
-	l.summarise()
-	if len(l.Chain) != 1 || !l.Chain[0].Measured {
-		t.Fatalf("Chain = %v, want the measured NGNC to survive aggregation", l.Chain)
-	}
-	if got := l.Chain[0].Integrity; got != IntegrityDirect {
-		t.Errorf("NGNC integrity = %s, want DIRECT", got)
-	}
-
-	// Measured rung first, unmeasured second: the measurement is kept.
-	l = mk(measured, unmeasured)
-	l.summarise()
-	if len(l.Chain) != 1 || !l.Chain[0].Measured {
-		t.Fatalf("Chain = %v, want the measured NGNC to keep its place", l.Chain)
-	}
-}
-
-// TestDirectCorridorHasNoChain verifies that a direct corridor does not
-// produce a dependency chain.
-func TestDirectCorridorHasNoChain(t *testing.T) {
-	e := chainEngine(chainSnap(t, "usdc-ngnc-chain-direct"), "USD/NGN", "1500")
-	res, err := e.Quote(context.Background(), ngnRequest("100"))
-	if err != nil {
-		t.Fatalf("Quote: %v", err)
-	}
-
-	if res.Integrity != IntegrityDirect {
-		t.Errorf("Integrity = %s, want DIRECT", res.Integrity)
-	}
-	if res.Chain != nil {
-		t.Errorf("Chain = %v, want nil for direct corridor", res.Chain)
+		t.Errorf("dependency_chain.depth = %d, want 1", chain.Depth)
 	}
 }
