@@ -1,16 +1,11 @@
 package server
 
 import (
-	"fmt"
-	"net/http"
-	"strconv"
-	"strings"
-	"time"
-
 	"github.com/Wayfare-labs/wayfare/analysis"
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
+	"time"
 )
 
 // Wire shape for a corridor's stored history.
@@ -206,8 +201,6 @@ type TrendRungJSON struct {
 	Verdict    string `json:"verdict,omitempty"`
 }
 
-// toTrendJSON renders stored records in the wire shape, preserving their
-// stored (oldest first) order.
 // MovementJSON is one consecutive-pair movement decomposition on the wire
 // (issue #637): how much of the headline change came from the benchmark and
 // how much from the corridor itself. Empty percentage fields are the
@@ -281,199 +274,4 @@ func toTrendJSON(recs []*runstore.Record, key, pair string, send, recv asset.Ass
 		out.Movements = append(out.Movements, toMovementJSON(movement))
 	}
 	return out
-}
-
-func toIntegrityTransitionJSON(transition *runstore.IntegrityTransition) IntegrityTransitionJSON {
-	return IntegrityTransitionJSON{
-		PreviousIntegrity: transition.PreviousIntegrity,
-		CurrentIntegrity:  transition.CurrentIntegrity,
-		PreviousRunAt:     transition.PreviousRunAt.UTC().Format(time.RFC3339),
-		CurrentRunAt:      transition.CurrentRunAt.UTC().Format(time.RFC3339),
-		PreviousDependsOn: append([]string{}, transition.PreviousDependsOn...),
-		CurrentDependsOn:  append([]string{}, transition.CurrentDependsOn...),
-		TransitionType:    transition.TransitionType.String(),
-	}
-}
-
-func toTrendRunJSON(rec *runstore.Record) TrendRunJSON {
-	out := TrendRunJSON{
-		Seq:        rec.Seq,
-		RecordedAt: rec.RecordedAt.UTC().Format(time.RFC3339),
-		Integrity:  rec.Integrity,
-		DependsOn:  make([]string, 0, len(rec.DependsOn)),
-		Reference: TrendRefJSON{
-			Mid:             rec.Reference.Mid,
-			Source:          rec.Reference.Source,
-			AsOf:            rec.Reference.AsOf,
-			SecondaryMid:    rec.Reference.SecondaryMid,
-			SecondarySource: rec.Reference.SecondarySource,
-			DivergencePct:   rec.Reference.DivergencePct,
-			ScoredAgainst:   rec.Reference.ScoredAgainst,
-		},
-		FloorLossPct:    rec.FloorLossPct,
-		FloorSize:       rec.FloorSize,
-		WorstLossPct:    rec.WorstLossPct,
-		WorstSize:       rec.WorstSize,
-		RecommendedSize: rec.RecommendedSize,
-		Finding:         rec.Finding,
-		Rungs:           make([]TrendRungJSON, 0, len(rec.Rungs)),
-	}
-	out.DependsOn = append(out.DependsOn, rec.DependsOn...)
-	for _, r := range rec.Rungs {
-		out.Rungs = append(out.Rungs, TrendRungJSON{
-			SendAmount: r.SendAmount,
-			Priced:     r.Priced,
-			LossPct:    r.LossPct,
-			Verdict:    r.Verdict,
-		})
-	}
-	return out
-}
-
-// handleTrend serves a corridor's stored history, oldest first.
-//
-// It is a read endpoint: it never measures and answers from storage alone.
-// An empty history is a 200 with zero runs, not an error — a missing
-// history is not a failure of the request, it is the answer, and a client
-// that treated it as one would have to special-case the first day of
-// deployment.
-func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET is supported")
-		return
-	}
-	if err := checkParams(r, "from", "to", "limit", "before", "pretty"); err != nil {
-		writeError(w, r, http.StatusBadRequest, codeInvalidQuery, err.Error())
-		return
-	}
-
-	from := param(r, "from", "USDC")
-	to := param(r, "to", "NGNC")
-
-	sendAsset, ok := asset.Lookup(from)
-	if !ok {
-		writeError(w, r, http.StatusBadRequest, codeUnknownSendAsset, fmt.Sprintf(
-			"unknown send asset %q; verified assets are %s",
-			from, strings.Join(asset.KnownCodes(), ", ")))
-		return
-	}
-	recvAsset, ok := asset.Lookup(to)
-	if !ok {
-		writeError(w, r, http.StatusBadRequest, codeUnknownReceiveAsset, fmt.Sprintf(
-			"unknown receive asset %q; verified assets are %s",
-			to, strings.Join(asset.KnownCodes(), ", ")))
-		return
-	}
-	if _, ok := asset.FiatPeg(recvAsset); !ok {
-		writeError(w, r, http.StatusBadRequest, codeNoFiatPeg, fmt.Sprintf(
-			"no verified fiat peg for %s, so there is no independent rate to score it against",
-			recvAsset.Code))
-		return
-	}
-
-	limit, err := parseTrendLimit(r.URL.Query().Get("limit"))
-	if err != nil {
-		writeError(w, r, http.StatusBadRequest, codeInvalidLimit, err.Error())
-		return
-	}
-
-	before, err := parseTrendBefore(r)
-	if err != nil {
-		writeError(w, r, http.StatusBadRequest, codeInvalidCursor, err.Error())
-		return
-	}
-
-	// The pair was fixed by the assets' pegs at measurement time, so the
-	// stored runs and this document describe the same benchmark question.
-	pegQuote, _ := asset.FiatPeg(recvAsset)
-	pegBase, ok := asset.FiatPeg(sendAsset)
-	if !ok {
-		pegBase = "USD"
-	}
-	pair := pegBase + "/" + pegQuote
-	key := runstore.CorridorKey(from, to)
-
-	var recs []*runstore.Record
-	var nextCursor int64
-	if s.Store != nil {
-		// Read limit + 1 to detect whether an older page exists.
-		recent, err := s.Store.RecentBefore(r.Context(), key, limit+1, before)
-		if err != nil {
-			writeError(w, r, http.StatusInternalServerError, codeStoreRead, "reading stored history: "+err.Error())
-			return
-		}
-		hasMore := len(recent) > limit
-		if hasMore {
-			recent = recent[:limit]
-		}
-		// RecentBefore is newest first because its callers want the latest
-		// record; a timeline reads oldest first, so reverse.
-		recs = make([]*runstore.Record, 0, len(recent))
-		for i := len(recent) - 1; i >= 0; i-- {
-			recs = append(recs, recent[i])
-		}
-		if hasMore && len(recs) > 0 {
-			nextCursor = recs[0].Seq
-		}
-	}
-
-	trend := toTrendJSON(recs, key, pair, sendAsset, recvAsset, nextCursor)
-
-	stats, err := analysis.DivergenceHistory(recs)
-	if err != nil {
-		// A stored divergence_pct that fails to parse is a corrupt record,
-		// not an absent observation — the correct output is an error, not a
-		// history that silently omits the bad run.
-		writeError(w, r, http.StatusInternalServerError, codeDivergenceHistory,
-			"computing reference-divergence history: "+err.Error())
-		return
-	}
-	trend.DivergenceStats = toDivergenceStatsJSON(stats)
-
-	writeJSON(w, r, http.StatusOK, trend)
-}
-
-// parseTrendLimit bounds how much history one request may read.
-//
-// The value is clamped rather than rejected: asking for more history is not
-// a client mistake worth a 400, and a history shorter than the limit simply
-// comes back whole.
-func parseTrendLimit(raw string) (int, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return defaultTrendLimit, nil
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, fmt.Errorf("bad limit %q: must be a whole number", raw)
-	}
-	if n <= 0 {
-		return 0, fmt.Errorf("bad limit %q: must be positive", raw)
-	}
-	if n > maxTrendLimit {
-		n = maxTrendLimit
-	}
-	return n, nil
-}
-
-// parseTrendBefore validates the sequence cursor for backwards pagination.
-//
-// If before is not provided, it returns 0 and no cursor filter is applied.
-// An invalid, non-integer, or non-positive cursor is a client error (400).
-func parseTrendBefore(r *http.Request) (int64, error) {
-	if !r.URL.Query().Has("before") {
-		return 0, nil
-	}
-	raw := strings.TrimSpace(r.URL.Query().Get("before"))
-	if raw == "" {
-		return 0, fmt.Errorf("bad cursor %q: must be a whole number", raw)
-	}
-	n, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("bad cursor %q: must be a whole number", raw)
-	}
-	if n <= 0 {
-		return 0, fmt.Errorf("bad cursor %q: must be positive", raw)
-	}
-	return n, nil
 }
