@@ -8,7 +8,7 @@
 # same bytes. The tag stays in the reference — Dependabot's docker ecosystem
 # uses it to know which release to move to (.github/dependabot.yml) — and the
 # digest is what actually fixes the image.
-FROM golang:1.27.3-alpine@sha256:cd410a5c6686417875bc4815688e96ae9769f8562debc545d29fe58e73d174f0 AS build
+FROM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS build
 
 WORKDIR /src
 
