@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -604,6 +605,110 @@ func TestSweepSetEqualsRegistrySet(t *testing.T) {
 		if c.ReferenceQuote != e.Peg {
 			t.Errorf("%s is scored against %s but its issuer declares a %s peg; the benchmark must be the peg the token claims to track",
 				c.Key(), c.ReferenceQuote, e.Peg)
+		}
+	}
+}
+
+// crashStore stands in for a process killed mid-sweep: the nth Append never
+// reaches disk and the sweep's context is cancelled, so no later corridor is
+// measured. The wrapped store is untouched, as it would be after a kill.
+type crashStore struct {
+	runstore.Store
+	crashAt int
+	n       int
+	cancel  context.CancelFunc
+}
+
+func (c *crashStore) Append(ctx context.Context, r *runstore.Record) error {
+	c.n++
+	if c.n == c.crashAt {
+		c.cancel()
+		return errors.New("simulated crash")
+	}
+	return c.Store.Append(ctx, r)
+}
+
+// TestRestartAfterCrashMidSweep pins the behaviour of issue #741: when the
+// process dies partway through a sweep, the corridors already recorded stay
+// recorded exactly once, and the next start measures every corridor again, so
+// none is silently skipped. A restart begins a new sweep; it never replays or
+// duplicates the interrupted one.
+func TestRestartAfterCrashMidSweep(t *testing.T) {
+	dir := t.TempDir()
+	store, err := runstore.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(multiCorridorHandler(t, "KESC"))
+	t.Cleanup(srv.Close)
+
+	newScheduler := func(st runstore.Store) *Scheduler {
+		return &Scheduler{
+			Engine: &route.Engine{
+				DEX: &dex.Client{HorizonURL: srv.URL, HTTPClient: srv.Client()},
+				RefRate: refrate.NewStatic(map[string]decimal.Decimal{
+					"USD/NGN": decimal.RequireFromString("1350.2568"),
+					"USD/GHS": decimal.RequireFromString("11.0912"),
+					"USD/KES": decimal.RequireFromString("129.4263"),
+				}),
+			},
+			Store: st,
+			Corridors: []Corridor{
+				{Send: asset.USDC(), Receive: asset.NGNC(), ReferenceBase: "USD", ReferenceQuote: "NGN"},
+				{Send: asset.USDC(), Receive: asset.GHSC(), ReferenceBase: "USD", ReferenceQuote: "GHS"},
+				{Send: asset.USDC(), Receive: asset.KESC(), ReferenceBase: "USD", ReferenceQuote: "KES"},
+			},
+			Logger: quiet(),
+		}
+	}
+
+	// First run: killed while recording the second corridor.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_ = newScheduler(&crashStore{Store: store, crashAt: 2, cancel: cancel}).RunOnce(ctx)
+
+	count := func(st runstore.Store, key string) int {
+		t.Helper()
+		recs, err := st.All(context.Background(), key)
+		if err != nil {
+			t.Fatalf("All(%s): %v", key, err)
+		}
+		return len(recs)
+	}
+	if got := count(store, "USDC-NGNC"); got != 1 {
+		t.Fatalf("after the crash USDC-NGNC has %d records, want 1", got)
+	}
+	for _, key := range []string{"USDC-GHSC", "USDC-KESC"} {
+		if got := count(store, key); got != 0 {
+			t.Fatalf("after the crash %s has %d records, want 0 (never completed)", key, got)
+		}
+	}
+
+	// Restart: a fresh process reopens the same directory.
+	reopened, err := runstore.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := newScheduler(reopened).RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce after restart: %v", err)
+	}
+
+	// No skip: every corridor the crash left unrecorded now has its record
+	// (KESC as UNKNOWN, a visible gap, not an absence). No duplicate: the
+	// corridor recorded before the crash gains exactly one new record.
+	for key, want := range map[string]int{"USDC-NGNC": 2, "USDC-GHSC": 1, "USDC-KESC": 1} {
+		if got := count(reopened, key); got != want {
+			t.Errorf("after restart %s has %d records, want %d", key, got, want)
+		}
+		recs, _ := reopened.All(context.Background(), key)
+		for i, r := range recs {
+			if r.Seq != int64(i+1) {
+				t.Errorf("%s record %d has Seq %d, want %d", key, i, r.Seq, i+1)
+			}
+		}
+		if err := reopened.Verify(context.Background(), key); err != nil {
+			t.Errorf("chain for %s does not verify after restart: %v", key, err)
 		}
 	}
 }
