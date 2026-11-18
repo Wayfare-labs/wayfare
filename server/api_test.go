@@ -385,9 +385,25 @@ func TestUIIsServed(t *testing.T) {
 	if !strings.Contains(page, "corridor integrity monitor") {
 		t.Error("UI does not identify itself")
 	}
-	for _, external := range []string{"src=\"http", "href=\"http", "cdn."} {
+	// "cdn-cgi" is a root-relative path that only exists behind Cloudflare; it
+	// is a network fetch the project does not control and a 404 elsewhere
+	// (issue #477), and the prefixes above do not catch it.
+	for _, external := range []string{"src=\"http", "href=\"http", "cdn.", "cdn-cgi", "challenge-platform"} {
 		if strings.Contains(page, external) {
 			t.Errorf("UI references an external asset (%q); it must be self-contained", external)
+		}
+	}
+
+	// The legend must not widen the document on a phone (issue #476): its
+	// columns must be allowed to shrink below their content, and it must drop
+	// to two columns at the narrow breakpoint.
+	for _, want := range []string{
+		".legend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr))",
+		".legend-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }",
+		".legend-item { display: flex; align-items: center; gap: var(--space-2); min-width: 0;",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("UI legend CSS missing %q; the legend could overflow a phone viewport", want)
 		}
 	}
 }
