@@ -115,8 +115,7 @@ status="live"
 anchor_asset="BTC"
 anchor_asset_type="crypto"
 `
-	var tomlServer *httptest.Server
-	tomlServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	tomlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "stellar.toml") {
 			w.Header().Set("Content-Type", "text/plain")
 			w.Write([]byte(tomlBody))
