@@ -48,8 +48,9 @@ import (
 // a record written by an older build (whose new fields are empty) still
 // encodes to exactly the bytes that were hashed when it was written, and
 // still verifies. Version 4 adds snapshot this way after every Version 3
-// field, so older records still verify unchanged. See docs/run-store.md.
-const Version = 4
+// field, and Version 5 adds correction this way after every Version 4 field,
+// so older records still verify unchanged. See docs/run-store.md.
+const Version = 5
 
 // LegacyVersion is the prior record schema, retained for existing chains.
 const LegacyVersion = 1
@@ -120,6 +121,17 @@ type Rung struct {
 	Path          string `json:"path,omitempty"`
 }
 
+// Correction records an erratum or correction against an earlier record in the chain (issue #729).
+//
+// The chain is append-only: earlier records are never edited in place or deleted, which would
+// break cryptographic hash linkage. Instead, an erratum is recorded by appending a new
+// record with Correction populated, referencing the target sequence number, stating what
+// was wrong and why, and carrying the corrected figures.
+type Correction struct {
+	TargetSeq int64  `json:"target_seq"`
+	Reason    string `json:"reason"`
+}
+
 // Record is one stored corridor measurement.
 //
 // # The preimage rule
@@ -188,6 +200,10 @@ type Record struct {
 	// nil as "chain not available", which is honest rather than fabricated.
 	DependencyChain *route.DependencyChainJSON `json:"dependency_chain,omitempty"`
 
+	// Correction describes an erratum against an earlier sequence number (issue #729).
+	// Optional; omitted when empty so pre-Version 5 record hashes verify unchanged.
+	Correction *Correction `json:"correction,omitempty"`
+
 	PrevHash string `json:"prev_hash"`
 	Hash     string `json:"hash"`
 }
@@ -251,6 +267,11 @@ func (r *Record) VerifySelf() error {
 			r.Seq, short(r.Hash), short(want))
 	}
 	return nil
+}
+
+// IsCorrection reports whether the record is a correction of an earlier record.
+func (r *Record) IsCorrection() bool {
+	return r != nil && r.Correction != nil && r.Correction.TargetSeq > 0
 }
 
 func short(h string) string {

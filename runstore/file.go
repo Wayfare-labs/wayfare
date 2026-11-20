@@ -137,8 +137,12 @@ func decodeLine(corridor string, line int, raw []byte) (*Record, error) {
 				"refusing to guess at a schema it does not know",
 			corridor, line, r.Version, Version)
 	}
-	if r.Version < Version && r.Snapshot != "" {
+	if r.Version < 4 && r.Snapshot != "" {
 		return nil, fmt.Errorf("runstore: %s line %d has a snapshot hash in legacy record version %d",
+			corridor, line, r.Version)
+	}
+	if r.Version < 5 && r.Correction != nil {
+		return nil, fmt.Errorf("runstore: %s line %d has correction metadata in legacy record version %d",
 			corridor, line, r.Version)
 	}
 	return &r, nil
@@ -156,6 +160,16 @@ func verifyChain(corridor string, records []*Record) error {
 				"runstore: %s: record seq %d expects prev_hash %s but the previous record hashes to %s; "+
 					"the chain is broken at position %d",
 				corridor, r.Seq, short(r.PrevHash), short(prev), i)
+		}
+		if r.Correction != nil {
+			if r.Correction.TargetSeq <= 0 || r.Correction.TargetSeq >= r.Seq {
+				return fmt.Errorf("runstore: %s: record seq %d has invalid correction target_seq %d",
+					corridor, r.Seq, r.Correction.TargetSeq)
+			}
+			if strings.TrimSpace(r.Correction.Reason) == "" {
+				return fmt.Errorf("runstore: %s: record seq %d has empty correction reason",
+					corridor, r.Seq)
+			}
 		}
 		prev = r.Hash
 	}
