@@ -884,6 +884,16 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 		},
 	}
 
+	if rec.IsCorrection() {
+		out.Correction = &route.CorrectionJSON{
+			TargetSeq:             rec.Correction.TargetSeq,
+			Reason:                rec.Correction.Reason,
+			IsCorrection:          true,
+			CorrectedFloorLossPct: rec.FloorLossPct,
+			CorrectedWorstLossPct: rec.WorstLossPct,
+		}
+	}
+
 	// The diagnostic is served back from storage when the run carried one, so
 	// a history-served DISAGREE keeps the attribution the live document had.
 	// An older record predates the field and honestly carries none.

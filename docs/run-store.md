@@ -2,9 +2,9 @@
 
 A tamper-evident history of corridor measurements.
 
-**Schema version 4.** Implemented by `runstore/`. Version 1 through 3 chains
+**Schema version 5.** Implemented by `runstore/`. Version 1 through 4 chains
 still load and verify; each migration adds optional fields after the previous
-record shape so old preimages remain unchanged.
+record shape so old preimages remain unchanged. See [correction-records.md](correction-records.md).
 
 ---
 
@@ -375,10 +375,20 @@ Version 3 records have no snapshot link. Version 4 adds the optional
 from JSON, so Version 1 through Version 3 hashes remain unchanged. New records
 written by the monitor carry the content hash of their snapshot artifact.
 
+### Migration to version 5
+
+Version 4 records have no correction mechanism. Version 5 (issue #729) adds the
+optional `correction` block after every prior record field. When absent, it is
+omitted from JSON, so Version 1 through Version 4 hashes remain unchanged.
+When a measurement error in historical data is confirmed, an append-only
+correction record is written to the chain referencing the target sequence number
+and explaining the correction reason. `runstore` accepts versions `1` through `5`.
+See [correction-records.md](correction-records.md).
+
 ### The version-mismatch rule
 
 A record version this build does not recognise is an error, never a best-effort
-parse: `runstore` accepts versions `1` through `4`. Relabelling a record to
+parse: `runstore` accepts versions `1` through `5`. Relabelling a record to
 make it parse is falsification, not migration — a record that says `version: 9`
 is a schema the build cannot speak, and guessing at it would hide the mismatch.
 

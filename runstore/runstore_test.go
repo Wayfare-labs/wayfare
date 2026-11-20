@@ -304,7 +304,7 @@ func TestVersion1ChainOnDiskStillLoads(t *testing.T) {
 
 func TestVersion4RecordHashIncludesSnapshot(t *testing.T) {
 	r := fixedRecord()
-	r.Version = Version
+	r.Version = 4
 	r.Snapshot = "sha256:" + strings.Repeat("a", 64)
 	got, err := r.ComputeHash()
 	if err != nil {
@@ -313,6 +313,33 @@ func TestVersion4RecordHashIncludesSnapshot(t *testing.T) {
 	const want = "sha256:21dc93d0a8c64295c122a0af74c9b9a34eaabd6c2ab6a3387aae9134bae7f753"
 	if got != want {
 		t.Errorf("v4 record hash = %s, want %s", got, want)
+	}
+}
+
+func TestVersion5RecordHashIncludesCorrection(t *testing.T) {
+	r := fixedRecord()
+	r.Version = Version
+	r.Correction = &Correction{
+		TargetSeq: 1,
+		Reason:    "fixing arithmetic discrepancy in rung pricing",
+	}
+	got, err := r.ComputeHash()
+	if err != nil {
+		t.Fatalf("ComputeHash: %v", err)
+	}
+	// Verify that changing the correction reason changes the hash
+	r2 := fixedRecord()
+	r2.Version = Version
+	r2.Correction = &Correction{
+		TargetSeq: 1,
+		Reason:    "different reason",
+	}
+	got2, err := r2.ComputeHash()
+	if err != nil {
+		t.Fatalf("ComputeHash: %v", err)
+	}
+	if got == got2 {
+		t.Errorf("expected different hashes for different correction reasons, got %s", got)
 	}
 }
 

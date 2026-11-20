@@ -9,11 +9,11 @@ image. Rolling back an image changes which code serves the chain; it does not
 retract a measurement that was already recorded. This runbook covers data
 correctness when a published figure itself is wrong.
 
-**Status: interim procedure (manual disclosure; append-only correction records
-tracked in issue #729).** The current `runstore.Record` schema in
-`runstore/runstore.go` has no correction record type yet. Until issue #729
-lands, the repository handles wrong figures through the interim procedure
-below rather than silently editing history.
+**Status: Implemented (append-only correction records, issue #729).** The
+`runstore.Record` schema in `runstore/runstore.go` supports append-only correction
+records (schema version 5). When a bad figure is discovered in an existing chain,
+a correction record is appended to the chain rather than rewriting history.
+See [correction-records.md](correction-records.md) for design and specification details.
 
 ---
 

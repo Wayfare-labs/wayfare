@@ -124,10 +124,9 @@ func BenchmarkMovement(ctx context.Context, store Store, corridor string) ([]*Mo
 // decomposition BenchmarkMovement computes, over whatever window of history
 // the request asked for.
 //
-// The same contract applies: nil means no pair established any movement
-// (fewer than two records, or a chain with neither a scorable benchmark nor
-// a priced rung between consecutive records).
+// Corrections are resolved first so movements reflect true market observations.
 func MovementsFromRecords(records []*Record) []*Movement {
+	records = EffectiveRecords(records)
 	if len(records) < 2 {
 		return nil
 	}
