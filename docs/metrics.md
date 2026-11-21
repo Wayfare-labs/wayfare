@@ -382,14 +382,16 @@ imbalance = bid_depth_in_band / ask_depth_in_band
 ```
 
 The band extends `BandPct` percent above and below the reference mid (default
-5%). Depth is counted as the number of price levels on each side whose price
+5%). Depth is the sum of base-asset amounts of offers on each side whose price
 falls within the band. Both depths are reported as evidence.
 
 **Unit.** Ratio (decimal, where 1.0 means equal depth, > 1 means bid side
-deeper, < 1 means ask side deeper). A measured zero means the bid side is
-empty while the ask side has levels; a measured extreme (1,000,000) means the
-ask side is empty while the bid side has levels. These are **measured
-extremes**, not undetermined results.
+deeper, < 1 means ask side deeper). A measured zero means the bid side has no
+depth in the band while the ask side has depth; a measured extreme (1,000,000)
+means the ask side has no depth in the band while the bid side has depth. This
+sentinel value (1,000,000) represents an infinite ratio and is a fixed upper
+bound for one-sided markets — it is a **measured extreme**, not an undetermined
+result.
 
 **Data source.** Horizon `/order_book` endpoint for the corridor's direct pair;
 `refrate` for the reference mid that defines the band.
