@@ -852,3 +852,118 @@ func TestUITrendIsSelfContained(t *testing.T) {
 		}
 	}
 }
+
+func TestTrendShowsCorrectedRecordsWithBothValues(t *testing.T) {
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	corridor := "USDC-NGNC"
+	ctx := context.Background()
+
+	// Run 1: original buggy run
+	r1 := &runstore.Record{
+		Corridor:     corridor,
+		RecordedAt:   time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC),
+		Integrity:    "DIRECT",
+		FloorLossPct: "80.00", // buggy value
+		WorstLossPct: "95.00",
+		Finding:      "Original faulty calculation",
+		Reference: runstore.Reference{
+			Mid:           "1500.00",
+			Source:        "currency-api",
+			AsOf:          "2026-11-20T10:00:00Z",
+			ScoredAgainst: "currency-api",
+		},
+		Rungs: []runstore.Rung{{
+			SendAmount: "0.1", Priced: true, Integrity: "DIRECT",
+			ReceiveAmount: "30", EffectiveRate: "300", LossPct: "80.00",
+		}},
+	}
+	if err := st.Append(ctx, r1); err != nil {
+		t.Fatalf("Append r1: %v", err)
+	}
+
+	// Run 2: correction record targeting run 1
+	r2 := &runstore.Record{
+		Corridor:     corridor,
+		RecordedAt:   time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC),
+		Integrity:    "DIRECT",
+		FloorLossPct: "20.00", // corrected value
+		WorstLossPct: "25.00",
+		Finding:      "Corrected calculation",
+		Reference: runstore.Reference{
+			Mid:           "1500.00",
+			Source:        "currency-api",
+			AsOf:          "2026-11-20T10:00:00Z",
+			ScoredAgainst: "currency-api",
+		},
+		Correction: &runstore.Correction{
+			TargetSeq: 1,
+			Reason:    "fixed decimal precision error in quote calculation",
+		},
+		Rungs: []runstore.Rung{{
+			SendAmount: "0.1", Priced: true, Integrity: "DIRECT",
+			ReceiveAmount: "120", EffectiveRate: "1200", LossPct: "20.00",
+		}},
+	}
+	if err := st.Append(ctx, r2); err != nil {
+		t.Fatalf("Append r2: %v", err)
+	}
+
+	api := trendServer(t, st)
+	resp, err := http.Get(api.URL + "/api/corridor/trend?to=NGNC")
+	if err != nil {
+		t.Fatalf("GET /api/corridor/trend: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected HTTP 200, got %d", resp.StatusCode)
+	}
+
+	var data TrendJSON
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		t.Fatalf("decoding trend JSON: %v", err)
+	}
+
+	if len(data.Runs) != 2 {
+		t.Fatalf("expected 2 runs, got %d", len(data.Runs))
+	}
+
+	// Run 1: original record should reflect that it was corrected and show both values
+	run1 := data.Runs[0]
+	if run1.Correction == nil {
+		t.Fatalf("expected run 1 to have Correction metadata, got nil")
+	}
+	if !run1.Correction.Corrected {
+		t.Errorf("expected run 1 Correction.Corrected == true")
+	}
+	if run1.Correction.CorrectedBySeq != 2 {
+		t.Errorf("expected CorrectedBySeq == 2, got %d", run1.Correction.CorrectedBySeq)
+	}
+	if run1.Correction.OriginalFloorLossPct != "80.00" {
+		t.Errorf("expected OriginalFloorLossPct 80.00, got %s", run1.Correction.OriginalFloorLossPct)
+	}
+	if run1.Correction.CorrectedFloorLossPct != "20.00" {
+		t.Errorf("expected CorrectedFloorLossPct 20.00, got %s", run1.Correction.CorrectedFloorLossPct)
+	}
+
+	// Run 2: correction record should show that it amends seq 1 and show both values
+	run2 := data.Runs[1]
+	if run2.Correction == nil {
+		t.Fatalf("expected run 2 to have Correction metadata, got nil")
+	}
+	if !run2.Correction.IsCorrection {
+		t.Errorf("expected run 2 Correction.IsCorrection == true")
+	}
+	if run2.Correction.TargetSeq != 1 {
+		t.Errorf("expected TargetSeq == 1, got %d", run2.Correction.TargetSeq)
+	}
+	if run2.Correction.OriginalFloorLossPct != "80.00" {
+		t.Errorf("expected OriginalFloorLossPct 80.00, got %s", run2.Correction.OriginalFloorLossPct)
+	}
+	if run2.Correction.CorrectedFloorLossPct != "20.00" {
+		t.Errorf("expected CorrectedFloorLossPct 20.00, got %s", run2.Correction.CorrectedFloorLossPct)
+	}
+}

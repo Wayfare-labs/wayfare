@@ -11,13 +11,22 @@ PKGS    := ./...
 IMAGE       ?= wayfare:local
 TRIVY_IMAGE ?= aquasec/trivy:0.74.0
 
-.PHONY: all build test race lint fmt vet cover run clean help offline-test docker-build image-scan
+.PHONY: all build test race lint fmt vet cover run clean help offline-test docker-build image-scan build-reproducible
 
 all: fmt vet test build ## Format, vet, test and build
 
 build: ## Build all binaries into bin/
 	@mkdir -p $(BIN)
 	$(GO) build -o $(BIN)/ $(PKGS)
+
+build-reproducible: ## Build wayfared reproducibly (CGO_ENABLED=0, -trimpath, -buildvcs=false, -ldflags="-s -w")
+	@# Reproducible build:
+	@# 1. CGO_ENABLED=0: static compilation without host C compiler or libc differences.
+	@# 2. -trimpath: strips host file system directory paths from the binary.
+	@# 3. -buildvcs=false: eliminates local git status/timestamp variance from build info.
+	@# 4. -ldflags="-s -w": strips symbol table and DWARF debug info.
+	@mkdir -p $(BIN)
+	CGO_ENABLED=0 $(GO) build -trimpath -buildvcs=false -ldflags="-s -w" -o $(BIN)/wayfared ./cmd/wayfared
 
 build-stamped: ## Build all binaries with build provenance stamped via -ldflags
 	@mkdir -p $(BIN)

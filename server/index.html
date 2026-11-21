@@ -2932,12 +2932,30 @@ function runsTable(runs) {
     const src = ref.scored_against || ref.source || 'unknown';
     const div = ref.divergence_pct
       ? ` <span class="case">div ${esc(ref.divergence_pct)}%</span>` : '';
+    let floorCell = `${esc(r.floor_loss_pct)}%`;
+    let worstCell = `${esc(r.worst_loss_pct)}%`;
+    let seqCell = String(r.seq);
+
+    if (r.correction && r.correction.corrected) {
+      seqCell = `${r.seq} <span class="case" style="color:var(--accent)" title="${esc(r.correction.reason)}">[corrected in #${r.correction.corrected_by_seq}]</span>`;
+      floorCell = `<del style="opacity:0.6">${esc(r.correction.original_floor_loss_pct || r.floor_loss_pct)}%</del> <strong style="color:var(--accent)">${esc(r.correction.corrected_floor_loss_pct)}%</strong>`;
+      if (r.correction.corrected_worst_loss_pct) {
+        worstCell = `<del style="opacity:0.6">${esc(r.correction.original_worst_loss_pct || r.worst_loss_pct)}%</del> <strong style="color:var(--accent)">${esc(r.correction.corrected_worst_loss_pct)}%</strong>`;
+      }
+    } else if (r.correction && r.correction.is_correction) {
+      seqCell = `${r.seq} <span class="case" style="color:var(--accent)" title="${esc(r.correction.reason)}">[amends #${r.correction.target_seq}]</span>`;
+      floorCell = `<strong style="color:var(--accent)">${esc(r.floor_loss_pct)}%</strong> <span class="case" title="${esc(r.correction.reason)}">(was <del>${esc(r.correction.original_floor_loss_pct)}%</del>)</span>`;
+      if (r.correction.original_worst_loss_pct) {
+        worstCell = `<strong style="color:var(--accent)">${esc(r.worst_loss_pct)}%</strong> <span class="case">(was <del>${esc(r.correction.original_worst_loss_pct)}%</del>)</span>`;
+      }
+    }
+
     return `<tr>
       <td class="num" data-label="Recorded">${esc(r.recorded_at)}</td>
-      <td class="num" data-label="#">${r.seq}</td>
+      <td class="num" data-label="#">${seqCell}</td>
       <td class="integrity-cell" data-label="Integrity">${integrityCell(r.integrity, r.depends_on || [])}</td>
-      <td class="num" data-label="Floor loss">${esc(r.floor_loss_pct)}%</td>
-      <td class="num" data-label="Worst loss">${esc(r.worst_loss_pct)}%</td>
+      <td class="num" data-label="Floor loss">${floorCell}</td>
+      <td class="num" data-label="Worst loss">${worstCell}</td>
       <td data-label="Reference">${esc(src)}${div}</td>
     </tr>`;
   }).join('');
