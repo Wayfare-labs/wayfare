@@ -136,8 +136,12 @@ type prRecord struct {
 	Title  string  `json:"title"`
 	Body   string  `json:"body"`
 	User   userRef `json:"user"`
-	Head   struct {
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+	Head struct {
 		SHA string `json:"sha"`
+		Ref string `json:"ref"`
 	} `json:"head"`
 	ChangedFiles int `json:"changed_files"`
 	Additions    int `json:"additions"`
@@ -168,7 +172,29 @@ type reviewRec struct {
 	Body     string  `json:"body"`
 }
 
+type statusRec struct {
+	Context     string `json:"context"`
+	State       string `json:"state"`
+	Description string `json:"description,omitempty"`
+}
+
+type statusRecord struct {
+	State    string      `json:"state"`
+	SHA      string      `json:"sha"`
+	Statuses []statusRec `json:"statuses"`
+}
+
+type runRec struct {
+	ID    int    `json:"id"`
+	Event string `json:"event"`
+}
+
+type runsRecord struct {
+	WorkflowRuns []runRec `json:"workflow_runs"`
+}
+
 type commentRec struct {
+	ID   int64   `json:"id"`
 	User userRef `json:"user"`
 	Body string  `json:"body"`
 }
@@ -193,6 +219,8 @@ type fixtures struct {
 	comments    []commentRec
 	issue       issueRec
 	commitPulls []commitRef
+	status      statusRecord
+	runs        runsRecord
 }
 
 func loadFixtures(t *testing.T) *fixtures {
@@ -214,6 +242,14 @@ func loadFixtures(t *testing.T) *fixtures {
 	must(&f.comments, "comments.json")
 	must(&f.issue, "issue.json")
 	must(&f.commitPulls, "commit-pulls.json")
+	must(&f.status, "status.json")
+	f.runs = runsRecord{WorkflowRuns: []runRec{}}
+
+	// The recorded commit predates the malware scan, so its real status list
+	// has no "Malware scan" entry. The gate treats an absent scan as "not
+	// yet" and would wait forever, so the base scenario adds the passing
+	// result the scan publishes today; scenarios override it.
+	f.setMalware("success")
 	return f
 }
 
@@ -235,6 +271,30 @@ func (f *fixtures) write(t *testing.T, dir string) {
 	put("comments.json", f.comments)
 	put("issue.json", f.issue)
 	put("commit-pulls.json", f.commitPulls)
+	put("status.json", f.status)
+	put("runs.json", f.runs)
+}
+
+// setMalware sets the "Malware scan" commit status; "" removes it, which is
+// what a commit the scan has not reported on looks like.
+func (f *fixtures) setMalware(state string) {
+	kept := make([]statusRec, 0, len(f.status.Statuses))
+	for _, st := range f.status.Statuses {
+		if st.Context != "Malware scan" {
+			kept = append(kept, st)
+		}
+	}
+	if state != "" {
+		kept = append(kept, statusRec{Context: "Malware scan", State: state})
+	}
+	f.status.Statuses = kept
+}
+
+// label adds a label to the pull request.
+func (f *fixtures) label(name string) {
+	f.pr.Labels = append(f.pr.Labels, struct {
+		Name string `json:"name"`
+	}{Name: name})
 }
 
 // addFile clones a recorded file entry so a changed file arrives in exactly
@@ -298,6 +358,8 @@ type scenario struct {
 	merged    bool     // expect `gh pr merge --auto`
 	labeled   bool     // expect `gh pr edit --add-label needs-maintainer-review`
 	commented bool     // expect `gh pr comment`
+	edited    bool     // expect the gate's own comment to be edited in place
+	approved  bool     // expect a held workflow run to be approved
 	noCalls   bool     // expect no gh invocation at all
 	wantErr   bool     // expect a non-zero exit
 }
@@ -335,6 +397,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --paginate) ;;
     --jq) shift; expr="${1:-}" ;;
+    -X|-f|-F) shift ;;
     *) [ -n "$path" ] || path="$1" ;;
   esac
   shift
@@ -342,6 +405,14 @@ done
 
 rel="${path#repos/*/*/}"
 case "$rel" in
+  actions/runs/*/approve) echo '{}'; exit 0 ;;
+  actions/runs\?*)        file="runs.json" ;;
+  commits/*/status)     file="status.json" ;;
+  issues/comments/*)
+    jq -r --argjson id "${rel##*/}" ".[] | select(.id == \$id) | ${expr:-.}" "$GATE_FIXTURES/comments.json"
+    exit 0 ;;
+  pulls/*/commits)      echo '[]'; exit 0 ;;
+  graphql)              exit 0 ;;
   */files)              file="files.json" ;;
   commits/*/check-runs) file="check-runs.json" ;;
   pulls/*/reviews)      file="reviews.json" ;;
@@ -540,27 +611,26 @@ func TestAutoMergeGate(t *testing.T) {
 			labeled: true, commented: true,
 		},
 		{
-			// GATE 3, recorded as it actually happened: PR #517's description
-			// carries no checklist at all, and the gate held it for exactly
-			// this reason.
-			name: "checklist-absent",
+			// The PR description is not a gate. #517's description has no
+			// checklist at all; what is judged is the diff against the issue
+			// it resolves, so this merges.
+			name: "description-is-not-a-gate",
 			mutate: func(t *testing.T, f *fixtures) {
-				f.dropHoldMarker()
+				f.pr.Body = ""
+				f.coderabbit("No actionable comments were generated for this review.")
 			},
-			stdout:  []string{"not auto-merging:"},
-			holds:   []string{"no checklist items are ticked"},
-			labeled: true, commented: true,
+			stdout: []string{"all gates satisfied; handing off"},
+			merged: true, commented: true,
 		},
 		{
-			// GATE 3 — one box left open is a request for a human to look.
-			name: "checklist-unticked",
+			// An open checklist box does not hold a PR either.
+			name: "unticked-box-does-not-hold",
 			mutate: func(t *testing.T, f *fixtures) {
 				f.pr.Body = tickedBody + "- [ ] **`make fmt vet test race lint` is clean.**\n"
-				f.dropHoldMarker()
+				f.coderabbit("No actionable comments were generated for this review.")
 			},
-			stdout:  []string{"not auto-merging:"},
-			holds:   []string{"left unticked"},
-			labeled: true, commented: true,
+			stdout: []string{"all gates satisfied; handing off"},
+			merged: true, commented: true,
 		},
 		{
 			// GATE 4 — a red check stops the merge and says which one.
@@ -581,6 +651,7 @@ func TestAutoMergeGate(t *testing.T) {
 			mutate: func(t *testing.T, f *fixtures) {
 				f.pr.Body = tickedBody
 				f.setFirstCheck(t, "in_progress", "")
+				f.coderabbit("No actionable comments were generated for this review.")
 			},
 			stdout: []string{"check(s) still running; will re-evaluate when they finish"},
 		},
@@ -643,27 +714,107 @@ func TestAutoMergeGate(t *testing.T) {
 			labeled: true, commented: true,
 		},
 		{
-			// GATE 7 — with no linked issue there is no stated scope to check
-			// against, so the gate cannot verify one.
-			name: "no-issue-reference",
+			// GATE 7 — the linked issue is found from the branch name when
+			// the description never mentions it (#517's branch is
+			// fix/issue-302-...), and the diff is judged against it.
+			name: "issue-found-from-branch",
 			mutate: func(t *testing.T, f *fixtures) {
-				f.pr.Body = "A description that never names the issue.\n\n- [x] **Confirmed.**\n"
+				f.pr.Body = "No closing keyword here.\n"
+				f.coderabbit("No actionable comments were generated for this review.")
+			},
+			stdout: []string{"all gates satisfied; handing off", "issue #" + issueNumber + " names"},
+			merged: true, commented: true,
+		},
+		{
+			// GATE 7 — with no issue anywhere (description, title, branch,
+			// commits) there is no stated scope to check against.
+			name: "no-issue-anywhere",
+			mutate: func(t *testing.T, f *fixtures) {
+				f.pr.Body = "A description that never names the issue.\n"
+				f.pr.Head.Ref = "fix/announce-results"
 				f.dropHoldMarker()
+				f.coderabbit("No actionable comments were generated for this review.")
 			},
 			stdout:  []string{"not auto-merging:"},
-			holds:   []string{"does not say which issue it closes"},
+			holds:   []string{"could not be linked to an issue"},
 			labeled: true, commented: true,
 		},
 		{
-			// The hold comment is posted once: a second evaluation of an
-			// already-held pull request relabels but stays silent, so a reader
-			// is not followed round by the same message. The recorded
-			// description (no checklist) is what held it, and the recorded
-			// comments already carry the gate's own marker.
-			name:    "hold-comment-deduplicated",
+			// The hold comment is one comment per PR: a later evaluation
+			// edits the gate's own comment in place (here the recorded one is
+			// in the old format) instead of adding another.
+			name:    "hold-comment-edited-in-place",
 			stdout:  []string{"not auto-merging:"},
-			holds:   []string{"no checklist items are ticked"},
-			labeled: true, commented: false,
+			holds:   []string{"CodeRabbit's review could not be parsed"},
+			labeled: true, commented: false, edited: true,
+		},
+		{
+			// MALWARE — a failed scan holds the PR, says so, and approves
+			// nothing, even with a workflow run waiting.
+			name: "malware-status-failed",
+			mutate: func(t *testing.T, f *fixtures) {
+				f.pr.Body = tickedBody
+				f.dropHoldMarker()
+				f.setMalware("failure")
+				f.runs.WorkflowRuns = []runRec{{ID: 99, Event: "pull_request"}}
+				f.coderabbit("No actionable comments were generated for this review.")
+			},
+			stdout:  []string{"not auto-merging:", "not approving CI runs"},
+			holds:   []string{"failed the malware scan"},
+			labeled: true, commented: true, approved: false,
+		},
+		{
+			// MALWARE — the security-hold label alone is enough to hold, even
+			// if the status reads success.
+			name: "security-hold-label",
+			mutate: func(t *testing.T, f *fixtures) {
+				f.pr.Body = tickedBody
+				f.dropHoldMarker()
+				f.label("security-hold")
+				f.runs.WorkflowRuns = []runRec{{ID: 99, Event: "pull_request"}}
+				f.coderabbit("No actionable comments were generated for this review.")
+			},
+			stdout:  []string{"not auto-merging:", "not approving CI runs"},
+			holds:   []string{"is under a security hold"},
+			labeled: true, commented: true, approved: false,
+		},
+		{
+			// MALWARE — a scan that has not reported is not a clean scan.
+			// The gate waits (and approves nothing); it never merges.
+			name: "malware-status-missing",
+			mutate: func(t *testing.T, f *fixtures) {
+				f.pr.Body = tickedBody
+				f.setMalware("")
+				f.runs.WorkflowRuns = []runRec{{ID: 99, Event: "pull_request"}}
+				f.coderabbit("No actionable comments were generated for this review.")
+			},
+			stdout: []string{"not deciding yet: the malware scan has not finished", "not approving CI runs"},
+		},
+		{
+			// APPROVAL — a clean PR whose CI GitHub is holding gets it
+			// released, once, for its own commit.
+			name: "approves-held-ci-when-scan-clean",
+			mutate: func(t *testing.T, f *fixtures) {
+				f.pr.Body = tickedBody
+				f.setFirstCheck(t, "queued", "")
+				f.coderabbit("No actionable comments were generated for this review.")
+				f.runs.WorkflowRuns = []runRec{{ID: 99, Event: "pull_request"}}
+			},
+			stdout:   []string{"approved workflow run 99"},
+			approved: true,
+		},
+		{
+			// APPROVAL — never for a PR that edits workflows.
+			name: "no-approval-when-workflows-edited",
+			mutate: func(t *testing.T, f *fixtures) {
+				f.pr.Body = tickedBody
+				f.dropHoldMarker()
+				f.addFile(".github/workflows/ci.yml")
+				f.runs.WorkflowRuns = []runRec{{ID: 99, Event: "pull_request"}}
+			},
+			stdout:  []string{"PR edits workflows; not approving"},
+			holds:   []string{"touches maintainer-owned paths"},
+			labeled: true, commented: true, approved: false,
 		},
 		{
 			// A CI run that belongs to a merge-queue entry is not a pull
@@ -726,6 +877,12 @@ func TestAutoMergeGate(t *testing.T) {
 			}
 			if comment := called(got.calls, "pr comment "); comment != s.commented {
 				t.Errorf("commented = %v, want %v (gh calls: %v)", comment, s.commented, got.calls)
+			}
+			if edit := called(got.calls, "-X PATCH"); edit != s.edited {
+				t.Errorf("edited own comment = %v, want %v (gh calls: %v)", edit, s.edited, got.calls)
+			}
+			if appr := called(got.calls, "-X POST") && called(got.calls, "/approve"); appr != s.approved {
+				t.Errorf("approved a held run = %v, want %v (gh calls: %v)", appr, s.approved, got.calls)
 			}
 			if s.noCalls && len(got.calls) > 0 {
 				t.Errorf("the gate called gh %d time(s) when it should not have called it at all: %v", len(got.calls), got.calls)
