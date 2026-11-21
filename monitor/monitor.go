@@ -343,10 +343,12 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) (string, error) {
 			recorder.Sources.Horizon.BaseURL = host
 		}
 		if pin.FailedOver() {
-			// Copied rather than appended in place: Scheduler.SnapshotNotes is
-			// one slice shared by every corridor in the sweep, and writing past
-			// its end would put this corridor's outage in the next one's
-			// manifest.
+			// Copied rather than appended in place: recorder.Notes is
+			// Scheduler.SnapshotNotes, the slice every corridor in the sweep
+			// starts from, so an in-place append writes into storage the
+			// scheduler shares. No caller can observe that today — main.go
+			// assigns a composite literal, which leaves no spare capacity — and
+			// it is a leak the moment one passes a slice with room.
 			recorder.Notes = append(append([]string(nil), recorder.Notes...),
 				"answered by the Horizon failover host: "+pin.Host())
 		}
