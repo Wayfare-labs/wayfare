@@ -324,6 +324,13 @@ jobs:
           path: wayfare.cyclonedx.json
           if-no-files-found: error
 
+  # Re-score the committed history under the current engine (issue #716).
+  # Every stored record's verdicts, integrity and recommendation are re-derived
+  # from its stored rungs and reference; any difference the acknowledgements
+  # file does not list fails the job. This catches silent reclassification of
+  # history when thresholds or classification rules change.
+  rescore:
+    name: re-score committed history
   # Reproducible build verification (issue #728).
   # Proves that two builds of wayfared from the same commit in different
   # filesystem paths produce byte-identical binaries bit-for-bit.
@@ -347,6 +354,8 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
+      - name: re-score every committed record against the current engine
+        run: go run ./cmd/wayfared -rescore -data ./data
       - name: build twice in different paths and compare hashes
         run: |
           set -euo pipefail

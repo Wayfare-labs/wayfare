@@ -371,6 +371,84 @@ back unscorable.
 
 ---
 
+### imbalance.bid-ask-depth — Bid/ask depth imbalance
+
+**Definition.** The ratio of bid-side depth to ask-side depth on the direct
+order book, measured within a percentage band around the independent reference
+mid:
+
+```
+imbalance = bid_depth_in_band / ask_depth_in_band
+```
+
+The band extends `BandPct` percent above and below the reference mid (default
+5%). Depth is counted as the number of price levels on each side whose price
+falls within the band. Both depths are reported as evidence.
+
+**Unit.** Ratio (decimal, where 1.0 means equal depth, > 1 means bid side
+deeper, < 1 means ask side deeper). A measured zero means the bid side is
+empty while the ask side has levels; a measured extreme (1,000,000) means the
+ask side is empty while the bid side has levels. These are **measured
+extremes**, not undetermined results.
+
+**Data source.** Horizon `/order_book` endpoint for the corridor's direct pair;
+`refrate` for the reference mid that defines the band.
+
+**What it cannot determine.** Whether the imbalance reflects executable
+liquidity or stale offers. Horizon's `/order_book` does not expose AMM
+liquidity, so the metric measures the book alone. The band is defined against
+the reference mid; a different reference would produce a different band and
+potentially a different ratio.
+
+**Undetermined.** When the corridor has no direct pair by construction
+(NO-MARKET, or DERIVATIVE without an Underlying), no reference rate was
+supplied, or the reference cross-check came back unscorable. An empty book
+(no bids and no asks) is also undetermined. A one-sided book (bids only or
+asks only) produces a determined extreme (0 or 1,000,000), not undetermined.
+
+**Source checked:** `checks/metric_imbalance.go`.
+
+---
+
+### exit-liquidity.reverse-send-loss — Reverse strict-send loss
+
+**Definition.** The cost of converting the fiat token back to USDC, measured as
+the loss against the inverse reference mid at two reverse sizes (small and
+medium). The reverse direction prices the corridor's receive asset (the fiat
+token the recipient holds) back to the send asset (USDC):
+
+```
+reverse_loss = (inverse_mid - effective_rate) / inverse_mid × 100
+```
+
+where `inverse_mid = 1 / reference_mid`. Two rungs are priced: a small size
+(default 0.1 send units) that isolates the spread, and a medium size (default
+10 send units) that exposes depth. The headline value is the medium-size loss
+when it prices, otherwise the small-size loss. Both rungs are reported as
+evidence with their effective rates and loss percentages.
+
+**Unit.** Percent (decimal).
+
+**Data source.** Horizon `/paths/strict-send` for the reverse pair (fiat token
+→ USDC); `refrate` for the reference mid whose inverse prices the reverse
+direction.
+
+**What it cannot determine.** Whether the recipient can actually redeem the
+token for fiat through the anchor — that redemption step is off-chain and not
+priced here. The reference cross-check must be scorable: an unscorable
+benchmark is never treated as a valid inverse mid, and a missing reference
+produces undetermined rather than a guessed loss.
+
+**Undetermined.** When no reference rate was supplied, or the reference
+cross-check came back unscorable. NO-MARKET (no reverse path at either size)
+is a **determined** result with value zero, reported as "no reverse path ...
+the token cannot be exited (NO-MARKET)". This is a measured finding, not an
+absence of measurement.
+
+**Source checked:** `checks/metric_exit_liquidity.go`.
+
+---
+
 ## Route structure metrics
 
 ### fragmentation.paths — Concentration of executable value across paths

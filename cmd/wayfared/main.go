@@ -71,6 +71,10 @@ func main() {
 			"report corridors whose newest record is older than -max-age (or missing) and exit; 1 stale, 2 check unavailable")
 		maxAge = flag.Duration("max-age", 2*monitor.DefaultInterval,
 			"staleness ceiling for -check-fresh; default is two missed sweeps")
+		rescore = flag.Bool("rescore", false,
+			"re-derive every stored classification from its stored rungs and reference and report drift; read-only, exits non-zero on unacknowledged drift")
+		exportChainHeadsFlag = flag.Bool("export-chain-heads", false,
+			"export current chain heads as JSON to stdout and exit")
 		histFirst = flag.Bool("history-first", false,
 			"serve the stored run instead of measuring, unless a request asks for ?live=1")
 		// Per-client request bounds (issue #320). A live measurement is a
@@ -135,8 +139,16 @@ func main() {
 		os.Exit(checkFreshness(store, monitor.DefaultCorridors(), *maxAge, time.Now().UTC(), logger))
 	}
 
-	if *checkFresh {
-		os.Exit(checkFreshness(store, monitor.DefaultCorridors(), *maxAge, time.Now().UTC(), logger))
+	if *rescore {
+		if _, isNop := store.(runstore.Nop); isNop {
+			logger.Error("-rescore requires a data directory with stored history; none is configured")
+			os.Exit(2)
+		}
+		os.Exit(rescoreStore(store, *dataDir, logger))
+	}
+
+	if *exportChainHeadsFlag {
+		os.Exit(exportChainHeads(store, os.Stdout, logger))
 	}
 
 	if !*once && !*serve && *schedule == 0 {

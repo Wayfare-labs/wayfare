@@ -159,6 +159,12 @@ verify must never reach the repository: appending to a broken one buries the
 break under later valid records, and `runstore.Open` refuses to load it
 afterwards.
 
+Each chain head is signed using keyless CI signing (Sigstore OIDC through
+GitHub's built-in attestation). The signature attests that the CI system
+produced this chain head at this commit — not that the figures are correct.
+See [docs/chain-head-signatures.md](chain-head-signatures.md) for the
+verification procedure and what the signature does and does not attest.
+
 ---
 
 ### Redeploying when measurement data lands

@@ -79,6 +79,54 @@ type wireOrderBook struct {
 	Asks []wireOffer `json:"asks"`
 }
 
+// Offer represents a single order book offer with parsed price and amount.
+type Offer struct {
+	Price  decimal.Decimal
+	Amount decimal.Decimal
+}
+
+// OrderBookRaw fetches the raw order book offers with parsed prices and amounts.
+// This is used by metrics that need to compute depth from offer amounts within a price band.
+func (c *Client) OrderBookRaw(ctx context.Context, selling, buying asset.Asset) (bids, asks []Offer, err error) {
+	q := url.Values{}
+	for k, v := range selling.HorizonParams("selling") {
+		q.Set(k, v)
+	}
+	for k, v := range buying.HorizonParams("buying") {
+		q.Set(k, v)
+	}
+	q.Set("limit", "200")
+
+	var body wireOrderBook
+	if err := c.get(ctx, "/order_book", q, &body); err != nil {
+		return nil, nil, err
+	}
+
+	bids = parseOffers(body.Bids)
+	asks = parseOffers(body.Asks)
+	return bids, asks, nil
+}
+
+// parseOffers converts wire offers to parsed Offers, skipping invalid ones.
+func parseOffers(wireOffers []wireOffer) []Offer {
+	offers := make([]Offer, 0, len(wireOffers))
+	for _, o := range wireOffers {
+		p, err := decimal.NewFromString(o.Price)
+		if err != nil || absExponent(p) > maxDecimalExponent {
+			continue
+		}
+		if p.LessThanOrEqual(dustThreshold) {
+			continue
+		}
+		a, err := decimal.NewFromString(o.Amount)
+		if err != nil || !a.IsPositive() || absExponent(a) > maxDecimalExponent {
+			continue
+		}
+		offers = append(offers, Offer{Price: p, Amount: a})
+	}
+	return offers
+}
+
 // dustThreshold is the price below which an offer is treated as abandoned
 // rather than real.
 var dustThreshold = decimal.NewFromFloat(0.0000001)
