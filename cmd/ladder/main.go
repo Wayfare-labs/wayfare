@@ -149,6 +149,8 @@ func main() {
 	eng := &route.Engine{
 		DEX:     dexClient,
 		RefRate: &refrate.Checked{Inner: refProvider},
+		// Records the ledger range the ladder's rungs were priced across.
+		Ledgers: dexClient,
 	}
 
 	// The same counterparty checks the server runs, so -json and
