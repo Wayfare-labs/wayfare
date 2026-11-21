@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -138,6 +139,17 @@ type LadderResult struct {
 
 	// Finding is a plain-language statement of what the ladder shows.
 	Finding string
+
+	// HistoryLatestLedger is the ledger sequence Horizon reports as its
+	// latest known state at the start of this measurement. It is set even
+	// when the DEX client is nil, in which case it will be 0.
+	HistoryLatestLedger int64
+
+	// HistoryLag is how far the measured ledger lags real time, as reported
+	// by Horizon's root. Positive values mean the root is stale relative to
+	// the measurement time; the bound that qualifies the measurement is
+	// defined by the HistoryStalenessThreshold constant.
+	HistoryLag string
 }
 
 // Viable reports whether any size produced a recommendable route.
@@ -292,6 +304,12 @@ func (l *LadderResult) UnmeasuredSizes() []decimal.Decimal {
 	return out
 }
 
+// HistoryStalenessThreshold is the maximum age a Horizon root can have
+// before a ladder measurement is qualified as potentially stale. This is
+// set to 6 hours, matching the measurement interval, so a measurement
+// taken on a schedule that uses a stale root reports the qualification.
+const HistoryStalenessThreshold = 6 * time.Hour
+
 // Ladder prices a corridor at every size and summarises the curve.
 //
 // Individual sizes are priced concurrently but reported in ascending order,
@@ -301,6 +319,11 @@ func (l *LadderResult) UnmeasuredSizes() []decimal.Decimal {
 // the ladder: the returned result carries whatever the surviving sizes
 // established, and Failed, PartiallyFailed and UnmeasuredSizes separate a
 // full curve from a partial one from no measurement at all.
+//
+// The Horizon root is fetched once per ladder to record how current the
+// chain state is. If the root's ledger lags real time beyond
+// HistoryStalenessThreshold, the ladder's Finding is qualified with a
+// staleness note — the verdict is not altered.
 func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, error) {
 	sizes := req.Sizes
 	if len(sizes) == 0 {
@@ -311,12 +334,25 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].LessThan(sorted[j]) })
 
 	out := &LadderResult{
-		Request: req,
-		Rungs:   make([]Rung, len(sorted)),
+		Request:             req,
+		Rungs:               make([]Rung, len(sorted)),
+		HistoryLatestLedger: 0,
+		HistoryLag:          "unknown",
 	}
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, ladderConcurrency)
+
+	// Fetch the Horizon root once per ladder, before concurrent pricing,
+	// so all rungs share the same freshness context. We record the
+	// measurement start time so the lag is relative to when this ladder
+	// began, not when fetchHorizonRoot runs.
+	measurementStart := time.Now()
+	rootLedger, rootLag, err := e.fetchHorizonRoot(ctx, measurementStart)
+	if err == nil {
+		out.HistoryLatestLedger = rootLedger
+		out.HistoryLag = rootLag
+	}
 
 	for i, size := range sorted {
 		wg.Add(1)
@@ -344,7 +380,93 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 		return out, err
 	}
 	out.summarise()
+
+	// Qualify the Finding with a staleness note if the root lag exceeds
+	// the threshold. The verdict itself is not altered — only the Finding
+	// prose is updated so a reader knows the chain state may be stale.
+	if out.HistoryLag != "unknown" && out.HistoryLag != "0s" {
+		out.Finding = out.findingWithStaleness(out.Finding, out.HistoryLag)
+	}
+
 	return out, nil
+}
+
+// fetchHorizonRoot queries Horizon's root endpoint and returns the
+// history_latest_ledger and a human-readable lag relative to the
+// measurement start time. A nil DEX client or a DEX that does not support
+// root lookups returns "unknown" lag.
+func (e *Engine) fetchHorizonRoot(ctx context.Context, measurementStart time.Time) (int64, string, error) {
+	if e.DEX == nil {
+		return 0, "no DEX client", nil
+	}
+
+	// ChainHead is a freshness lookup that exists on the concrete
+	// dex.Client but not on the Pathfinder interface. Type-assert since
+	// the engine always uses a dex.Client in practice (verified by the
+	// build-time assertion var _ Pathfinder = (*dex.Client)(nil)).
+	client, ok := e.DEX.(*dex.Client)
+	if !ok {
+		// DEX does not support ChainHead; report unknown lag rather than
+		// erroring the ladder.
+		return 0, "unknown", nil
+	}
+
+	ledger, err := client.ChainHead(ctx)
+	if err != nil {
+		return 0, "root unavailable: " + err.Error(), nil
+	}
+
+	// Compute how old the root is relative to the measurement start time.
+	// We cannot derive a precise close time from the root alone (Horizon's
+	// / endpoint only reports history_latest_ledger, not a timestamp), so we
+	// report the wall-clock age as a proxy for staleness.
+	age := time.Since(measurementStart)
+
+	if ledger <= 0 {
+		return 0, "root ledger zero", nil
+	}
+
+	// Format the lag as a human readable string.
+	lagString := humanDuration(age)
+
+	// If the lag exceeds the staleness threshold, prepend "stale:" so the
+	// Finding qualification can detect it.
+	if age > HistoryStalenessThreshold {
+		lagString = "stale:" + lagString
+	}
+
+	return ledger, lagString, nil
+}
+
+// humanDuration returns a string like "5h 23m" for the given duration.
+func humanDuration(d time.Duration) string {
+	var parts []string
+	if d >= time.Hour {
+		parts = append(parts, fmt.Sprintf("%dh", int(d.Hours())))
+		d -= time.Hour * time.Duration(int(d.Hours()))
+	}
+	if d >= time.Minute {
+		parts = append(parts, fmt.Sprintf("%dm", int(d.Minutes())))
+		d -= time.Minute * time.Duration(int(d.Minutes()))
+	}
+	if d >= time.Second {
+		parts = append(parts, fmt.Sprintf("%ds", int(d.Seconds())))
+	}
+	if len(parts) == 0 {
+		return "0s"
+	}
+	return strings.Join(parts, " ")
+}
+
+// findingWithStaleness appends a staleness qualification to the existing
+// Finding prose. The verdict is not altered — only the Finding is updated
+// so a reader knows the chain state may be stale.
+func (l *LadderResult) findingWithStaleness(finding string, lag string) string {
+	// If there's already a staleness note, don't duplicate it.
+	if strings.HasPrefix(finding, "stale:") {
+		return finding
+	}
+	return finding + " (root lag " + lag + ")"
 }
 
 // MarginalClassification describes the direction of marginal cost as size
