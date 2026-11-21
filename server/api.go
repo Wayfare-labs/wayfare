@@ -21,6 +21,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/buildinfo"
 	"github.com/Wayfare-labs/wayfare/checks"
+	"github.com/Wayfare-labs/wayfare/failover"
 	"github.com/Wayfare-labs/wayfare/metrics"
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
@@ -343,7 +344,15 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), budget)
 	defer cancel()
 
-	res, err := s.Engine.Ladder(ctx, route.LadderRequest{
+	// One Horizon per ladder (issue #701). The scope covers the measurement and
+	// nothing else: a price curve compares sizes, so a rung priced by a fallback
+	// host would report the two providers' differences as well as the corridor's.
+	// The checks below stay outside it on purpose — they describe an anchor, not
+	// a curve, and a Horizon outage is not this reader's finding to chase.
+	// Which host answered is in the failover transport's log line.
+	ladderCtx, _ := failover.WithPin(ctx)
+
+	res, err := s.Engine.Ladder(ladderCtx, route.LadderRequest{
 		SendAsset:      sendAsset,
 		ReceiveAsset:   recvAsset,
 		Sizes:          sizes,

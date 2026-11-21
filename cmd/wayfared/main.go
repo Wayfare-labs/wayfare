@@ -38,6 +38,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/buildinfo"
 	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/dex"
+	"github.com/Wayfare-labs/wayfare/failover"
 	"github.com/Wayfare-labs/wayfare/metrics"
 	"github.com/Wayfare-labs/wayfare/monitor"
 	"github.com/Wayfare-labs/wayfare/refrate"
@@ -63,6 +64,12 @@ func main() {
 	var (
 		addr    = flag.String("addr", defaultAddr(), "listen address (default follows $PORT when set)")
 		horizon = flag.String("horizon", "", "Horizon base URL (default: mainnet)")
+		// Issue #701, the Option B stopgap from docs/horizon-rpc-migration.md:
+		// a second, independently operated Horizon for the pathfinding traffic
+		// only. Empty means one Horizon and today's behaviour, which is why the
+		// default is empty rather than a host this project does not run.
+		horizonSecondary = flag.String("horizon-secondary", "",
+			"fallback Horizon base URL, used only when the first is down; empty disables failover")
 		timeout = flag.Duration("timeout", 90*time.Second,
 			"ceiling on a live measurement; the budget per request scales with rung count up to this")
 		shutdownGrace = flag.Duration("shutdown-grace", 30*time.Second,
@@ -182,10 +189,31 @@ func main() {
 	// answers.
 	collector := metrics.New()
 
+	// Horizon failover (issue #701). Both addresses are parsed here, at startup,
+	// rather than on the first outage: a typo in the fallback is invisible until
+	// the moment it is the only way to answer, which is the worst possible time
+	// to discover it.
+	//
+	// The order matters twice over. Outside the metrics transport, so each
+	// attempt is the exchange the counters describe and a failover reads as one
+	// server_error plus one success rather than as a healthy upstream. And
+	// inside the client's timeout, so the two attempts share the one budget a
+	// rung was given; a primary that merely runs out of time is not retried
+	// against somebody else's service.
+	horizonFailover, err := failover.New(horizonBase(*horizon), *horizonSecondary,
+		metrics.NewTransport(metrics.UpstreamHorizon, collector, nil))
+	if err != nil {
+		logger.Error("configuring Horizon failover", "error", err)
+		os.Exit(2)
+	}
+
 	engine := &route.Engine{
 		DEX: &dex.Client{
 			HorizonURL: *horizon,
-			HTTPClient: metrics.NewClient(metrics.UpstreamHorizon, collector, horizonTimeout),
+			// horizonTimeout is dex.Client's own default, copied rather than
+			// chosen: replacing the client it builds for itself must not
+			// change how long a rung is allowed to take.
+			HTTPClient: &http.Client{Transport: horizonFailover, Timeout: horizonTimeout},
 			Logger:     logger,
 		},
 		// Two independent providers, each cached, cross-checked for
@@ -219,8 +247,17 @@ func main() {
 	// the runner is the clock, so the process does not need to be long-lived,
 	// and the chain it appends to is the same one a hosted instance would
 	// write. Nothing about the measurement differs.
+	//
+	// Built once for either use: the -once path and the interval path configure
+	// the same snapshots and the same failover, and a second construction would
+	// be a second place for the two to disagree.
+	sched, err := newScheduler(engine, store, *dataDir, *horizon, *horizonSecondary, logger, collector)
+	if err != nil {
+		logger.Error("configuring the scheduler", "error", err)
+		os.Exit(2)
+	}
+
 	if *once {
-		sched := newScheduler(engine, store, *dataDir, *horizon, logger, collector)
 		if err := sched.RunOnce(ctx); err != nil {
 			logger.Error("sweep failed", "error", err)
 			os.Exit(1)
@@ -231,7 +268,6 @@ func main() {
 	var wg sync.WaitGroup
 
 	if *schedule > 0 {
-		sched := newScheduler(engine, store, *dataDir, *horizon, logger, collector)
 		sched.Interval = *schedule
 		sched.Jitter = *scheduleJitter
 		wg.Add(1)
@@ -312,21 +348,25 @@ func shutdownServer(srv *http.Server, grace time.Duration, logger *slog.Logger) 
 	}
 }
 
-func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon string,
-	logger *slog.Logger, collector *metrics.Collector) *monitor.Scheduler {
+// newScheduler wires the scheduled sweep, including the snapshot archive when a
+// data directory was given.
+//
+// The error is only ever about -horizon-secondary: everything else is a
+// constructor. It is still fatal rather than logged-and-ignored, because a
+// fallback host that was rejected at startup is one that will not be there
+// during the outage it was configured for.
+func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon, horizonSecondary string,
+	logger *slog.Logger, collector *metrics.Collector) (*monitor.Scheduler, error) {
 	sched := &monitor.Scheduler{
 		Engine: engine, Store: store, Logger: logger, Metrics: collector,
 		Checks: instrumentedChecksRunner(horizon, collector),
 	}
 	if dataDir == "" {
-		return sched
+		return sched, nil
 	}
 
 	sched.SnapshotDir = filepath.Join(dataDir, "snapshots")
-	horizonURL := horizon
-	if horizonURL == "" {
-		horizonURL = dex.DefaultHorizonURL
-	}
+	horizonURL := horizonBase(horizon)
 	sched.SnapshotSources = snapshot.Sources{
 		Horizon: snapshot.SourceRef{BaseURL: horizonURL},
 		Reference: snapshot.SourceRef{
@@ -338,8 +378,20 @@ func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon s
 		"diagnostic reference provider: floatrates at " + refrate.DefaultFloatRates,
 	}
 	guardedTransport := checks.GuardedClient(30 * time.Second).Transport
+	// The same failover (issue #701) under a recording run, and deliberately in
+	// a different place in the stack than on the live path: beneath the recorder
+	// instead of above it. The recorder stands under every upstream of the run,
+	// so this transport also sees reference-rate and check traffic and moves only
+	// what is aimed at the Horizon it fronts. And because the archive is what a
+	// later reader replays, the decision has to happen below it: a recorder above
+	// the failover would keep the primary's discarded 500 as the fixture for a
+	// query the second host actually answered.
+	snapshotFailover, err := failover.New(horizonURL, horizonSecondary, guardedTransport)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler: %w", err)
+	}
 	sched.SnapshotEngineFactory = func(recorder *snapshot.Recorder) *route.Engine {
-		recorder.Transport = guardedTransport
+		recorder.Transport = snapshotFailover
 		// Each upstream still gets its own labelled transport, and the
 		// recorder stays underneath it: the recorder is what reads and keeps
 		// the response body, so putting it on top would count exchanges whose
@@ -368,7 +420,17 @@ func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon s
 			},
 		}
 	}
-	return sched
+	return sched, nil
+}
+
+// horizonBase resolves the -horizon flag the way dex.Client resolves it, so the
+// failover transport compares requests against the origin the client actually
+// dials rather than against an empty flag.
+func horizonBase(raw string) string {
+	if raw == "" {
+		return dex.DefaultHorizonURL
+	}
+	return raw
 }
 
 // instrumentedChecksRunner builds the counterparty-check runner for a live

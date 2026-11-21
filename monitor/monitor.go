@@ -22,6 +22,7 @@ import (
 
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/checks"
+	"github.com/Wayfare-labs/wayfare/failover"
 	"github.com/Wayfare-labs/wayfare/metrics"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
@@ -281,7 +282,14 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) (string, error) {
 		}
 	}
 
-	result, err := engine.Ladder(ctx, route.LadderRequest{
+	// One Horizon per ladder (issue #701). The scope covers the measurement and
+	// nothing else: a price curve is a comparison across sizes, so a rung priced
+	// by a fallback host would be measuring the two providers' differences as
+	// well as the corridor's. The counterparty checks that run afterwards
+	// deliberately stay outside it — they describe an anchor, not a curve.
+	ladderCtx, pin := failover.WithPin(ctx)
+
+	result, err := engine.Ladder(ladderCtx, route.LadderRequest{
 		SendAsset:      c.Send,
 		ReceiveAsset:   c.Receive,
 		Sizes:          route.DefaultSizes,
@@ -324,6 +332,23 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) (string, error) {
 				return "", fmt.Errorf("monitor: refusing to record incomplete snapshot for %s at size %s",
 					c.Key(), rung.SendAmount)
 			}
+		}
+		// Name the Horizon that answered rather than the one that was asked
+		// (issue #701). The bytes in responses/ came from wherever the ladder
+		// was pinned, and a manifest pointing a reader at the configured
+		// primary during a failover sends them to someone else's logs. Empty
+		// until an exchange settles it, which for a run with no fallback
+		// configured means the configured address stands.
+		if host := pin.Host(); host != "" {
+			recorder.Sources.Horizon.BaseURL = host
+		}
+		if pin.FailedOver() {
+			// Copied rather than appended in place: Scheduler.SnapshotNotes is
+			// one slice shared by every corridor in the sweep, and writing past
+			// its end would put this corridor's outage in the next one's
+			// manifest.
+			recorder.Notes = append(append([]string(nil), recorder.Notes...),
+				"answered by the Horizon failover host: "+pin.Host())
 		}
 		hash, err := snapshot.SaveContentAddressed(s.SnapshotDir, recorder)
 		if err != nil {

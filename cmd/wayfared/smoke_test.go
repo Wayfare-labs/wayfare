@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wayfare-labs/wayfare/metrics"
 	"github.com/Wayfare-labs/wayfare/runstore"
 )
 
@@ -312,4 +314,69 @@ func writeTimestampedChain(t *testing.T, dir, corridor string, times []time.Time
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		t.Fatalf("writing %s: %v", path, err)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// newScheduler and -horizon-secondary (#701)
+// ---------------------------------------------------------------------------
+
+func TestNewSchedulerRejectsAnUnusableFailoverHost(t *testing.T) {
+	// Every value here would name an address no request can match, which is
+	// failover configured and failover absent — except that nothing says so.
+	// The rejection has to happen at startup: a fallback refused during the
+	// outage is one that was not there when it was needed.
+	tests := []string{
+		"horizon.example.org",
+		"https://horizon.example.org/api",
+		"ftp://horizon.example.org",
+	}
+	for _, secondary := range tests {
+		sched, err := newScheduler(nil, nil, t.TempDir(), "", secondary, quietLogger(), metrics.New())
+		if err == nil {
+			t.Errorf("-horizon-secondary=%q was accepted", secondary)
+		}
+		if sched != nil {
+			t.Errorf("-horizon-secondary=%q was accepted and returned a scheduler", secondary)
+		}
+		// The operator has to learn which setting is wrong and what wrong means;
+		// a bare "invalid URI" from net/url would not survive a config file.
+		if err != nil && !strings.Contains(err.Error(), "failover") {
+			t.Errorf("-horizon-secondary=%q error = %v, want it to name the failover host", secondary, err)
+		}
+	}
+}
+
+func TestNewSchedulerAcceptsAFailoverHostAndRecordsIt(t *testing.T) {
+	dataDir := t.TempDir()
+	sched, err := newScheduler(nil, nil, dataDir, "https://horizon.example.org",
+		"https://backup.example.org", quietLogger(), metrics.New())
+	if err != nil {
+		t.Fatalf("newScheduler with a configured failover host: %v", err)
+	}
+	if sched == nil {
+		t.Fatal("newScheduler returned no scheduler")
+	}
+	if got := sched.SnapshotSources.Horizon.BaseURL; got != "https://horizon.example.org" {
+		t.Errorf("recorded Horizon source = %q, want the host the run is configured against", got)
+	}
+	if sched.SnapshotEngineFactory == nil {
+		t.Error("a data directory must produce a recording engine factory")
+	}
+}
+
+func TestNewSchedulerWithNoFailoverHostStillStarts(t *testing.T) {
+	// The flag is optional and empty is its default, so "not configured" must
+	// not read as a bad value: refusing to start here would take the service
+	// down for the absence of a stopgap.
+	sched, err := newScheduler(nil, nil, t.TempDir(), "", "", quietLogger(), metrics.New())
+	if err != nil {
+		t.Fatalf("newScheduler without -horizon-secondary: %v", err)
+	}
+	if sched.SnapshotEngineFactory == nil {
+		t.Error("recording must stay available when failover is off")
+	}
+}
+
+func quietLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
