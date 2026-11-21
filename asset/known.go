@@ -294,10 +294,11 @@ var registry = []Entry{
 }
 
 var (
-	known       = make(map[string]Asset)
-	fiatPegs    = make(map[string]string)
-	homeDomains = make(map[string]string)
-	entries     = make(map[string]Entry)
+	known           = make(map[string]Asset)
+	fiatPegs        = make(map[string]string)
+	homeDomains     = make(map[string]string)
+	entries         = make(map[string]Entry)
+	verifiedIssuers = make(map[string]struct{})
 )
 
 func init() {
@@ -314,6 +315,7 @@ func init() {
 			homeDomains[e.Issuer] = e.HomeDomain
 		}
 		entries[e.Code+":"+e.Issuer] = e
+		verifiedIssuers[e.Issuer] = struct{}{}
 	}
 }
 
@@ -424,6 +426,23 @@ func HomeDomain(a Asset) (string, bool) {
 	}
 	d, ok := homeDomains[a.Issuer]
 	return d, ok
+}
+
+// IsVerifiedIssuer reports whether an account appears as an issuer in the
+// verified registry.
+//
+// It is a membership test, not an assessment: a registered issuer may still
+// enable freeze or clawback, and this says nothing about how it will behave.
+// What it does establish is that the account was read from a published
+// stellar.toml and recorded, rather than being an identity the project has
+// never seen. Callers report the absence of that fact; they must not treat it
+// as proof of misconduct.
+func IsVerifiedIssuer(issuer string) bool {
+	if strings.TrimSpace(issuer) == "" {
+		return false
+	}
+	_, ok := verifiedIssuers[issuer]
+	return ok
 }
 
 // FiatPeg reports the ISO-4217 currency a Stellar token claims to track, and

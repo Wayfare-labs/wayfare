@@ -10,6 +10,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
 )
@@ -50,6 +51,14 @@ type Rung struct {
 	// components. It is populated when the rung priced; an unpriced rung
 	// carries an empty decomposition, which rendering omits entirely.
 	Decomposition CostDecomposition
+
+	// Findings are counterparty facts about the rung's own best path. Today
+	// that is the unverified-intermediate check: hops through assets whose
+	// issuers are not in the verified registry. It is populated only when
+	// there is something to report, and it never feeds back into Result —
+	// the verdict, loss figures and integrity are scored before this is
+	// computed.
+	Findings *checks.Findings
 
 	// Err is set when this size alone failed to price, so one transient
 	// failure does not discard the whole ladder.
@@ -480,6 +489,10 @@ func (l *LadderResult) summarise() {
 		// percentage, computed against the corridor's reference mid.
 		l.Rungs[i].Decomposition = Decompose(q, l.ReferenceMid)
 
+		// Counterparty facts describe the path this rung priced, after the
+		// quote is already scored. Nothing here can move the verdict.
+		l.Rungs[i].Findings = rungFindings(&q, l.Request)
+
 		if l.FloorSize.IsZero() {
 			l.Floor = q.LossPct
 			l.FloorSize = r.SendAmount
@@ -526,6 +539,33 @@ func (l *LadderResult) summarise() {
 	l.Curve = l.buildCurve()
 	l.computeMarginalCosts()
 	l.Finding = l.finding(anyPriced, firstErr)
+}
+
+// rungFindings reports counterparty facts about one rung's best path.
+//
+// The check is CostFree — it reads the hops pathfinding already returned — so
+// no additional upstream call is made. A passing result is dropped: a rung
+// with every issuer verified has no finding to report, and an absent findings
+// block keeps the wire honest for the common case.
+//
+// The check is run through checks.Run rather than called directly so its
+// descriptor is validated and a panic becomes an undetermined result instead
+// of taking down the ladder.
+func rungFindings(q *Quote, req LadderRequest) *checks.Findings {
+	if q == nil {
+		return nil
+	}
+	res := checks.Run(context.Background(), checks.UnverifiedIntermediate{}, checks.Subject{
+		Send:    req.SendAsset,
+		Receive: req.ReceiveAsset,
+		Hops:    q.Hops,
+	})
+	if res.Determined && res.Passed {
+		return nil
+	}
+	f := &checks.Findings{}
+	f.Add(res)
+	return f
 }
 
 // finding states what the ladder shows, in the terms a reader needs.

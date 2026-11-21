@@ -172,6 +172,18 @@ type Subject struct {
 	Send    asset.Asset
 	Receive asset.Asset
 
+	// Hops are the intermediate assets a corridor's best path routes
+	// through, in execution order, between Send and Receive. They are
+	// populated only when a caller has a priced path to offer — the ladder
+	// sets them per rung from the selected quote's hops, so the fact is
+	// about that rung rather than the corridor as a whole.
+	//
+	// Empty means the best path has no intermediate assets. A check that
+	// needs to distinguish "no hops" from "hops were not supplied" cannot
+	// do so from this field; such a check must only be run where the caller
+	// holds a real quote.
+	Hops []asset.Asset
+
 	// Profile is an already-resolved stellar.toml, when one is available.
 	// A CostFree check reads this rather than fetching anything.
 	//

@@ -114,8 +114,17 @@ type RungJSON struct {
 	PathCount    int            `json:"path_count,omitempty"`
 	Quote        *QuoteJSON     `json:"quote"`
 	Cost         *CostBlockJSON `json:"cost,omitempty"`
-	Notes        []string       `json:"notes"`
-	Error        string         `json:"error,omitempty"`
+
+	// Findings are counterparty facts about this rung's own best path —
+	// today, intermediate hop issuers absent from the verified registry.
+	// They are per rung because each size can price a different path, so a
+	// corridor-wide block would claim the wrong exposure for some sizes.
+	// Absent when there is nothing to report; it never feeds back into the
+	// quote or the verdict above.
+	Findings *checks.FindingsJSON `json:"findings,omitempty"`
+
+	Notes []string `json:"notes"`
+	Error string   `json:"error,omitempty"`
 }
 
 // ReferenceDiagnosticJSON is the third-provider attribution of a DISAGREE.
@@ -553,6 +562,10 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 		}
 		if len(r.Decomposition.Parts) > 0 {
 			rj.Cost = ToCostBlockJSON(r.Decomposition)
+		}
+		if r.Findings != nil {
+			j := r.Findings.ToJSON()
+			rj.Findings = &j
 		}
 		out.Rungs = append(out.Rungs, rj)
 	}
