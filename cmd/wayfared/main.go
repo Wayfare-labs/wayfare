@@ -38,12 +38,25 @@ import (
 	"github.com/Wayfare-labs/wayfare/buildinfo"
 	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/dex"
+	"github.com/Wayfare-labs/wayfare/metrics"
 	"github.com/Wayfare-labs/wayfare/monitor"
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
 	"github.com/Wayfare-labs/wayfare/server"
 	"github.com/Wayfare-labs/wayfare/snapshot"
+)
+
+// The wait each upstream package gives a client it builds for itself: 20s in
+// dex.Client.httpClient and 10s in each of refrate's three providers. Wiring an
+// instrumented client replaces that default client, so the number has to be
+// copied rather than chosen — metrics.NewClient states the rule, and each copy
+// names where it came from. checks needs neither: it builds a client to pass in,
+// so it takes the guarded client's own timeout back (see
+// instrumentedChecksRunner).
+const (
+	horizonTimeout   = 20 * time.Second
+	referenceTimeout = 10 * time.Second
 )
 
 func main() {
@@ -161,20 +174,41 @@ func main() {
 	refrate.SetLogger(logger)
 	server.SetLogger(logger)
 
+	// One collector for the process (issue #705). It is passed to the HTTP
+	// server, the scheduler and the limiter, and it is what each upstream
+	// client below records through. Nothing else is constructed with it: the
+	// counters describe this process, which is what the exposition says, and
+	// a second collector would double-count or split one request across two
+	// answers.
+	collector := metrics.New()
+
 	engine := &route.Engine{
-		DEX: &dex.Client{HorizonURL: *horizon, Logger: logger},
+		DEX: &dex.Client{
+			HorizonURL: *horizon,
+			HTTPClient: metrics.NewClient(metrics.UpstreamHorizon, collector, horizonTimeout),
+			Logger:     logger,
+		},
 		// Two independent providers, each cached, cross-checked for
 		// divergence. Caching matters here specifically: a ladder is a
 		// dozen quotes that would otherwise each fetch the same mid.
 		RefRate: &refrate.Cross{
-			Primary:   &refrate.Cached{Inner: &refrate.ExchangeRateAPI{Logger: logger}},
-			Secondary: &refrate.Cached{Inner: &refrate.CurrencyAPI{Logger: logger}},
+			Primary: &refrate.Cached{Inner: &refrate.ExchangeRateAPI{
+				Client: metrics.NewClient(metrics.UpstreamExchangeRateAPI, collector, referenceTimeout),
+				Logger: logger,
+			}},
+			Secondary: &refrate.Cached{Inner: &refrate.CurrencyAPI{
+				Client: metrics.NewClient(metrics.UpstreamCurrencyAPI, collector, referenceTimeout),
+				Logger: logger,
+			}},
 			// The third provider is consulted only when the first two
 			// disagree, and only to attribute which of them is the outlier.
 			// It never contributes a scored mid (see refrate.Cross). Cached
 			// because a sweep prices many rungs and a diagnostic is a
 			// daily-published figure, not a per-rung one.
-			Diagnostic: &refrate.Cached{Inner: &refrate.FloatRates{Logger: logger}},
+			Diagnostic: &refrate.Cached{Inner: &refrate.FloatRates{
+				Client: metrics.NewClient(metrics.UpstreamFloatRates, collector, referenceTimeout),
+				Logger: logger,
+			}},
 		},
 	}
 
@@ -186,7 +220,7 @@ func main() {
 	// and the chain it appends to is the same one a hosted instance would
 	// write. Nothing about the measurement differs.
 	if *once {
-		sched := newScheduler(engine, store, *dataDir, *horizon, logger)
+		sched := newScheduler(engine, store, *dataDir, *horizon, logger, collector)
 		if err := sched.RunOnce(ctx); err != nil {
 			logger.Error("sweep failed", "error", err)
 			os.Exit(1)
@@ -197,7 +231,7 @@ func main() {
 	var wg sync.WaitGroup
 
 	if *schedule > 0 {
-		sched := newScheduler(engine, store, *dataDir, *horizon, logger)
+		sched := newScheduler(engine, store, *dataDir, *horizon, logger, collector)
 		sched.Interval = *schedule
 		sched.Jitter = *scheduleJitter
 		wg.Add(1)
@@ -212,16 +246,19 @@ func main() {
 	}
 
 	if *serve {
+		limiter := server.NewRateLimiter(*rateLimit, *rateBurst)
 		srv := &server.Server{
 			Engine:       engine,
 			Store:        store,
 			Timeout:      *timeout,
 			HistoryFirst: *histFirst,
-			Checks:       &checks.Runner{HorizonURL: *horizon},
-			// Nil when limiting is disabled (rate 0 or burst 0): the field is
-			// optional on Server, and a disabled limiter should be absent
-			// rather than present and inert.
-			Limiter: server.NewRateLimiter(*rateLimit, *rateBurst),
+			Checks:       instrumentedChecksRunner(*horizon, collector),
+			// The limiter is always mounted; a non-positive -rate-limit or
+			// -rate-burst makes it approve everything rather than making it
+			// absent. Server.limit gives it this same collector, so the
+			// refusals count in the document this process serves.
+			Limiter: limiter,
+			Metrics: collector,
 		}
 		httpSrv := &http.Server{
 			Addr:              *addr,
@@ -276,10 +313,10 @@ func shutdownServer(srv *http.Server, grace time.Duration, logger *slog.Logger) 
 }
 
 func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon string,
-	logger *slog.Logger) *monitor.Scheduler {
+	logger *slog.Logger, collector *metrics.Collector) *monitor.Scheduler {
 	sched := &monitor.Scheduler{
-		Engine: engine, Store: store, Logger: logger,
-		Checks: &checks.Runner{HorizonURL: horizon},
+		Engine: engine, Store: store, Logger: logger, Metrics: collector,
+		Checks: instrumentedChecksRunner(horizon, collector),
 	}
 	if dataDir == "" {
 		return sched
@@ -303,25 +340,57 @@ func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon s
 	guardedTransport := checks.GuardedClient(30 * time.Second).Transport
 	sched.SnapshotEngineFactory = func(recorder *snapshot.Recorder) *route.Engine {
 		recorder.Transport = guardedTransport
-		client := &http.Client{Transport: recorder, Timeout: 30 * time.Second}
+		// Each upstream still gets its own labelled transport, and the
+		// recorder stays underneath it: the recorder is what reads and keeps
+		// the response body, so putting it on top would count exchanges whose
+		// bytes were never captured, and the snapshot would be empty.
+		client := func(upstream string) *http.Client {
+			return &http.Client{
+				Transport: metrics.NewTransport(upstream, collector, recorder),
+				Timeout:   30 * time.Second,
+			}
+		}
 		return &route.Engine{
-			DEX: &dex.Client{HorizonURL: horizon, HTTPClient: client, Logger: logger},
+			DEX: &dex.Client{HorizonURL: horizon, HTTPClient: client(metrics.UpstreamHorizon), Logger: logger},
 			RefRate: &refrate.Cross{
-				Primary: &refrate.Cached{Inner: &refrate.ExchangeRateAPI{Client: client, Logger: logger}},
-				Secondary: &refrate.Cached{
-					Inner: &refrate.CurrencyAPI{Client: client, Logger: logger},
-				},
-				Diagnostic: &refrate.Cached{Inner: &refrate.FloatRates{Client: client, Logger: logger}},
+				Primary:    &refrate.Cached{Inner: &refrate.ExchangeRateAPI{Client: client(metrics.UpstreamExchangeRateAPI), Logger: logger}},
+				Secondary:  &refrate.Cached{Inner: &refrate.CurrencyAPI{Client: client(metrics.UpstreamCurrencyAPI), Logger: logger}},
+				Diagnostic: &refrate.Cached{Inner: &refrate.FloatRates{Client: client(metrics.UpstreamFloatRates), Logger: logger}},
 			},
 		}
 	}
 	sched.SnapshotChecksFactory = func(recorder *snapshot.Recorder) *checks.Runner {
 		return &checks.Runner{
 			HorizonURL: horizon,
-			HTTPClient: &http.Client{Transport: recorder, Timeout: 30 * time.Second},
+			HTTPClient: &http.Client{
+				Transport: metrics.NewTransport(metrics.UpstreamChecks, collector, recorder),
+				Timeout:   30 * time.Second,
+			},
 		}
 	}
 	return sched
+}
+
+// instrumentedChecksRunner builds the counterparty-check runner for a live
+// deployment, with its traffic counted.
+//
+// The client here cannot be metrics.NewClient. Every URL a check reaches — a
+// stellar.toml, a declared auth endpoint — is published by the party being
+// audited, so checks use an SSRF-guarded client that refuses private and
+// loopback addresses and re-validates each redirect hop. Replacing that with a
+// plain instrumented client would have traded the guard for a counter. Instead
+// the guard stays where it is, and the instrumentation wraps its transport and
+// carries back its timeout and redirect policy unchanged.
+func instrumentedChecksRunner(horizon string, collector *metrics.Collector) *checks.Runner {
+	guarded := checks.GuardedClient(0) // zero takes the package's own default
+	return &checks.Runner{
+		HorizonURL: horizon,
+		HTTPClient: &http.Client{
+			Transport:     metrics.NewTransport(metrics.UpstreamChecks, collector, guarded.Transport),
+			Timeout:       guarded.Timeout,
+			CheckRedirect: guarded.CheckRedirect,
+		},
+	}
 }
 
 // openStore opens the run store, or returns a no-op store when history is off.

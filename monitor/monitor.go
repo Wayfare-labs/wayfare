@@ -22,6 +22,7 @@ import (
 
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/checks"
+	"github.com/Wayfare-labs/wayfare/metrics"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
 	"github.com/Wayfare-labs/wayfare/snapshot"
@@ -110,6 +111,15 @@ type Scheduler struct {
 
 	// Logger is where run outcomes go. Nil means slog.Default.
 	Logger *slog.Logger
+
+	// Metrics counts each corridor's sweep outcome (issue #705): measured,
+	// failed, or measured and then refused by the store. Nil observes nothing.
+	//
+	// The scheduler reports what it did; the upstream counters come from the
+	// instrumented HTTP clients it is handed, so a Scheduler run without them
+	// still answers "did the sweep record this corridor" and says nothing
+	// about why it did not.
+	Metrics *metrics.Collector
 
 	// Now is the clock, for tests. Nil means time.Now.
 	Now func() time.Time
@@ -222,11 +232,14 @@ func (s *Scheduler) RunOnce(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := s.measure(ctx, c); err != nil {
+		outcome, err := s.measure(ctx, c)
+		if err != nil {
+			outcome = metrics.SweepFailed
 			failures++
 			s.log().Error("corridor measurement failed",
 				"corridor", c.Key(), "error", err)
 		}
+		s.Metrics.Sweep(c.Key(), outcome)
 	}
 
 	if failures == len(s.corridors()) && failures > 0 {
@@ -236,13 +249,18 @@ func (s *Scheduler) RunOnce(ctx context.Context) error {
 }
 
 // measure runs one corridor's ladder and appends the result.
-func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
+//
+// It reports the sweep outcome alongside the error so that RunOnce is the only
+// place a corridor is counted: "measured but the store refused it" is visible
+// here and nowhere else, and splitting the two observations across functions
+// would let a future early return count a sweep twice.
+func (s *Scheduler) measure(ctx context.Context, c Corridor) (string, error) {
 	started := s.now()
 	engine := s.Engine
 	var recorder *snapshot.Recorder
 	if s.SnapshotDir != "" {
 		if s.SnapshotEngineFactory == nil {
-			return fmt.Errorf("monitor: snapshot directory configured without a snapshot engine factory")
+			return "", fmt.Errorf("monitor: snapshot directory configured without a snapshot engine factory")
 		}
 		recorder = &snapshot.Recorder{
 			Corridor: snapshot.Corridor{
@@ -259,7 +277,7 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 		}
 		engine = s.SnapshotEngineFactory(recorder)
 		if engine == nil {
-			return fmt.Errorf("monitor: snapshot engine factory returned nil for %s", c.Key())
+			return "", fmt.Errorf("monitor: snapshot engine factory returned nil for %s", c.Key())
 		}
 	}
 
@@ -271,7 +289,7 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 		ReferenceQuote: c.ReferenceQuote,
 	})
 	if err != nil {
-		return fmt.Errorf("measuring %s: %w", c.Key(), err)
+		return "", fmt.Errorf("measuring %s: %w", c.Key(), err)
 	}
 
 	pair := c.ReferenceBase + "/" + c.ReferenceQuote
@@ -286,7 +304,7 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 	if recorder != nil && s.SnapshotChecksFactory != nil {
 		checkRunner = s.SnapshotChecksFactory(recorder)
 	} else if recorder != nil && checkRunner != nil {
-		return fmt.Errorf("monitor: snapshot checks require a recorder-backed checks factory")
+		return "", fmt.Errorf("monitor: snapshot checks require a recorder-backed checks factory")
 	}
 	if checkRunner != nil {
 		live = route.WithFindings(live, checkRunner.ForCorridor(ctx, checks.Corridor{
@@ -303,13 +321,13 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 	if recorder != nil {
 		for _, rung := range result.Rungs {
 			if rung.Err != nil || rung.Result == nil || rung.Result.Integrity == route.IntegrityUnknown {
-				return fmt.Errorf("monitor: refusing to record incomplete snapshot for %s at size %s",
+				return "", fmt.Errorf("monitor: refusing to record incomplete snapshot for %s at size %s",
 					c.Key(), rung.SendAmount)
 			}
 		}
 		hash, err := snapshot.SaveContentAddressed(s.SnapshotDir, recorder)
 		if err != nil {
-			return fmt.Errorf("monitor: recording snapshot artifact for %s: %w", c.Key(), err)
+			return "", fmt.Errorf("monitor: recording snapshot artifact for %s: %w", c.Key(), err)
 		}
 		record.Snapshot = hash
 	}
@@ -346,10 +364,15 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 	// already happened, and the reader is better served by a logged write
 	// failure than by a sweep that reports success only when both the
 	// network and the disk cooperated.
+	//
+	// It is still counted as a distinct outcome, because the history now has
+	// a hole this corridor did not cause. An operator alerting on failures
+	// would otherwise never learn the disk is full: the sweep looked healthy,
+	// and the trend chart simply stopped having points.
 	if err := s.store().Append(ctx, record); err != nil {
 		s.log().Error("recording measurement failed",
 			"corridor", c.Key(), "error", err)
-		return nil
+		return metrics.SweepUnrecorded, nil
 	}
 
 	// The run is stored, so the corridor's structure can now be compared
@@ -358,7 +381,7 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 	// until now nothing called the detector that finds it: the change was
 	// visible only by diffing stored records by hand.
 	s.reportTransition(ctx, c.Key())
-	return nil
+	return metrics.SweepOK, nil
 }
 
 func (s *Scheduler) issuerDriftBaseline(ctx context.Context, corridor string) *checks.IssuerDriftBaseline {

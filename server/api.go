@@ -21,6 +21,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/buildinfo"
 	"github.com/Wayfare-labs/wayfare/checks"
+	"github.com/Wayfare-labs/wayfare/metrics"
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
@@ -68,6 +69,18 @@ type Server struct {
 	// it. Tests that hammer one endpoint build their own Server or call
 	// NewRateLimiter with a disabled configuration.
 	Limiter *RateLimiter
+
+	// Metrics receives the counters served at /metrics (issue #705): how each
+	// live measurement attempt ended, and how long it took. Nil makes every
+	// observation a no-op — the collector's methods are nil-safe — so a Server
+	// built without one behaves exactly as it did before the field existed,
+	// and /metrics answers with declared families and nothing observed.
+	//
+	// The server owns only the live-request series. Upstream exchanges are
+	// counted by the instrumented clients in cmd/wayfared, because that is
+	// where every request — sweep or live — is visible with its status
+	// intact; see metrics.Transport.
+	Metrics *metrics.Collector
 
 	// now is the clock the handlers stamp a "generated at" field with. It is
 	// swapped in tests, which pin it so the timestamp can be frozen in a
@@ -159,6 +172,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/badge/", s.handleBadge)
 	mux.HandleFunc("/feed.atom", s.handleFeed)
 	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.HandleFunc("/metrics", s.handleMetrics)
 	mux.Handle("/", s.uiHandler())
 	return withCORS(withGzip(s.limit(mux)))
 }
@@ -175,9 +189,18 @@ func (s *Server) handleDeprecatedAlias(target string, next http.HandlerFunc) htt
 // limit applies the configured rate limiter, or passes through unchanged
 // when none is set. The nil case is the zero-value Server: every existing
 // constructor that does not mention limiting keeps its old behaviour.
+//
+// The limiter reports its own rejections, and the collector a process has is
+// the server's, so the two are joined here rather than at every call site: an
+// operator watching wayfare_rate_limit_rejections_total cannot tell "the limit
+// is never hit" from "nobody wired the counter", and the second one is silent.
+// A limiter that was given its own collector keeps it.
 func (s *Server) limit(next http.Handler) http.Handler {
 	if s.Limiter == nil {
 		return next
+	}
+	if s.Limiter.Metrics == nil {
+		s.Limiter.Metrics = s.Metrics
 	}
 	return s.Limiter.middleware(next)
 }
@@ -342,6 +365,12 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		// project, by returning a plausible number instead of admitting
 		// it does not currently know.
 		if rec, stale, ok := s.staleFor(ctx, sendAsset.Code, recvAsset.Code, pegBase+"/"+pegQuote); ok {
+			// The reader got a number, and it is not current. That is a
+			// distinct operational outcome from a measurement that worked,
+			// and the only way to see it without reading the log: the
+			// response itself carries the stale envelope, the counter says
+			// how often it is being needed.
+			s.Metrics.LiveRequest(metrics.LiveStale, time.Since(started))
 			writeHistoryJSON(w, r, rec, stale)
 			log().Info("corridor measured",
 				"method", r.Method,
@@ -357,6 +386,10 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusBadGateway
 		code := codeMeasurementFailed
 		if errors.Is(err, context.DeadlineExceeded) {
+			// The attempt ran out of the budget the rung count was given,
+			// with no history behind it. Recorded before the response is
+			// written so the duration is the measurement's, not the write's.
+			s.Metrics.LiveRequest(metrics.LiveTimeout, time.Since(started))
 			completed := []string{}
 			if res != nil {
 				for _, d := range res.CompletedSizes() {
@@ -373,6 +406,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		s.Metrics.LiveRequest(metrics.LiveError, time.Since(started))
 		writeError(w, r, status, code, "measuring corridor: "+err.Error())
 		return
 	}
@@ -394,6 +428,11 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 			FloorEffectiveRate: res.FloorEffectiveRate,
 		}))
 	}
+
+	// The attempt produced a measurement, which is the one outcome whose
+	// absence is the alert. Duration includes the checks, because the reader
+	// waited through both.
+	s.Metrics.LiveRequest(metrics.LiveMeasured, time.Since(started))
 
 	writeJSON(w, r, http.StatusOK, out)
 
