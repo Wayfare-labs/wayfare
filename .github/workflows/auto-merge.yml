@@ -61,6 +61,10 @@ permissions:
   # issue normally.
   issues: write
 
+  # Approving the CI runs GitHub holds for first-time fork contributors
+  # (POST /actions/runs/{id}/approve). See the APPROVAL step below.
+  actions: write
+
 # No concurrency group: the script deduplicates comments via the
 # <!-- auto-merge-gate --> marker, and the workflow_run re-evaluation
 # after CI finishes must not be cancelled by the earlier pull_request_target
@@ -154,8 +158,17 @@ jobs:
             exit 0
           fi
 
-          # Collected reasons the PR is not auto-mergeable. Empty means merge.
+          # Reasons the PR is not auto-mergeable, each paired with what the
+          # contributor can do about it. Empty means merge.
+          #
+          # "waiting" is separate: a verdict is not possible *yet* (CI or
+          # CodeRabbit has not reported). Waiting alone never comments, but a
+          # real reason found while waiting is reported straight away, so a
+          # contributor is not left in silence on a PR that cannot merge.
           reasons=()
+          fixes=()
+          waiting=()
+          hold() { reasons+=("$1"); fixes+=("$2"); }
 
           # ---------------------------------------------------------------
           # GATE 0 — no malicious code.
@@ -195,10 +208,14 @@ jobs:
           }
           case "$scan_rc" in
             0|4) echo "malware scan: ok (rc=$scan_rc)" ;;
-            1) reasons+=("contains code matching known malicious patterns ($(scan_where BLOCK)) — do not check this branch out locally")
+            1) hold "contains code matching known malicious patterns ($(scan_where BLOCK)) — do not check this branch out locally" \
+                    "Remove the flagged code and push again; the scan re-runs on every push. If you believe it is a false positive, explain in a comment what that code does and a maintainer will review it. PRs that fail the scan are never auto-merged and their CI is never auto-approved."
+
                gh pr edit "$PR" --repo "$REPO" --add-label security-hold >/dev/null 2>&1 || true ;;
-            2) reasons+=("touches security-sensitive configuration ($(scan_where HOLD))") ;;
-            *) reasons+=("the malware scan could not complete, so the change is not known to be safe") ;;
+            2) hold "touches security-sensitive configuration ($(scan_where HOLD))" \
+                    "A maintainer reviews changes to this kind of configuration. If it is not essential to your change, move it to its own PR so the rest can merge automatically." ;;
+            *) hold "the malware scan could not complete, so the change is not known to be safe" \
+                    "Nothing for you to fix. A maintainer will re-run or review the scan." ;;
           esac
 
           # ---------------------------------------------------------------
@@ -215,8 +232,58 @@ jobs:
           protected='^(route/route\.go|route/ladder\.go|dex/|sep38/|runstore/runstore\.go|checks/engine\.go|\.github/workflows/|data/)'
           hits=$(echo "$files" | grep -E "$protected" || true)
           if [ -n "$hits" ]; then
-            joined=$(echo "$hits" | paste -sd ', ' -)
-            reasons+=("touches maintainer-owned paths: $joined")
+            joined=$(echo "$hits" | paste -sd '|' - | sed 's/|/, /g')
+            hold "touches maintainer-owned paths: $joined" \
+                 "These areas are reviewed by a maintainer because an error in them changes published measurements. Nothing is wrong with your change. If the PR also has unrelated changes, split those into a separate PR so they can merge automatically."
+          fi
+
+          # ---------------------------------------------------------------
+          # APPROVAL — release CI that GitHub is holding for a fork PR.
+          #
+          # A first-time contributor's workflows sit in action_required until
+          # someone approves them, and until then no check runs exist, so the
+          # gate could only wait. This is the click a maintainer would make.
+          #
+          # It is the one place this workflow lets untrusted code run, so it
+          # is narrow on purpose. Approval happens only when ALL hold:
+          #   - the malware scan passed (GATE 0 clean, "Malware scan" status
+          #     success on this exact commit, no security-hold label)
+          #   - the PR does not edit .github/workflows/
+          #   - the run is for the PR's current head commit and is a
+          #     pull_request run (read-only token, no secrets — see ci.yml)
+          # Approving merges nothing; every gate still has to pass on the
+          # results. Unknown scan state is not clean: it waits.
+          # ---------------------------------------------------------------
+          malware_state=$(gh api "repos/$REPO/commits/$head_sha/status" \
+            --jq '[.statuses[] | select(.context == "Malware scan")] | first | .state // "missing"')
+          secheld=$(jq -r '[(.labels // [])[].name | ascii_downcase] | any(. == "security-hold")' <<<"$meta")
+          malware_ok=no
+          if [ "$secheld" = "true" ]; then
+            hold "is under a security hold — the malware scan flagged it" \
+                 "Nothing is merged or run automatically while this label is set. A maintainer will review the scan result."
+          elif [ "$malware_state" = "success" ]; then
+            malware_ok=yes
+          elif [ "$malware_state" = "failure" ] || [ "$malware_state" = "error" ]; then
+            hold "failed the malware scan (\"Malware scan\" status: $malware_state)" \
+                 "Remove the flagged code and push again; the scan re-runs on every push. If you believe it is a false positive, explain in a comment and a maintainer will review it."
+          else
+            waiting+=("the malware scan has not finished (status: $malware_state)")
+          fi
+
+          if [ "$malware_ok" != "yes" ] || [ "$scan_rc" != 0 -a "$scan_rc" != 4 ]; then
+            echo "scan not clean (status=$malware_state, hold=$secheld, rc=$scan_rc); not approving CI runs"
+          elif echo "$files" | grep -qE '^\.github/workflows/'; then
+            echo "PR edits workflows; not approving its CI runs automatically"
+          else
+            run_ids=$(gh api "repos/$REPO/actions/runs?head_sha=$head_sha&status=action_required&per_page=100" \
+                        --jq '.workflow_runs[] | select(.event=="pull_request") | .id' 2>/dev/null || true)
+            for id in $run_ids; do
+              if gh api -X POST "repos/$REPO/actions/runs/$id/approve" >/dev/null 2>&1; then
+                echo "approved workflow run $id"
+              else
+                echo "::warning::could not approve workflow run $id"
+              fi
+            done
           fi
 
           # ---------------------------------------------------------------
@@ -226,27 +293,12 @@ jobs:
           # detail, and the acceptance criteria forbid adding one.
           # ---------------------------------------------------------------
           if echo "$files" | grep -qE '^go\.(mod|sum)$'; then
-            reasons+=("modifies go.mod or go.sum — new dependencies need review")
+            hold "modifies go.mod or go.sum — new dependencies need review" \
+                 "The project deliberately has two pinned dependencies. Revert the go.mod/go.sum change if the dependency is not essential, or explain in a comment why it is, and a maintainer will decide."
           fi
 
-          # ---------------------------------------------------------------
-          # GATE 3 — the contributor checklist is actually ticked.
-          #
-          # The PR template asks the contributor to confirm the acceptance
-          # criteria before review. An unticked box is not a failure, it is a
-          # request for a human to look.
-          # ---------------------------------------------------------------
-          if [ -z "$body" ]; then
-            reasons+=("has an empty description — the PR template checklist is unanswered")
-          else
-            unticked=$(grep -c '^\s*-\s*\[ \]' <<<"$body" || true)
-            ticked=$(grep -c '^\s*-\s*\[[xX]\]' <<<"$body" || true)
-            if [ "$ticked" -eq 0 ]; then
-              reasons+=("no checklist items are ticked — the acceptance criteria are unconfirmed")
-            elif [ "$unticked" -gt 0 ]; then
-              reasons+=("$unticked checklist item(s) left unticked")
-            fi
-          fi
+          # (The PR-description checklist is deliberately not a gate. What the
+          # PR says about itself proves nothing; GATE 7 reads the diff.)
 
           # ---------------------------------------------------------------
           # GATE 4 — every check has finished and succeeded.
@@ -261,27 +313,29 @@ jobs:
           runs=$(gh api --paginate "repos/$REPO/commits/$head_sha/check-runs" \
                    | jq --arg self "$SELF_CHECK" -r \
                    '.check_runs[] | select(.name != $self)
-                    | "\(.name)\t\(.status)\t\(.conclusion // "-")"')
+                    | "\(.name)\t\(.status)\t\(.conclusion // "-")\t\(.html_url)"')
 
           # No check runs reported yet is "too early to decide", not "nothing
           # to wait for". Treating an empty list as all-clear would merge a PR
           # before CI had started on it.
           if [ -z "$runs" ]; then
             echo "::notice::no check runs reported yet; will re-evaluate when they appear"
-            exit 0
-          fi
-          echo "check runs:"; echo "$runs" | sed 's/^/  /'
+            waiting+=("CI has not reported yet")
+          else
+            echo "check runs:"; echo "$runs" | sed 's/^/  /'
 
-          pending=$(awk -F'\t' '$2!="completed"' <<<"$runs" | wc -l)
-          failed=$(awk -F'\t' '$2=="completed" && $3!="success" && $3!="neutral" && $3!="skipped"' <<<"$runs" || true)
+            pending=$(awk -F'\t' '$2!="completed"' <<<"$runs" | wc -l)
+            failed=$(awk -F'\t' '$2=="completed" && $3!="success" && $3!="neutral" && $3!="skipped"' <<<"$runs" || true)
 
-          if [ "$pending" -gt 0 ]; then
-            echo "::notice::$pending check(s) still running; will re-evaluate when they finish"
-            exit 0
-          fi
-          if [ -n "$failed" ]; then
-            names=$(awk -F'\t' '{print $1" ("$3")"}' <<<"$failed" | paste -sd ', ' -)
-            reasons+=("checks are not green: $names")
+            if [ "$pending" -gt 0 ]; then
+              echo "::notice::$pending check(s) still running; will re-evaluate when they finish"
+              waiting+=("$pending check(s) still running")
+            elif [ -n "$failed" ]; then
+              names=$(awk -F'\t' '{print $1" ("$3")"}' <<<"$failed" | paste -sd '|' - | sed 's/|/, /g')
+              links=$(awk -F'\t' '{print "[" $1 "](" $4 ")"}' <<<"$failed" | paste -sd '|' - | sed 's/|/, /g')
+              hold "checks are not green: $names" \
+                   "Open the failing check(s) and read the log: $links. Reproduce locally with 'make fmt vet test race lint', fix it and push; the gate re-runs on every push. If a failure looks unrelated to your change (a flaky test or an outage), say so in a comment and a maintainer will re-run it."
+            fi
           fi
 
           # ---------------------------------------------------------------
@@ -290,7 +344,8 @@ jobs:
           changes_requested=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
             --jq '[.[] | select(.state=="CHANGES_REQUESTED")] | length')
           if [ "$changes_requested" -gt 0 ]; then
-            reasons+=("a reviewer has requested changes")
+            hold "a reviewer has requested changes" \
+                 "Address each review comment, push, and reply on the threads. The reviewer has to dismiss or update their review before this can merge automatically; otherwise a maintainer will merge it by hand once satisfied."
           fi
 
           # ---------------------------------------------------------------
@@ -329,7 +384,7 @@ jobs:
 
           if [ -z "$rabbit_body" ]; then
             echo "::notice::no CodeRabbit review yet; will re-evaluate when one arrives"
-            exit 0
+            waiting+=("CodeRabbit has not reviewed yet")
           fi
 
           # CodeRabbit opens its review with "Actionable comments posted: N"
@@ -347,13 +402,17 @@ jobs:
             actionable=0
           fi
 
-          if [ -z "$actionable" ]; then
+          if [ -z "$rabbit_body" ]; then
+            :  # nothing to parse; already recorded as waiting
+          elif [ -z "$actionable" ]; then
             # Format changed, or the review is of a shape we do not recognise.
             # Hold rather than guess: merging on an unparsed review would be
             # claiming it passed without having read it.
-            reasons+=("CodeRabbit's review could not be parsed for a verdict, so it is not known to be clean")
+            hold "CodeRabbit's review could not be parsed for a verdict, so it is not known to be clean" \
+                 "Nothing for you to fix. A maintainer will read the review and merge by hand if it is clean."
           elif [ "$actionable" -gt 0 ]; then
-            reasons+=("CodeRabbit raised $actionable actionable comment(s)")
+            hold "CodeRabbit raised $actionable actionable comment(s)" \
+                 "Open the CodeRabbit review on this PR and resolve each actionable comment: fix the code, or reply on the thread explaining why it does not apply. Push; CodeRabbit re-reviews the new commit and this gate re-runs."
           else
             echo "coderabbit: review clean (0 actionable comments)"
           fi
@@ -370,12 +429,40 @@ jobs:
           # into a review problem, and they are also how an unrelated change
           # rides in on an approved one.
           # ---------------------------------------------------------------
-          issue_num=$(grep -ioE '(clos(e|es|ed)|fix(e|es|ed)?|resolv(e|es|ed))[[:space:]]+#[0-9]+' <<<"$body" \
-            | grep -oE '[0-9]+' | head -1 || true)
+          # The linked issue is found from the PR itself, not only from a
+          # closing keyword in the description: GitHub's own closing-issue
+          # links first, then the description, title and branch name, then
+          # commit messages. What the PR *says* about itself is only used to
+          # locate the issue; the files actually changed are what get judged.
+          title=$(jq -r '.title' <<<"$meta")
+          branch=$(jq -r '.head.ref' <<<"$meta")
+          issue_num=$(gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){closingIssuesReferences(first:1){nodes{number}}}}}' \
+                        -f o="${REPO%/*}" -f r="${REPO#*/}" -F n="$PR" \
+                        --jq '.data.repository.pullRequest.closingIssuesReferences.nodes[0].number // empty' 2>/dev/null || true)
+          if [ -z "$issue_num" ]; then
+            issue_num=$(grep -ioE '(clos(e|es|ed)|fix(e|es|ed)?|resolv(e|es|ed))[[:space:]]+#[0-9]+' <<<"$body $title" \
+              | grep -oE '[0-9]+' | head -1 || true)
+          fi
+          if [ -z "$issue_num" ]; then
+            issue_num=$(grep -oE '#[0-9]+' <<<"$title" | tr -d '#' | head -1 || true)
+          fi
+          if [ -z "$issue_num" ]; then
+            issue_num=$(grep -oE '(^|[^0-9])[0-9]{2,5}([^0-9]|$)' <<<"$branch" | grep -oE '[0-9]+' | head -1 || true)
+          fi
+          if [ -z "$issue_num" ]; then
+            issue_num=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '.[].commit.message' 2>/dev/null \
+              | grep -oE '#[0-9]+' | tr -d '#' | head -1 || true)
+          fi
+          # A number that is not an issue in this repo (or is another PR) is
+          # no scope at all; treat it as unfound rather than guessing.
+          if [ -n "$issue_num" ] && ! gh api "repos/$REPO/issues/$issue_num" --jq 'select(.pull_request | not) | .number' >/dev/null 2>&1; then
+            issue_num=""
+          fi
 
           scope_note=""
           if [ -z "$issue_num" ]; then
-            reasons+=("does not say which issue it closes, so its intended scope is unstated")
+            hold "could not be linked to an issue, so its intended scope is unknown" \
+                 "Link the issue this PR resolves: put 'Closes #123' in the description, or use the Development sidebar. The issue says which package and files are in scope, which is what the changed files are checked against."
           else
             issue_body=$(gh api "repos/$REPO/issues/$issue_num" --jq '.body // ""' 2>/dev/null || true)
             issue_title=$(gh api "repos/$REPO/issues/$issue_num" --jq '.title // ""' 2>/dev/null || true)
@@ -388,7 +475,8 @@ jobs:
               | sed 's:/*$::' | sort -u || true)
 
             if [ -z "$named" ]; then
-              reasons+=("issue #$issue_num names no files or packages, so scope cannot be verified mechanically")
+              hold "issue #$issue_num names no files or packages, so scope cannot be verified mechanically" \
+                   "Nothing for you to fix. The issue does not list the files or package it covers, so a maintainer will confirm the scope by hand."
             else
               echo "issue #$issue_num names:"; echo "$named" | sed 's/^/    /'
               outside=""
@@ -409,7 +497,8 @@ jobs:
               done <<<"$files"
 
               if [ -n "$outside" ]; then
-                reasons+=("changes files outside the scope issue #$issue_num named:$(echo "$outside" | tr ' ' '\n' | sed 's/^/ /' | tr '\n' ' ')")
+                hold "changes files outside the scope issue #$issue_num named:$(echo "$outside" | tr ' ' '\n' | sed 's/^/ /' | tr '\n' ' ')" \
+                     "Move the unrelated changes into their own PR, or, if they are genuinely needed for this fix, explain why in a comment so a maintainer can approve the wider scope. Test files and docs next to in-scope work are always allowed."
               else
                 scope_note="every changed file falls within the scope issue #$issue_num named"
               fi
@@ -428,6 +517,13 @@ jobs:
             exit 0
           fi
 
+          # Still waiting on CI or CodeRabbit and nothing else is wrong: say
+          # nothing and let the next event bring us back.
+          if [ ${#reasons[@]} -eq 0 ] && [ ${#waiting[@]} -gt 0 ]; then
+            printf 'not deciding yet: %s\n' "${waiting[@]}"
+            exit 0
+          fi
+
           if [ ${#reasons[@]} -eq 0 ]; then
             echo "all gates satisfied; handing off"
 
@@ -441,7 +537,18 @@ jobs:
             # --delete-branch is gone: these are fork branches, and the
             # repository sets delete_branch_on_merge false, so it was asking
             # for something it could not do.
-            if ! gh pr merge "$PR" --repo "$REPO" --squash --auto; then
+            # Last look before handing off: re-read the scan status and labels
+            # so a flag raised since the gate began is never raced, and pin to
+            # the evaluated commit so a later push cannot ride in on it.
+            final_state=$(gh api "repos/$REPO/commits/$head_sha/status" \
+              --jq '[.statuses[] | select(.context == "Malware scan")] | first | .state // "missing"')
+            final_hold=$(gh api "repos/$REPO/issues/$PR" \
+              --jq '[(.labels // [])[].name | ascii_downcase] | any(. == "security-hold")')
+            if [ "$malware_ok" != "yes" ] || [ "$final_state" != "success" ] || [ "$final_hold" != "false" ]; then
+              echo "::error::malware check not clean at merge time ($final_state, hold=$final_hold); refusing to merge"
+              exit 1
+            fi
+            if ! gh pr merge "$PR" --repo "$REPO" --squash --auto --match-head-commit "$head_sha"; then
               echo "::error::could not enqueue PR #$PR — confirm auto-merge is enabled on the repository"
               exit 1
             fi
@@ -468,12 +575,11 @@ jobs:
               echo
               echo "### What was verified"
               echo
-              echo "- Every check green: $(awk -F'\t' '{print $1}' <<<"$runs" | paste -sd ', ' -)"
+              echo "- Every check green: $(awk -F'\t' '{print $1}' <<<"$runs" | paste -sd '|' - | sed 's/|/, /g')"
               echo "- CodeRabbit reviewed it and raised no actionable comments"
               [ -n "$scope_note" ] && echo "- Scope: $scope_note"
               echo "- No maintainer-owned path touched — nothing here can alter a published figure"
               echo "- No dependency change"
-              echo "- Contributor checklist confirmed"
               echo
               echo "### What was not"
               echo
@@ -489,16 +595,36 @@ jobs:
           gh pr edit "$PR" --repo "$REPO" --add-label "needs-maintainer-review" || true
 
           marker="<!-- auto-merge-gate -->"
-          existing=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
-            --jq '[.[] | select(.body | contains("<!-- auto-merge-gate -->"))] | length')
+          comment_body=$(
+            echo "$marker"
+            echo "### Auto-merge: held for review"
+            echo
+            echo "Thanks for the PR, @${author}. This is not a rejection: auto-merge only lands changes it can verify, and ${#reasons[@]} thing(s) stopped this one."
+            echo
+            for i in "${!reasons[@]}"; do
+              echo "**$((i+1)). ${reasons[$i]^}**"
+              echo
+              echo "> **What to do:** ${fixes[$i]}"
+              echo
+            done
+            if [ ${#waiting[@]} -gt 0 ]; then
+              echo "_Also pending: $(printf '%s; ' "${waiting[@]}" | sed 's/; $//')._"
+              echo
+            fi
+            echo "---"
+            echo "This re-checks on every push, review and finished CI run, and this comment updates in place. Once everything above is resolved the PR merges automatically."
+          )
 
-          if [ "$existing" -eq 0 ]; then
-            {
-              echo "$marker"
-              echo "**Held for maintainer review.** This is not a rejection — auto-merge only lands changes it can verify mechanically, and this one needs a human to look at:"
-              echo
-              printf -- '- %s\n' "${reasons[@]}"
-              echo
-              echo "Nothing further is needed from you unless a point above is something you can fix (an unticked checklist item, or a failing check). @${author}, thanks for the PR."
-            } | gh pr comment "$PR" --repo "$REPO" --body-file -
+          # One comment per PR, edited in place as the reasons change, so the
+          # contributor sees the current list, not a stale first verdict.
+          existing_id=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- auto-merge-gate -->")))] | last | .id // empty')
+
+          if [ -z "$existing_id" ]; then
+            gh pr comment "$PR" --repo "$REPO" --body "$comment_body"
+          else
+            current=$(gh api "repos/$REPO/issues/comments/$existing_id" --jq '.body')
+            if [ "$current" != "$comment_body" ]; then
+              gh api -X PATCH "repos/$REPO/issues/comments/$existing_id" -f body="$comment_body" >/dev/null
+            fi
           fi
