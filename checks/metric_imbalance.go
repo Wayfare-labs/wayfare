@@ -105,7 +105,7 @@ func (m ImbalanceMetric) Run(ctx context.Context, s Subject) MetricResult {
 	bandHigh := refMid.Add(bandHalf)
 
 	sell, buy, substituted := bookPair(s)
-	h, err := m.DEX.OrderBook(ctx, sell, buy)
+	bids, asks, err := m.DEX.OrderBookRaw(ctx, sell, buy)
 	if err != nil {
 		return MetricUndetermined(d, s,
 			fmt.Sprintf("order book fetch failed: %v", err))
@@ -117,50 +117,41 @@ func (m ImbalanceMetric) Run(ctx context.Context, s Subject) MetricResult {
 		ObservedAt: at,
 	}
 
-	if h.BidLevels == 0 && h.AskLevels == 0 {
-		evidence := Evidence{
-			Source:     bookSource("/order_book", s, sell, buy, substituted),
-			Observed:   "no bids, no asks",
-			ObservedAt: at,
-		}
-		return MetricUndetermined(d, s, "order book is empty: no bids and no asks", evidence, refEvidence)
-	}
-
-	// Sum depth on each side within the band.
-	// We need to fetch the raw offers to compute depth within the band,
-	// but dex.Client.OrderBook only returns the summary. We need to add a
-	// method that returns the raw offers, or compute from the BookHealth.
-	// For now, we use the level counts as a proxy for depth within the band.
-	// A more accurate implementation would sum the amounts at each level.
-
-	bidDepth := decimal.NewFromInt(int64(h.BidLevels))
-	askDepth := decimal.NewFromInt(int64(h.AskLevels))
+	// Sum offer amounts on each side within the band.
+	bidDepth := sumInBand(bids, bandLow, bandHigh)
+	askDepth := sumInBand(asks, bandLow, bandHigh)
 
 	// An empty side is a measured extreme, not undetermined.
-	// If bids exist but asks don't, ratio is infinite (represented as a
-	// very large number). If asks exist but bids don't, ratio is zero.
+	// If bids exist but asks don't, ratio is 0. If asks exist but bids don't, ratio is 1,000,000.
 	var ratio decimal.Decimal
 	var summary string
 
 	switch {
-	case h.BidLevels == 0 && h.AskLevels > 0:
-		// No bids, asks exist -> ratio = 0
+	case bidDepth.IsZero() && !askDepth.IsZero():
+		// No bid depth in band, ask depth exists -> ratio = 0
 		ratio = decimal.Zero
-		summary = fmt.Sprintf("bid depth 0, ask depth %d (one-sided: no bids)", h.AskLevels)
-	case h.AskLevels == 0 && h.BidLevels > 0:
-		// No asks, bids exist -> ratio = "infinite" (we report a sentinel)
-		// Using a very large number to represent the extreme
+		summary = fmt.Sprintf("bid depth in band %s, ask depth in band %s (one-sided: no bids in band)", bidDepth, askDepth)
+	case askDepth.IsZero() && !bidDepth.IsZero():
+		// No ask depth in band, bid depth exists -> ratio = 1,000,000 (sentinel for infinite)
 		ratio = decimal.NewFromInt(1000000)
-		summary = fmt.Sprintf("bid depth %d, ask depth 0 (one-sided: no asks)", h.BidLevels)
+		summary = fmt.Sprintf("bid depth in band %s, ask depth in band %s (one-sided: no asks in band)", bidDepth, askDepth)
+	case bidDepth.IsZero() && askDepth.IsZero():
+		// Both sides empty in band
+		evidence := Evidence{
+			Source:     bookSource("/order_book", s, sell, buy, substituted),
+			Observed:   "no bids in band, no asks in band",
+			ObservedAt: at,
+		}
+		return MetricUndetermined(d, s, "order book has no depth in band: no bids and no asks", evidence, refEvidence)
 	default:
-		// Both sides have levels
+		// Both sides have depth in band
 		ratio = bidDepth.Div(askDepth)
-		summary = fmt.Sprintf("bid depth %d, ask depth %d, ratio %s", h.BidLevels, h.AskLevels, ratio.StringFixed(4))
+		summary = fmt.Sprintf("bid depth in band %s, ask depth in band %s, ratio %s", bidDepth.StringFixed(4), askDepth.StringFixed(4), ratio.StringFixed(4))
 	}
 
 	bookEvidence := Evidence{
 		Source:     bookSource("/order_book", s, sell, buy, substituted),
-		Observed:   fmt.Sprintf("bid_levels=%d, ask_levels=%d, bid_depth_in_band=%s, ask_depth_in_band=%s, ratio=%s", h.BidLevels, h.AskLevels, bidDepth, askDepth, ratio.StringFixed(4)),
+		Observed:   fmt.Sprintf("bid_depth_in_band=%s, ask_depth_in_band=%s, ratio=%s", bidDepth.StringFixed(4), askDepth.StringFixed(4), ratio.StringFixed(4)),
 		ObservedAt: at,
 	}
 
@@ -169,4 +160,15 @@ func (m ImbalanceMetric) Run(ctx context.Context, s Subject) MetricResult {
 	}
 
 	return MetricValue(d, s, ratio, UnitRatio, summary, bookEvidence, refEvidence)
+}
+
+// sumInBand sums the amounts of offers whose price lies within [low, high].
+func sumInBand(offers []dex.Offer, low, high decimal.Decimal) decimal.Decimal {
+	sum := decimal.Zero
+	for _, o := range offers {
+		if o.Price.GreaterThanOrEqual(low) && o.Price.LessThanOrEqual(high) {
+			sum = sum.Add(o.Amount)
+		}
+	}
+	return sum
 }

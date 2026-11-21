@@ -139,11 +139,11 @@ func main() {
 		os.Exit(checkFreshness(store, monitor.DefaultCorridors(), *maxAge, time.Now().UTC(), logger))
 	}
 
-	if *checkFresh {
-		os.Exit(checkFreshness(store, monitor.DefaultCorridors(), *maxAge, time.Now().UTC(), logger))
-	}
-
 	if *rescore {
+		if _, isNop := store.(runstore.Nop); isNop {
+			logger.Error("-rescore requires a data directory with stored history; none is configured")
+			os.Exit(2)
+		}
 		os.Exit(rescoreStore(store, *dataDir, logger))
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/Wayfare-labs/wayfare"
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
@@ -66,11 +68,24 @@ func verdictForCurrent(lossPct decimal.Decimal) route.Verdict {
 	}
 }
 
-// loadAcknowledgements reads the acknowledgements file beside the store. A
-// missing or empty file means nothing is acknowledged.
+// loadAcknowledgements reads the acknowledgements file. When dataDir is empty,
+// it reads from the embedded history; otherwise it reads from the filesystem.
+// A missing or empty file means nothing is acknowledged.
 func loadAcknowledgements(dataDir string) (map[string]bool, error) {
+	return loadAcknowledgementsFromFS(dataDir, wayfare.History)
+}
+
+// loadAcknowledgementsFromFS is the testable version that accepts an fs.FS for
+// the embedded case.
+func loadAcknowledgementsFromFS(dataDir string, embeddedFS fs.FS) (map[string]bool, error) {
 	ack := map[string]bool{}
-	data, err := os.ReadFile(filepath.Join(dataDir, rescoreAckFile))
+	var data []byte
+	var err error
+	if dataDir == "" {
+		data, err = fs.ReadFile(embeddedFS, "data/rescore-acknowledgements.json")
+	} else {
+		data, err = os.ReadFile(filepath.Join(dataDir, rescoreAckFile))
+	}
 	switch {
 	case err == nil:
 	case os.IsNotExist(err):

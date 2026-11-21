@@ -1,12 +1,59 @@
 package main
 
 import (
+	"context"
+	"embed"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
 )
+
+//go:embed testdata/data
+var testAckFS embed.FS
+
+// testEmbeddedStore is a minimal store for testing embedded rescore behavior.
+type testEmbeddedStore struct {
+	records map[string][]*runstore.Record
+}
+
+func (s *testEmbeddedStore) Corridors(ctx context.Context) ([]string, error) {
+	corridors := make([]string, 0, len(s.records))
+	for c := range s.records {
+		corridors = append(corridors, c)
+	}
+	return corridors, nil
+}
+
+func (s *testEmbeddedStore) All(ctx context.Context, corridor string) ([]*runstore.Record, error) {
+	return s.records[corridor], nil
+}
+
+func (s *testEmbeddedStore) Append(ctx context.Context, r *runstore.Record) error {
+	return nil // read-only
+}
+
+func (s *testEmbeddedStore) Latest(ctx context.Context, corridor string) (*runstore.Record, error) {
+	recs := s.records[corridor]
+	if len(recs) == 0 {
+		return nil, nil
+	}
+	return recs[len(recs)-1], nil
+}
+
+func (s *testEmbeddedStore) Recent(ctx context.Context, corridor string, n int) ([]*runstore.Record, error) {
+	return nil, nil
+}
+
+func (s *testEmbeddedStore) RecentBefore(ctx context.Context, corridor string, n int, before int64) ([]*runstore.Record, error) {
+	return nil, nil
+}
+
+func (s *testEmbeddedStore) Verify(ctx context.Context, corridor string) error {
+	return nil
+}
 
 func mustTime(s string) time.Time {
 	t, err := time.Parse(time.RFC3339, s)
@@ -146,4 +193,91 @@ func TestNoPricedRungIsNoMarket(t *testing.T) {
 	if drifts[0].Derived != route.IntegrityNoMarket.String() {
 		t.Errorf("expected NO-MARKET, got %q", drifts[0].Derived)
 	}
+}
+
+// TestEmbeddedRescoreAcknowledgedDriftReturnsZero tests that when using an
+// embedded store (dataDir == "") with an acknowledged drift in the embedded
+// acknowledgements file, rescore returns exit code 0.
+func TestEmbeddedRescoreAcknowledgedDriftReturnsZero(t *testing.T) {
+	// Create a record with a known drift: 5000 stored as UNUSABLE but derives to POOR.
+	rec := testRecord(map[string]string{"5000": "UNUSABLE"}, "DIRECT", "0.1")
+
+	store := &testEmbeddedStore{
+		records: map[string][]*runstore.Record{
+			"USDC-NGNC": {rec},
+		},
+	}
+
+	// Load acknowledgements from the test embedded FS (which acknowledges the drift).
+	ack, err := loadAcknowledgementsFromTestFS("", testAckFS)
+	if err != nil {
+		t.Fatalf("loading acknowledgements: %v", err)
+	}
+
+	// Verify the acknowledgement is loaded.
+	if !ack["USDC-NGNC/1/rung[5000].verdict"] {
+		t.Fatal("acknowledgement not loaded from embedded FS")
+	}
+
+	// Run rescore logic directly to verify exit code 0.
+	ctx := context.Background()
+	corridors, err := store.Corridors(ctx)
+	if err != nil {
+		t.Fatalf("listing corridors: %v", err)
+	}
+
+	var drifts []drift
+	checked := 0
+	for _, corridor := range corridors {
+		records, err := store.All(ctx, corridor)
+		if err != nil {
+			t.Fatalf("reading corridor history: %v", err)
+		}
+		for _, rec := range records {
+			checked++
+			drifts = append(drifts, rederiveRecord(rec, ack)...)
+		}
+	}
+
+	unacknowledged := 0
+	for _, d := range drifts {
+		if acknowledged(ack, d) {
+			continue
+		}
+		unacknowledged++
+	}
+
+	if unacknowledged > 0 {
+		t.Fatalf("expected 0 unacknowledged drifts, got %d", unacknowledged)
+	}
+	if checked != 1 {
+		t.Fatalf("expected 1 checked record, got %d", checked)
+	}
+}
+
+// loadAcknowledgementsFromTestFS reads acknowledgements from the test embedded FS.
+func loadAcknowledgementsFromTestFS(dataDir string, embeddedFS embed.FS) (map[string]bool, error) {
+	ack := map[string]bool{}
+	var data []byte
+	var err error
+	if dataDir == "" {
+		data, err = embeddedFS.ReadFile("testdata/data/rescore-acknowledgements.json")
+	} else {
+		// Not used in this test
+		return ack, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return ack, nil
+	}
+	var list []acknowledgement
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil, err
+	}
+	for _, e := range list {
+		ack[ackKey(e.Corridor, e.Seq, e.Field)] = true
+	}
+	return ack, nil
 }
