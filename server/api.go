@@ -155,6 +155,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/thresholds", s.handleDeprecatedAlias("/api/v1/thresholds", s.handleThresholds))
 
 	mux.HandleFunc("/og/corridor.svg", s.handleSocialPreview)
+	mux.HandleFunc("/badge/", s.handleBadge)
+	mux.HandleFunc("/feed.atom", s.handleFeed)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.Handle("/", s.uiHandler())
 	return withCORS(withGzip(s.limit(mux)))
