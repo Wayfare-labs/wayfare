@@ -323,3 +323,24 @@ jobs:
           name: sbom
           path: wayfare.cyclonedx.json
           if-no-files-found: error
+
+  # Re-score the committed history under the current engine (issue #716).
+  # Every stored record's verdicts, integrity and recommendation are re-derived
+  # from its stored rungs and reference; any difference the acknowledgements
+  # file does not list fails the job. This catches silent reclassification of
+  # history when thresholds or classification rules change.
+  rescore:
+    name: re-score committed history
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: re-score every committed record against the current engine
+        run: go run ./cmd/wayfared -rescore -data ./data

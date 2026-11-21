@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -168,4 +169,65 @@ func csvRow(r *runstore.Record) []string {
 		r.Reference.SecondaryAsOf,
 		r.Reference.DivergencePct,
 	}
+}
+
+// chainHeadJSON is the externally pinnable identity of one corridor's current
+// stored chain tip. It intentionally publishes the existing record hash rather
+// than adding a new commitment or changing the hash-pinned record format.
+type chainHeadJSON struct {
+	Corridor   string `json:"corridor"`
+	Seq        int64  `json:"seq"`
+	RecordedAt string `json:"recorded_at"`
+	Hash       string `json:"hash"`
+}
+
+type chainHeadsJSON struct {
+	Heads []chainHeadJSON `json:"heads"`
+}
+
+// exportChainHeads writes the current chain heads as JSON to stdout.
+// This is used by the measure workflow to sign each chain head.
+// It does not require verification first (unlike -export) because the
+// measure workflow has already verified the chain before calling this.
+func exportChainHeads(store runstore.Store, w io.Writer, logger *slog.Logger) int {
+	if store == nil {
+		logger.Error("-export-chain-heads requires a store; none is configured")
+		return 2
+	}
+
+	ctx := context.Background()
+	corridors, err := store.Corridors(ctx)
+	if err != nil {
+		logger.Error("listing corridors", "error", err)
+		return 2
+	}
+
+	heads := chainHeadsJSON{Heads: make([]chainHeadJSON, 0)}
+	for _, corridor := range corridors {
+		rec, err := store.Latest(ctx, corridor)
+		if err != nil {
+			logger.Error("reading chain head", "corridor", corridor, "error", err)
+			return 2
+		}
+		if rec == nil {
+			logger.Error("store listed corridor without a latest record", "corridor", corridor)
+			return 2
+		}
+		heads.Heads = append(heads.Heads, chainHeadJSON{
+			Corridor:   corridor,
+			Seq:        rec.Seq,
+			RecordedAt: rec.RecordedAt.UTC().Format(time.RFC3339),
+			Hash:       rec.Hash,
+		})
+	}
+
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(heads); err != nil {
+		logger.Error("encoding chain heads", "error", err)
+		return 2
+	}
+
+	return 0
 }
