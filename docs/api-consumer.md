@@ -225,6 +225,27 @@ Two rules make this safe to rely on:
 An error — including `no_history` — carries no `ETag` either. There is no
 representation to revalidate, so there is nothing to answer `304` about.
 
+### 8. In a browser, the tag arrives only because the server exposes it
+
+Everything above applies to a page as much as to this program, with three
+browser-specific facts on top. `examples/browser-consumer` is the working
+version of this section.
+
+- **Cross-origin reads work without a proxy.** The API answers any origin with
+  `Access-Control-Allow-Origin: *`, and it answers `OPTIONS` preflights itself
+  because `If-None-Match` is not a safelisted request header. A page that sends
+  it triggers a preflight, and the preflight must be allowed to name it.
+- **The `ETag` is readable only because it is exposed.** A cross-origin fetch
+  hides every response header the server has not named in
+  `Access-Control-Expose-Headers`. The API names `ETag` and nothing else. If
+  that header were removed, `response.headers.get("ETag")` in a browser would
+  return `null` while a `curl` would still show the tag — the page would
+  quietly stop revalidating, and every read would download the body again.
+- **A `304` is a normal `fetch` result.** `response.status` is `304`, the body
+  is empty, and `response.ok` is `false`, since `ok` means a 2xx. The page
+  therefore checks `status === 304` before `ok`, and keeps the copy it already
+  has. `fetch` does not throw on a 304.
+
 ---
 
 ## What this program deliberately does not do
@@ -254,6 +275,8 @@ representation to revalidate, so there is nothing to answer `304` about.
 - [docs/api.md](api.md) — the endpoint reference, with example responses
 - [examples/api-consumer](../examples/api-consumer) — the program itself, and
   its offline tests
+- [examples/browser-consumer](../examples/browser-consumer) — the same reading
+  rules in a page, with CORS and `If-None-Match`
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — the invariants this document is a
   client-side restatement of
 - [docs/checks.md](checks.md) — findings, and why they never move the headline
