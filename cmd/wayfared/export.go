@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -171,63 +172,38 @@ func csvRow(r *runstore.Record) []string {
 	}
 }
 
-// chainHeadJSON is the externally pinnable identity of one corridor's current
-// stored chain tip. It intentionally publishes the existing record hash rather
-// than adding a new commitment or changing the hash-pinned record format.
-type chainHeadJSON struct {
-	Corridor   string `json:"corridor"`
-	Seq        int64  `json:"seq"`
-	RecordedAt string `json:"recorded_at"`
-	Hash       string `json:"hash"`
-}
-
-type chainHeadsJSON struct {
-	Heads []chainHeadJSON `json:"heads"`
-}
-
-// exportChainHeads writes the current chain heads as JSON to stdout.
-// This is used by the measure workflow to sign each chain head.
-// It does not require verification first (unlike -export) because the
-// measure workflow has already verified the chain before calling this.
-func exportChainHeads(store runstore.Store, w io.Writer, logger *slog.Logger) int {
+// exportStaticSnapshot writes a static corridors.json snapshot of all corridors
+// to the given file path. This is the wire shape for the corridors.json file
+// published on every sweep (issue #691).
+func exportStaticSnapshot(store runstore.Store, filePath string, logger *slog.Logger) int {
 	if store == nil {
-		logger.Error("-export-chain-heads requires a store; none is configured")
+		logger.Error("-export-static requires a store; none is configured")
 		return 2
 	}
 
 	ctx := context.Background()
-	corridors, err := store.Corridors(ctx)
+
+	// Build the static snapshot
+	snap, err := runstore.BuildStaticSnapshot(store, ctx, time.Now().UTC())
 	if err != nil {
-		logger.Error("listing corridors", "error", err)
+		logger.Error("building static snapshot", "error", err)
 		return 2
 	}
 
-	heads := chainHeadsJSON{Heads: make([]chainHeadJSON, 0)}
-	for _, corridor := range corridors {
-		rec, err := store.Latest(ctx, corridor)
-		if err != nil {
-			logger.Error("reading chain head", "corridor", corridor, "error", err)
-			return 2
-		}
-		if rec == nil {
-			logger.Error("store listed corridor without a latest record", "corridor", corridor)
-			return 2
-		}
-		heads.Heads = append(heads.Heads, chainHeadJSON{
-			Corridor:   corridor,
-			Seq:        rec.Seq,
-			RecordedAt: rec.RecordedAt.UTC().Format(time.RFC3339),
-			Hash:       rec.Hash,
-		})
+	// Marshal to JSON
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		logger.Error("marshaling static snapshot", "error", err)
+		return 2
 	}
+	data = append(data, '\n')
 
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(heads); err != nil {
-		logger.Error("encoding chain heads", "error", err)
+	// Write to file
+	if err := os.WriteFile(filePath, data, 0o644); err != nil {
+		logger.Error("writing static snapshot", "path", filePath, "error", err)
 		return 2
 	}
 
+	logger.Info("exported static snapshot", "path", filePath, "corridors", len(snap.Corridors))
 	return 0
 }

@@ -212,74 +212,13 @@ jobs:
       - name: Verify the chain
         run: go run ./cmd/wayfared -verify-store -data ./data
 
-      # Sign each chain head with keyless CI signing (Sigstore OIDC through
-      # GitHub's built-in attestation). The signature attests "CI produced this
-      # head" — not "the figure is true". See docs/chain-head-signatures.md.
-      - name: Sign chain heads
-        id: sign
-        env:
-          COSIGN_EXPERIMENTAL: "1"
+      # Generate and commit the static corridors.json snapshot (issue #691).
+      # This file is served from GitHub Pages or a release asset so consumers
+      # can poll a static file instead of waking the hosted instance.
+      - name: Generate static corridors snapshot
         run: |
-          set -euo pipefail
-
-          # Install cosign
-          curl -sSfL https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-amd64 -o /tmp/cosign
-          chmod +x /tmp/cosign
-
-          # Fetch current chain heads from the store we just verified
-          heads=$(go run ./cmd/wayfared -export-chain-heads -data ./data 2>/dev/null || echo '{"heads":[]}')
-
-          # Get the commit SHA this run is based on (the commit on main that the PR will merge to)
-          COMMIT_SHA=$(git rev-parse HEAD)
-
-          # Prepare payload for each head and sign
-          echo "$heads" | jq -c '.heads[]' | while IFS= read -r head; do
-            corridor=$(echo "$head" | jq -r '.corridor')
-            seq=$(echo "$head" | jq -r '.seq')
-            recorded_at=$(echo "$head" | jq -r '.recorded_at')
-            hash=$(echo "$head" | jq -r '.hash')
-
-            payload=$(jq -n \
-              --arg corridor "$corridor" \
-              --argjson seq "$seq" \
-              --arg recorded_at "$recorded_at" \
-              --arg hash "$hash" \
-              --arg commit "$COMMIT_SHA" \
-              --arg run_id "$GITHUB_RUN_ID" \
-              --arg workflow "measure" \
-              '{
-                corridor: $corridor,
-                seq: $seq,
-                recorded_at: $recorded_at,
-                hash: $hash,
-                commit: $commit,
-                run_id: $run_id,
-                workflow: $workflow
-              }')
-
-            payload_file="/tmp/chain-head-$corridor-$seq.json"
-            echo "$payload" > "$payload_file"
-
-            # Sign with keyless OIDC (GitHub Actions)
-            /tmp/cosign sign-blob --yes \
-              --output-signature "$payload_file.sig" \
-              --output-certificate "$payload_file.crt" \
-              "$payload_file"
-
-            # Upload signature and certificate as artifacts
-            echo "signed $corridor seq=$seq"
-          done
-
-          # Collect all signatures for upload
-          mkdir -p /tmp/chain-head-signatures
-          cp /tmp/chain-head-*.sig /tmp/chain-head-*.crt /tmp/chain-head-signatures/ 2>/dev/null || true
-
-      - name: Upload chain head signatures
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: chain-head-signatures
-          path: /tmp/chain-head-signatures/
-          if-no-files-found: warn
+          go run ./cmd/wayfared -export-static ./corridors.json -data ./data
+          git add corridors.json
 
       - name: Commit and push the sweep
         id: push

@@ -65,6 +65,8 @@ func main() {
 			"export one corridor's verified history to stdout and exit, e.g. -export USDC-NGNC; requires -format")
 		exportFmt = flag.String("format", exportFormatCSV,
 			"export format for -export; csv is the only implemented format")
+		exportStatic = flag.String("export-static", "",
+			"write a static corridors.json snapshot of all corridors to the given file path and exit")
 		checkFresh = flag.Bool("check-fresh", false,
 			"report corridors whose newest record is older than -max-age (or missing) and exit; 1 stale, 2 check unavailable")
 		maxAge = flag.Duration("max-age", 2*monitor.DefaultInterval,
@@ -119,6 +121,12 @@ func main() {
 	// this project is willing to stand behind.
 	if *exportTo != "" {
 		os.Exit(exportChain(store, *exportTo, *exportFmt, os.Stdout, logger))
+	}
+
+	// Export a static corridors.json snapshot of all corridors.
+	// This is the wire shape for the corridors.json file published on every sweep.
+	if *exportStatic != "" {
+		os.Exit(exportStaticSnapshot(store, *exportStatic, logger))
 	}
 
 	// The alerting hook for scheduled measurement (issue #310): a CI or cron
