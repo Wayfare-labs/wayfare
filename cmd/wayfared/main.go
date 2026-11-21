@@ -148,8 +148,11 @@ func main() {
 	refrate.SetLogger(logger)
 	server.SetLogger(logger)
 
+	dexClient := &dex.Client{HorizonURL: *horizon, Logger: logger}
 	engine := &route.Engine{
-		DEX: &dex.Client{HorizonURL: *horizon, Logger: logger},
+		DEX: dexClient,
+		// Records the ledger range each ladder's rungs were priced across.
+		Ledgers: dexClient,
 		// Two independent providers, each cached, cross-checked for
 		// divergence. Caching matters here specifically: a ladder is a
 		// dozen quotes that would otherwise each fetch the same mid.
@@ -291,8 +294,12 @@ func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon s
 	sched.SnapshotEngineFactory = func(recorder *snapshot.Recorder) *route.Engine {
 		recorder.Transport = guardedTransport
 		client := &http.Client{Transport: recorder, Timeout: 30 * time.Second}
+		snapshotDEX := &dex.Client{HorizonURL: horizon, HTTPClient: client, Logger: logger}
 		return &route.Engine{
-			DEX: &dex.Client{HorizonURL: horizon, HTTPClient: client, Logger: logger},
+			DEX: snapshotDEX,
+			// The root lookups go through the same recorder, so the ledger a
+			// stored range names is itself in the snapshot evidence.
+			Ledgers: snapshotDEX,
 			RefRate: &refrate.Cross{
 				Primary: &refrate.Cached{Inner: &refrate.ExchangeRateAPI{Client: client, Logger: logger}},
 				Secondary: &refrate.Cached{

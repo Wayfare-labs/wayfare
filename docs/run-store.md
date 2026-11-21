@@ -2,7 +2,7 @@
 
 A tamper-evident history of corridor measurements.
 
-**Schema version 5.** Implemented by `runstore/`. Version 1 through 4 chains
+**Schema version 6.** Implemented by `runstore/`. Version 1 through 5 chains
 still load and verify; each migration adds optional fields after the previous
 record shape so old preimages remain unchanged. See [correction-records.md](correction-records.md).
 
@@ -382,13 +382,36 @@ optional `correction` block after every prior record field. When absent, it is
 omitted from JSON, so Version 1 through Version 4 hashes remain unchanged.
 When a measurement error in historical data is confirmed, an append-only
 correction record is written to the chain referencing the target sequence number
-and explaining the correction reason. `runstore` accepts versions `1` through `5`.
+and explaining the correction reason.
 See [correction-records.md](correction-records.md).
+
+### Migration to version 6
+
+Version 5 records do not say which ledgers their rungs were priced against. A
+ladder takes tens of seconds, which is several ledgers, so its rungs can be
+priced against different books. Version 6 (issue #720) records that span:
+
+- `ledger_range` on the record: `first` and `last`, the lowest and highest
+  ledger any rung observed. Declared `omitempty` after every Version 5 field
+  (after `correction`, before `prev_hash`).
+- `ledger` on each stored rung: the chain head Horizon's root reported right
+  after that rung was priced. Declared `omitempty` after every earlier rung
+  field.
+
+A record or rung with no ledger data omits both fields, so it encodes to
+byte-for-byte the JSON it did under Version 5, and Version 1 through Version 5
+hashes remain unchanged. A record below Version 6 that carries either field is
+refused on load, the same rule the snapshot and correction migrations follow.
+An unknown ledger is stored as absent, never as `0`.
+
+The ledger annotates a measurement and never fails one: when the root lookup
+fails, that rung's ledger is unknown and the rest of the reading is unchanged.
+`runstore` accepts versions `1` through `6`.
 
 ### The version-mismatch rule
 
 A record version this build does not recognise is an error, never a best-effort
-parse: `runstore` accepts versions `1` through `5`. Relabelling a record to
+parse: `runstore` accepts versions `1` through `6`. Relabelling a record to
 make it parse is falsification, not migration — a record that says `version: 9`
 is a schema the build cannot speak, and guessing at it would hide the mismatch.
 
