@@ -157,6 +157,21 @@ chain depends on it.
 
 ---
 
+## Parsing a chain without reading Go
+
+Every record version has a JSON Schema in **[schemas/](schemas/)**
+(`runstore-v1.json` through `runstore-v5.json`), so a consumer in any language
+can validate a line before parsing it. The schemas are closed
+(`additionalProperties: false`) and require the exact field set of their
+version; money and percentage figures are decimal strings, and a change that
+adds a field without updating the schema fails `runstore/schema_test.go` in CI.
+
+The schemas are descriptive, not a second implementation: `runstore/` is the
+authority on what a chain means, and verification (below) is still the way to
+check that a history is the one that was written.
+
+---
+
 ## Measurability uptime
 
 Issue [#195](https://github.com/Wayfare-labs/wayfare/issues/195) (entry 124
