@@ -921,12 +921,18 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 	if rec.DependencyChain != nil {
 		out.DependencyChain = rec.DependencyChain
 	}
+	// The ledger range is served back as recorded; a record written before
+	// Version 6 has none and honestly serves none.
+	if lr := rec.LedgerRange; lr != nil {
+		out.LedgerRange = &route.LedgerRangeJSON{First: lr.First, Last: lr.Last, Span: lr.Last - lr.First}
+	}
 	for _, r := range rec.Rungs {
 		rj := route.RungJSON{
 			SendAmount: r.SendAmount,
 			Priced:     r.Priced,
 			Integrity:  r.Integrity,
 			Notes:      []string{},
+			Ledger:     r.Ledger,
 		}
 		if r.Priced {
 			rj.Quote = &route.QuoteJSON{

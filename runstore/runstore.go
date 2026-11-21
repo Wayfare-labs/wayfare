@@ -49,8 +49,9 @@ import (
 // encodes to exactly the bytes that were hashed when it was written, and
 // still verifies. Version 4 adds snapshot this way after every Version 3
 // field, and Version 5 adds correction this way after every Version 4 field,
-// so older records still verify unchanged. See docs/run-store.md.
-const Version = 5
+// so older records still verify unchanged. Version 6 adds ledger_range and
+// a per-rung ledger the same way (issue #720). See docs/run-store.md.
+const Version = 6
 
 // LegacyVersion is the prior record schema, retained for existing chains.
 const LegacyVersion = 1
@@ -119,6 +120,20 @@ type Rung struct {
 	LossPct       string `json:"loss_pct,omitempty"`
 	Verdict       string `json:"verdict,omitempty"`
 	Path          string `json:"path,omitempty"`
+
+	// Ledger is the chain head observed right after the rung was priced
+	// (Version 6, issue #720). omitempty and after every earlier field, so a
+	// rung stored before Version 6 encodes to exactly the bytes it did.
+	Ledger int64 `json:"ledger,omitempty"`
+}
+
+// LedgerRange is the first and last ledger observed across a measurement's
+// rungs (Version 6, issue #720). A ladder takes several ledgers to price, so
+// its rungs can reflect different books; the range lets a reader discard a
+// measurement that straddled a large book change.
+type LedgerRange struct {
+	First int64 `json:"first"`
+	Last  int64 `json:"last"`
 }
 
 // Correction records an erratum or correction against an earlier record in the chain (issue #729).
@@ -204,6 +219,11 @@ type Record struct {
 	// Optional; omitted when empty so pre-Version 5 record hashes verify unchanged.
 	Correction *Correction `json:"correction,omitempty"`
 
+	// LedgerRange is the span of ledgers the rungs were observed at
+	// (Version 6, issue #720). Optional; omitted when unknown, and declared
+	// after every Version 5 field, so pre-Version 6 hashes verify unchanged.
+	LedgerRange *LedgerRange `json:"ledger_range,omitempty"`
+
 	PrevHash string `json:"prev_hash"`
 	Hash     string `json:"hash"`
 }
@@ -267,6 +287,19 @@ func (r *Record) VerifySelf() error {
 			r.Seq, short(r.Hash), short(want))
 	}
 	return nil
+}
+
+// hasLedgers reports whether the record carries any Version 6 ledger field.
+func (r *Record) hasLedgers() bool {
+	if r.LedgerRange != nil {
+		return true
+	}
+	for _, rung := range r.Rungs {
+		if rung.Ledger != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // IsCorrection reports whether the record is a correction of an earlier record.

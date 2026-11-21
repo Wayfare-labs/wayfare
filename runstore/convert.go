@@ -88,12 +88,16 @@ func FromCorridorJSON(c route.CorridorJSON) *Record {
 	if c.DependencyChain != nil {
 		r.DependencyChain = c.DependencyChain
 	}
+	if lr := c.LedgerRange; lr != nil {
+		r.LedgerRange = &LedgerRange{First: lr.First, Last: lr.Last}
+	}
 
 	for _, rung := range c.Rungs {
 		out := Rung{
 			SendAmount: rung.SendAmount,
 			Priced:     rung.Priced,
 			Integrity:  rung.Integrity,
+			Ledger:     rung.Ledger,
 		}
 		if rung.Quote != nil {
 			out.ReceiveAmount = rung.Quote.ReceiveAmount
