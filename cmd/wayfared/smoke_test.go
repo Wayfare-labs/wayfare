@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,5 +200,116 @@ func TestVerifyStoreReadOnlyBackend(t *testing.T) {
 	}
 	if code := verifyStore(store, dir, logger); code != 0 {
 		t.Fatalf("verifyStore on read-only backend = %d, want 0", code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// verifyStore and record time ordering (#703)
+// ---------------------------------------------------------------------------
+
+func TestVerifyStoreReportsBackwardsStep(t *testing.T) {
+	dir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	base := time.Date(2026, 8, 21, 22, 0, 0, 0, time.UTC)
+	writeTimestampedChain(t, dir, "USDC-NGNC", []time.Time{
+		base,
+		base.Add(6 * time.Hour),
+		// Four hours back: intact, correctly linked, and a trend that would
+		// draw this measurement before the one it follows.
+		base.Add(2 * time.Hour),
+	})
+
+	store, err := openStore(dir, logger)
+	if err != nil {
+		t.Fatalf("openStore: %v", err)
+	}
+
+	var code int
+	out := captureStdout(t, func() { code = verifyStore(store, dir, logger) })
+	if code != 1 {
+		t.Errorf("verifyStore on an out-of-order chain = %d, want 1\n%s", code, out)
+	}
+	for _, want := range []string{"FAIL USDC-NGNC", "seq 3", "seq 2", "clock-skew tolerance"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report missing %q:\n%s", want, out)
+		}
+	}
+	// The history is still there for the operator to read; the command reports
+	// rather than repairing.
+	if _, err := store.Latest(context.Background(), "USDC-NGNC"); err != nil {
+		t.Errorf("Latest after a failed verify: %v", err)
+	}
+}
+
+func TestVerifyStoreAcceptsClockSkewWithinTolerance(t *testing.T) {
+	dir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	base := time.Date(2026, 8, 21, 22, 0, 0, 0, time.UTC)
+	writeTimestampedChain(t, dir, "USDC-NGNC", []time.Time{
+		base,
+		base.Add(time.Hour),
+		// A sweep that overlapped the previous one and finished slightly
+		// earlier: the case the tolerance exists to let through.
+		base.Add(time.Hour).Add(-30 * time.Second),
+	})
+
+	store, err := openStore(dir, logger)
+	if err != nil {
+		t.Fatalf("openStore: %v", err)
+	}
+
+	var code int
+	out := captureStdout(t, func() { code = verifyStore(store, dir, logger) })
+	if code != 0 {
+		t.Errorf("verifyStore on a chain inside the tolerance = %d, want 0\n%s", code, out)
+	}
+	if !strings.Contains(out, "ok   USDC-NGNC") {
+		t.Errorf("report missing the ok line:\n%s", out)
+	}
+}
+
+// writeTimestampedChain lays out a corridor file whose records carry the given
+// timestamps, sealing each one against the previous the way Append does.
+//
+// The store refuses to write an out-of-order record now, so a chain that
+// predates the rule can only be built the way an older build built it.
+func writeTimestampedChain(t *testing.T, dir, corridor string, times []time.Time) {
+	t.Helper()
+
+	prev := runstore.GenesisPrevHash
+	var b strings.Builder
+	for i, ts := range times {
+		r := &runstore.Record{
+			Version:      runstore.Version,
+			Seq:          int64(i + 1),
+			RecordedAt:   ts.UTC().Truncate(time.Second),
+			Corridor:     corridor,
+			Integrity:    "good",
+			DependsOn:    []string{},
+			Rungs:        []runstore.Rung{},
+			Finding:      "ok",
+			FloorLossPct: "0",
+			FloorSize:    "1",
+			WorstLossPct: "0",
+			WorstSize:    "1",
+			PrevHash:     prev,
+		}
+		if err := r.Seal(); err != nil {
+			t.Fatalf("sealing record %d: %v", i, err)
+		}
+		line, err := json.Marshal(r)
+		if err != nil {
+			t.Fatalf("encoding record %d: %v", i, err)
+		}
+		b.Write(line)
+		b.WriteByte('\n')
+		prev = r.Hash
+	}
+
+	path := filepath.Join(dir, corridor+runstore.FileExt)
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", path, err)
 	}
 }

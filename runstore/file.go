@@ -177,6 +177,11 @@ func verifyChain(corridor string, records []*Record) error {
 }
 
 // Append seals r against the current tip and writes it.
+//
+// It refuses a record timestamped more than ClockSkewTolerance before the tip
+// with an *ErrOutOfOrder, and writes nothing when it does: the chain is append-
+// only, so the choice is between one missing measurement and a history whose
+// timestamps no longer mean anything.
 func (s *FileStore) Append(ctx context.Context, r *Record) error {
 	if r == nil {
 		return fmt.Errorf("runstore: refusing to append a nil record")
@@ -210,6 +215,23 @@ func (s *FileStore) Append(ctx context.Context, r *Record) error {
 	}
 
 	tip := s.tips[corridor]
+
+	// Time ordering, checked against the tip before anything is sealed. The
+	// hash chain cannot catch this on its own: a record written by a host with
+	// a wrong clock hashes and links perfectly, and the trend then draws a
+	// measurement that claims to have happened before the one already stored.
+	// See ClockSkewTolerance for why the rule is not simply "must be later".
+	if tip != nil && r.RecordedAt.Add(ClockSkewTolerance).Before(tip.RecordedAt) {
+		return &ErrOutOfOrder{
+			Corridor:      corridor,
+			TipSeq:        tip.Seq,
+			TipRecordedAt: tip.RecordedAt,
+			RecordedAt:    r.RecordedAt,
+			By:            tip.RecordedAt.Sub(r.RecordedAt),
+			Tolerance:     ClockSkewTolerance,
+		}
+	}
+
 	if tip == nil {
 		r.PrevHash = GenesisPrevHash
 		r.Seq = 1

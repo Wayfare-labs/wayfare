@@ -431,6 +431,43 @@ than throughput, and a record acknowledged but lost in the page cache would
 leave the in-memory tip ahead of the file — so the next `Open` would report a
 broken chain for a record that was never really there.
 
+### Append path: a record may not predate the tip
+
+`Append` refuses a record whose `recorded_at` is more than
+**`ClockSkewTolerance` (2 minutes)** earlier than the tip of that corridor's
+chain, with a typed `*runstore.ErrOutOfOrder`, and writes nothing
+([issue #703](https://github.com/Wayfare-labs/wayfare/issues/703)).
+
+The hash chain cannot catch this on its own. A record written by a host whose
+clock stepped backwards seals perfectly and links perfectly — the chain is a
+statement about contents, not about time — and every trend then draws a
+measurement before the one it claims to follow. Refusing it trades one missing
+data point for a timeline that means something.
+
+The tolerance is the width of the doubt the rule grants, not a target. Two
+innocent cases have to pass through it: a live measurement is bounded by
+`-timeout` (90s default), so two sweeps that overlap — the deployed scheduler
+and a CI `-once` run — can finish in the opposite order they started in; and a
+corrected NTP clock slews by seconds. What is left on the other side is hours
+or days, which is a host that should not be measuring.
+
+Two consequences worth knowing:
+
+- The rule binds each record to the **tip**, per corridor. The first record in
+  an empty chain is unconstrained, so restoring onto a fresh volume or
+  measuring a new corridor for the first time is never blocked by the clock.
+- A refused append is a logged error, like any other (`Degrading gracefully`
+  below): the scheduler drops that record and continues with the next corridor.
+  The distance in the message is the diagnosis — seconds is an overlapping
+  sweep, hours is a clock that stepped.
+
+History written before this rule existed is not retroactively fatal. `Open`
+loads and serves such a chain, because its records are still cryptographically
+intact; `-verify-store` reports the steps that run backwards, so the operator
+learns the timeline is untrustworthy without the service going down over a
+clock warp in month-old data. See
+[verify-store.md](verify-store.md#the-chain-runs-backwards-in-time).
+
 ### Read path
 
 `Open` scans each file once, verifies the chain, and indexes the tail.

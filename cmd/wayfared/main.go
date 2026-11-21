@@ -402,6 +402,25 @@ func verifyStore(store runstore.Store, dataDir string, logger *slog.Logger) int 
 			failed++
 			continue
 		}
+		// Time ordering is reported here rather than at Open, and a chain that
+		// fails it is counted like a broken one: the record is cryptographically
+		// intact, so the service can still serve it, but this command's answer
+		// is whether the history is one the project stands behind, and a trend
+		// drawn through a backwards step is not.
+		records, err := store.All(ctx, c)
+		if err != nil {
+			fmt.Printf("FAIL %s: reading the chain: %v\n", c, err)
+			failed++
+			continue
+		}
+		violations := runstore.OrderViolations(records)
+		if len(violations) > 0 {
+			for _, v := range violations {
+				fmt.Printf("FAIL %s: %v\n", c, v)
+			}
+			failed++
+			continue
+		}
 		fmt.Printf("ok   %s: %d records, latest %s\n",
 			c, latest.Seq, latest.RecordedAt.UTC().Format(time.RFC3339))
 	}
