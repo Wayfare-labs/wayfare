@@ -111,15 +111,16 @@ type Sources struct {
 // BodySHA256 pins those bytes so an edited fixture fails to load rather than
 // quietly changing a published figure.
 type Interaction struct {
-	Kind        string    `json:"kind"`
-	Method      string    `json:"method"`
-	Key         string    `json:"key"`
-	URL         string    `json:"url"`
-	Status      int       `json:"status"`
-	ContentType string    `json:"content_type,omitempty"`
-	RecordedAt  time.Time `json:"recorded_at"`
-	BodyFile    string    `json:"body_file"`
-	BodySHA256  string    `json:"body_sha256"`
+	Kind        string              `json:"kind"`
+	Method      string              `json:"method"`
+	Key         string              `json:"key"`
+	URL         string              `json:"url"`
+	Status      int                 `json:"status"`
+	Header      map[string][]string `json:"header,omitempty"`
+	ContentType string              `json:"content_type,omitempty"`
+	RecordedAt  time.Time           `json:"recorded_at"`
+	BodyFile    string              `json:"body_file"`
+	BodySHA256  string              `json:"body_sha256"`
 }
 
 // Manifest is a snapshot's self-description: one ladder run, replayable with
