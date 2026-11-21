@@ -41,6 +41,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/runstore"
 	"github.com/Wayfare-labs/wayfare/server"
 	"github.com/Wayfare-labs/wayfare/snapshot"
+	"github.com/Wayfare-labs/wayfare/transport"
 )
 
 func main() {
@@ -81,6 +82,13 @@ func main() {
 			"per-client requests per second; 0 disables rate limiting")
 		rateBurst = flag.Int("rate-burst", defaultRateBurst,
 			"per-client instantaneous request allowance")
+		// Outbound Horizon budget (issue #700). Horizon's public limit is per
+		// IP and counts the sweep and live requests together, so one bucket is
+		// shared by both; 12/s sits under it with room for one retry burst.
+		horizonRate = flag.Float64("horizon-rate-limit", defaultHorizonRate,
+			"outbound Horizon requests per second shared by sweeps and live requests; 0 disables the budget")
+		horizonBurst = flag.Float64("horizon-rate-burst", defaultHorizonBurst,
+			"outbound Horizon instantaneous request allowance")
 		logLevel = flag.String("log-level", envOr("WAYFARE_LOG_LEVEL", "info"), "debug, info, warn or error")
 	)
 	flag.Parse()
@@ -148,8 +156,13 @@ func main() {
 	refrate.SetLogger(logger)
 	server.SetLogger(logger)
 
+	var outbound *transport.Budget
+	if *horizonRate > 0 && *horizonBurst > 0 {
+		outbound = transport.NewBudget(*horizonRate, *horizonBurst)
+	}
+
 	engine := &route.Engine{
-		DEX: &dex.Client{HorizonURL: *horizon, Logger: logger},
+		DEX: &dex.Client{HorizonURL: *horizon, Logger: logger, Budget: outbound},
 		// Two independent providers, each cached, cross-checked for
 		// divergence. Caching matters here specifically: a ladder is a
 		// dozen quotes that would otherwise each fetch the same mid.
@@ -173,8 +186,10 @@ func main() {
 	// and the chain it appends to is the same one a hosted instance would
 	// write. Nothing about the measurement differs.
 	if *once {
-		sched := newScheduler(engine, store, *dataDir, *horizon, logger)
-		if err := sched.RunOnce(ctx); err != nil {
+		sched := newScheduler(engine, store, *dataDir, *horizon, outbound, logger)
+		// Sweeps carry their priority on the context: it is what lets a run
+		// finish when the budget is otherwise spent (issue #700).
+		if err := sched.RunOnce(transport.WithPriority(ctx, transport.Sweep)); err != nil {
 			logger.Error("sweep failed", "error", err)
 			os.Exit(1)
 		}
@@ -184,13 +199,13 @@ func main() {
 	var wg sync.WaitGroup
 
 	if *schedule > 0 {
-		sched := newScheduler(engine, store, *dataDir, *horizon, logger)
+		sched := newScheduler(engine, store, *dataDir, *horizon, outbound, logger)
 		sched.Interval = *schedule
 		sched.Jitter = *scheduleJitter
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := sched.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			if err := sched.Run(transport.WithPriority(ctx, transport.Sweep)); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("scheduler stopped", "error", err)
 			}
 		}()
@@ -201,6 +216,7 @@ func main() {
 	if *serve {
 		srv := &server.Server{
 			Engine:       engine,
+			Budget:       outbound,
 			Store:        store,
 			Timeout:      *timeout,
 			HistoryFirst: *histFirst,
@@ -263,7 +279,7 @@ func shutdownServer(srv *http.Server, grace time.Duration, logger *slog.Logger) 
 }
 
 func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon string,
-	logger *slog.Logger) *monitor.Scheduler {
+	budget *transport.Budget, logger *slog.Logger) *monitor.Scheduler {
 	sched := &monitor.Scheduler{
 		Engine: engine, Store: store, Logger: logger,
 		Checks: &checks.Runner{HorizonURL: horizon},
@@ -292,7 +308,7 @@ func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon s
 		recorder.Transport = guardedTransport
 		client := &http.Client{Transport: recorder, Timeout: 30 * time.Second}
 		return &route.Engine{
-			DEX: &dex.Client{HorizonURL: horizon, HTTPClient: client, Logger: logger},
+			DEX: &dex.Client{HorizonURL: horizon, HTTPClient: client, Logger: logger, Budget: budget},
 			RefRate: &refrate.Cross{
 				Primary: &refrate.Cached{Inner: &refrate.ExchangeRateAPI{Client: client, Logger: logger}},
 				Secondary: &refrate.Cached{
