@@ -341,6 +341,7 @@ put a secret into the deployment, and this service holds none.
 | `-check-fresh` | | | Report corridors whose newest record is older than `-max-age` (or missing) and exit |
 | `-max-age` | | `12h` | Staleness ceiling for `-check-fresh`; default is two missed sweeps |
 | `-log-level` | `WAYFARE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `-version` | | | Print the build provenance — code commit, embedded data commit, Go version, and which source supplied each — and exit. Answers with no network and no run store, so it works when the service will not start |
 
 No secrets. No credentials to rotate — the store rotates itself, trimming chains
 over the window ceiling; see [run-store.md](run-store.md#rotating-a-chain).

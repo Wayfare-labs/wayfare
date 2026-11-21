@@ -625,6 +625,12 @@ empty string. Together they answer "is the deploy stale or the pipeline
 dead?": if `data_commit` stops advancing while `code_commit` keeps moving, the
 measurement pipeline is not landing new history.
 
+The same pair is on the command line: `wayfared -version` and `ladder -version`
+print it, each value labelled with the source that supplied it, because a
+reader reproducing a published figure often has the binary and not the deploy.
+An unstamped build says `unknown (unstamped)` there rather than falling back to
+the checkout's revision for `data_commit`, which the toolchain cannot know.
+
 This endpoint checks that the HTTP service is responding. It does not perform a live corridor measurement or validate upstream availability.
 
 ### Freshness fields

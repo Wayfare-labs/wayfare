@@ -19,6 +19,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/buildinfo"
 	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
@@ -637,8 +638,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
 		"status":      "ok",
-		"code_commit": codeCommit,
-		"data_commit": dataCommit,
+		"code_commit": buildinfo.CodeCommit(),
+		"data_commit": buildinfo.DataCommit(),
 		"data":        s.healthData(r.Context()),
 		"freshness":   s.healthFreshness(r.Context()),
 	})

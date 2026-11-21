@@ -8,6 +8,7 @@
 //	wayfared -export USDC-NGNC        # export one verified chain as CSV and exit
 //	wayfared -rotate-store            # trim chains over the window ceiling and exit
 //	wayfared -check-fresh             # exit non-zero if any record is stale
+//	wayfared -version                 # print the build provenance and exit
 //
 // The two halves are independent on purpose. A monitor that only measures
 // while somebody has a page open would leave holes in its history exactly when
@@ -23,6 +24,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -33,6 +35,7 @@ import (
 	"time"
 
 	"github.com/Wayfare-labs/wayfare"
+	"github.com/Wayfare-labs/wayfare/buildinfo"
 	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/monitor"
@@ -82,8 +85,18 @@ func main() {
 		rateBurst = flag.Int("rate-burst", defaultRateBurst,
 			"per-client instantaneous request allowance")
 		logLevel = flag.String("log-level", envOr("WAYFARE_LOG_LEVEL", "info"), "debug, info, warn or error")
+		version  = flag.Bool("version", false,
+			"print the build provenance (code commit, embedded data commit, Go version) and exit")
 	)
 	flag.Parse()
+
+	// Version answers before the logger, the run store and any upstream call,
+	// so it works with no network and no data directory — the two situations
+	// an operator most needs to know which binary they are holding.
+	if *version {
+		printVersion(os.Stdout, progName)
+		return
+	}
 
 	logger := newLogger(*logLevel)
 	slog.SetDefault(logger)
@@ -451,4 +464,15 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// progName labels the -version line with the binary that printed it. It is a
+// constant rather than os.Args[0] because a renamed or packaged copy should not
+// print a name a reader cannot match to a release.
+const progName = "wayfared"
+
+// printVersion writes the one-line build provenance (issue #707). It takes the
+// writer so the line is checkable without running main.
+func printVersion(w io.Writer, prog string) {
+	fmt.Fprintln(w, buildinfo.Get().Line(prog))
 }

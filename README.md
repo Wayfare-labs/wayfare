@@ -476,7 +476,16 @@ go run ./cmd/wayfared                       # serve + measure every 6h
 go run ./cmd/wayfared -serve=false          # scheduler only, no HTTP
 go run ./cmd/wayfared -verify-store -data ./data
 go run ./cmd/wayfared -export USDC-NGNC -format csv -data ./data > corridor.csv
+
+make build-stamped && ./bin/wayfared -version   # which build produced this
 ```
+
+`-version` names the code commit, the `data/` commit embedded at build time and
+the Go toolchain, each labelled with the source that supplied it, because a
+published figure can only be reproduced against a known build. A value no source
+recorded prints as `unknown` rather than as a guess, which is why the stamp comes
+from `make build-stamped`: `go run` records neither the release stamp nor VCS
+settings, so under `go run` both commits read `unknown (unstamped)`.
 
 `-export` verifies the corridor's hash chain first and refuses to write a CSV
 from a chain that does not reconcile; see
