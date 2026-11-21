@@ -129,6 +129,8 @@ func (r *Recorder) add(req *http.Request, resp *http.Response, body []byte) {
 		classify = defaultClassify
 	}
 
+	resp.Header = CleanHeaders(resp.Header)
+
 	seq := len(r.entries) + 1
 	r.entries = append(r.entries, Interaction{
 		Kind:        classify(req),
@@ -137,6 +139,7 @@ func (r *Recorder) add(req *http.Request, resp *http.Response, body []byte) {
 		URL:         req.URL.String(),
 		Status:      resp.StatusCode,
 		ContentType: resp.Header.Get("Content-Type"),
+		Header:      resp.Header,
 		RecordedAt:  time.Now().UTC().Truncate(time.Second),
 		BodyFile:    fmt.Sprintf("%s/%03d-%s.json", responsesDir, seq, slugFor(req)),
 		BodySHA256:  bodyHash(body),

@@ -360,6 +360,40 @@ func TestRungsAreOrderedBySize(t *testing.T) {
 // TestUIIsServed checks the embedded single-file UI reaches the browser and
 // carries no external dependencies, since a build step is what it exists to
 // avoid.
+func TestV1RoutesAndDeprecationHeaders(t *testing.T) {
+	srv := testServer(t, `{"core_ledger_seq": 123}`, "1364.50")
+	defer srv.Close()
+
+	// Test v1 corridor endpoint returns OK
+	resp, err := http.Get(srv.URL + "/api/v1/corridor?to=NGNC")
+	if err != nil {
+		t.Fatalf("GET /api/v1/corridor: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /api/v1/corridor status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	// Test unversioned alias returns deprecation headers
+	respAlias, err := http.Get(srv.URL + "/api/corridor?to=NGNC")
+	if err != nil {
+		t.Fatalf("GET /api/corridor: %v", err)
+	}
+	defer respAlias.Body.Close()
+	if respAlias.StatusCode != http.StatusOK {
+		t.Errorf("GET /api/corridor status = %d, want %d", respAlias.StatusCode, http.StatusOK)
+	}
+	if respAlias.Header.Get("Deprecation") != "true" {
+		t.Errorf("Deprecation header missing or incorrect: %q", respAlias.Header.Get("Deprecation"))
+	}
+	if respAlias.Header.Get("Sunset") == "" {
+		t.Error("Sunset header missing on deprecated route")
+	}
+	if respAlias.Header.Get("Link") == "" {
+		t.Error("Link header missing on deprecated route")
+	}
+}
+
 func TestUIIsServed(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
 
