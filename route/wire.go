@@ -215,6 +215,10 @@ type CorridorJSON struct {
 	// Live is false.
 	Stale *StaleJSON `json:"stale,omitempty"`
 
+	// Correction describes erratum metadata when the served reading is a correction
+	// or amends an earlier sequence number (issue #729).
+	Correction *CorrectionJSON `json:"correction,omitempty"`
+
 	// Findings are check results: facts about the counterparties this
 	// corridor depends on. They qualify the headline and never move it —
 	// Integrity and Verdict above are computed without reference to them,
@@ -237,6 +241,20 @@ type StaleJSON struct {
 	RecordedAt string `json:"recorded_at"`
 	AgeSeconds int64  `json:"age_seconds"`
 	AgeHuman   string `json:"age_human"`
+}
+
+// CorrectionJSON describes erratum metadata when a reading amends or was amended
+// by a correction record (issue #729).
+type CorrectionJSON struct {
+	TargetSeq             int64  `json:"target_seq,omitempty"`
+	CorrectedBySeq        int64  `json:"corrected_by_seq,omitempty"`
+	Reason                string `json:"reason"`
+	IsCorrection          bool   `json:"is_correction,omitempty"`
+	Corrected             bool   `json:"corrected,omitempty"`
+	OriginalFloorLossPct  string `json:"original_floor_loss_pct,omitempty"`
+	CorrectedFloorLossPct string `json:"corrected_floor_loss_pct,omitempty"`
+	OriginalWorstLossPct  string `json:"original_worst_loss_pct,omitempty"`
+	CorrectedWorstLossPct string `json:"corrected_worst_loss_pct,omitempty"`
 }
 
 // AssetJSON identifies an asset on the wire.

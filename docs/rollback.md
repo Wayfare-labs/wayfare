@@ -178,3 +178,4 @@ way a rollback does:
 - [embedded-history.md](embedded-history.md) — why an older image serves an older window
 - [deployment.md](deployment.md) — the deployment this procedure operates on
 - [adr/007-why-the-committed-chain-is-a-rolling-window.md](adr/007-why-the-committed-chain-is-a-rolling-window.md) — the window and its re-sealing
+- [wrong-published-figure.md](wrong-published-figure.md) — responding when a published measurement is wrong (data correctness vs. image rollback)

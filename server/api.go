@@ -136,17 +136,39 @@ func (s *Server) budgetFor(n int) time.Duration {
 // still carries the origin policy and remains readable to a browser client.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/corridor", s.handleCorridor)
-	mux.HandleFunc("/api/corridor/trend", s.handleTrend)
+	// v1 API routes
+	mux.HandleFunc("/api/v1/corridor", s.handleCorridor)
+	mux.HandleFunc("/api/v1/corridor/trend", s.handleTrend)
+	mux.HandleFunc("/api/v1/corridor/image", s.handleCorridorImage)
+	mux.HandleFunc("/api/v1/chain-heads", s.handleChainHeads)
+	mux.HandleFunc("/api/v1/assets", s.handleAssets)
+	mux.HandleFunc("/api/v1/market-structure", s.handleMarketStructure)
+	mux.HandleFunc("/api/v1/thresholds", s.handleThresholds)
+
+	// Deprecated unversioned aliases with deprecation headers
+	mux.HandleFunc("/api/corridor", s.handleDeprecatedAlias("/api/v1/corridor", s.handleCorridor))
+	mux.HandleFunc("/api/corridor/trend", s.handleDeprecatedAlias("/api/v1/corridor/trend", s.handleTrend))
+	mux.HandleFunc("/api/corridor/image", s.handleDeprecatedAlias("/api/v1/corridor/image", s.handleCorridorImage))
+	mux.HandleFunc("/api/chain-heads", s.handleDeprecatedAlias("/api/v1/chain-heads", s.handleChainHeads))
+	mux.HandleFunc("/api/assets", s.handleDeprecatedAlias("/api/v1/assets", s.handleAssets))
+	mux.HandleFunc("/api/market-structure", s.handleDeprecatedAlias("/api/v1/market-structure", s.handleMarketStructure))
+	mux.HandleFunc("/api/thresholds", s.handleDeprecatedAlias("/api/v1/thresholds", s.handleThresholds))
+
 	mux.HandleFunc("/og/corridor.svg", s.handleSocialPreview)
-	mux.HandleFunc("/api/corridor/image", s.handleCorridorImage)
-	mux.HandleFunc("/api/chain-heads", s.handleChainHeads)
-	mux.HandleFunc("/api/assets", s.handleAssets)
-	mux.HandleFunc("/api/market-structure", s.handleMarketStructure)
-	mux.HandleFunc("/api/thresholds", s.handleThresholds)
+	mux.HandleFunc("/badge/", s.handleBadge)
+	mux.HandleFunc("/feed.atom", s.handleFeed)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.Handle("/", s.uiHandler())
 	return withCORS(withGzip(s.limit(mux)))
+}
+
+func (s *Server) handleDeprecatedAlias(target string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Deprecation", "true")
+		w.Header().Set("Sunset", "Sat, 31 Dec 2028 23:59:59 GMT")
+		w.Header().Set("Link", fmt.Sprintf("<%s>; rel=\"successor-version\"", target))
+		next(w, r)
+	}
 }
 
 // limit applies the configured rate limiter, or passes through unchanged
@@ -862,6 +884,16 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 			AgeSeconds: int64(age.Seconds()),
 			AgeHuman:   humanAge(age),
 		},
+	}
+
+	if rec.IsCorrection() {
+		out.Correction = &route.CorrectionJSON{
+			TargetSeq:             rec.Correction.TargetSeq,
+			Reason:                rec.Correction.Reason,
+			IsCorrection:          true,
+			CorrectedFloorLossPct: rec.FloorLossPct,
+			CorrectedWorstLossPct: rec.WorstLossPct,
+		}
 	}
 
 	// The diagnostic is served back from storage when the run carried one, so

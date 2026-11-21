@@ -360,6 +360,40 @@ func TestRungsAreOrderedBySize(t *testing.T) {
 // TestUIIsServed checks the embedded single-file UI reaches the browser and
 // carries no external dependencies, since a build step is what it exists to
 // avoid.
+func TestV1RoutesAndDeprecationHeaders(t *testing.T) {
+	srv := testServer(t, `{"core_ledger_seq": 123}`, "1364.50")
+	defer srv.Close()
+
+	// Test v1 corridor endpoint returns OK
+	resp, err := http.Get(srv.URL + "/api/v1/corridor?to=NGNC")
+	if err != nil {
+		t.Fatalf("GET /api/v1/corridor: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /api/v1/corridor status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	// Test unversioned alias returns deprecation headers
+	respAlias, err := http.Get(srv.URL + "/api/corridor?to=NGNC")
+	if err != nil {
+		t.Fatalf("GET /api/corridor: %v", err)
+	}
+	defer respAlias.Body.Close()
+	if respAlias.StatusCode != http.StatusOK {
+		t.Errorf("GET /api/corridor status = %d, want %d", respAlias.StatusCode, http.StatusOK)
+	}
+	if respAlias.Header.Get("Deprecation") != "true" {
+		t.Errorf("Deprecation header missing or incorrect: %q", respAlias.Header.Get("Deprecation"))
+	}
+	if respAlias.Header.Get("Sunset") == "" {
+		t.Error("Sunset header missing on deprecated route")
+	}
+	if respAlias.Header.Get("Link") == "" {
+		t.Error("Link header missing on deprecated route")
+	}
+}
+
 func TestUIIsServed(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
 
@@ -385,9 +419,25 @@ func TestUIIsServed(t *testing.T) {
 	if !strings.Contains(page, "corridor integrity monitor") {
 		t.Error("UI does not identify itself")
 	}
-	for _, external := range []string{"src=\"http", "href=\"http", "cdn."} {
+	// "cdn-cgi" is a root-relative path that only exists behind Cloudflare; it
+	// is a network fetch the project does not control and a 404 elsewhere
+	// (issue #477), and the prefixes above do not catch it.
+	for _, external := range []string{"src=\"http", "href=\"http", "cdn.", "cdn-cgi", "challenge-platform"} {
 		if strings.Contains(page, external) {
 			t.Errorf("UI references an external asset (%q); it must be self-contained", external)
+		}
+	}
+
+	// The legend must not widen the document on a phone (issue #476): its
+	// columns must be allowed to shrink below their content, and it must drop
+	// to two columns at the narrow breakpoint.
+	for _, want := range []string{
+		".legend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr))",
+		".legend-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }",
+		".legend-item { display: flex; align-items: center; gap: var(--space-2); min-width: 0;",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("UI legend CSS missing %q; the legend could overflow a phone viewport", want)
 		}
 	}
 }

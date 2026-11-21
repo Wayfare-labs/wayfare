@@ -49,7 +49,7 @@ permissions:
 # deliberate decision, not a quiet bump: #467 deliberately returned CI to 1.22,
 # and staying there would keep carrying known-bad stdlib advisories.
 env:
-  GO_VERSION: "1.27.3"
+  GO_VERSION: "1.27.4"
 
 jobs:
   build:
@@ -127,7 +127,7 @@ jobs:
 
       # Build from source with the configured Go toolchain: the prebuilt
       # golangci-lint binary is built with an older Go version and rejects
-      # this module's Go 1.27.3 target.
+      # this module's Go 1.27.4 target.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.15.0
@@ -323,3 +323,55 @@ jobs:
           name: sbom
           path: wayfare.cyclonedx.json
           if-no-files-found: error
+
+  # Reproducible build verification (issue #728).
+  # Proves that two builds of wayfared from the same commit in different
+  # filesystem paths produce byte-identical binaries bit-for-bit.
+  #
+  # Flags documented and enforced:
+  # - CGO_ENABLED=0: disables cgo to eliminate host C library differences
+  # - -trimpath: removes host-specific filesystem paths from the binary
+  # - -buildvcs=false: removes local git workspace state differences
+  # - -ldflags="-s -w": strips symbol table and DWARF debugging information
+  # - Pinned toolchain: ${{ env.GO_VERSION }}
+  reproducible-build:
+    name: binary builds reproducibly
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: build twice in different paths and compare hashes
+        run: |
+          set -euo pipefail
+          dirA=$(mktemp -d /tmp/repro-build-A.XXXXXX)
+          dirB=$(mktemp -d /tmp/repro-build-B.XXXXXX)
+          trap 'rm -rf "$dirA" "$dirB"' EXIT
+
+          # Copy workspace to two distinct directory trees to assert path independence
+          cp -a . "$dirA/src"
+          cp -a . "$dirB/src"
+
+          # Build in directory A
+          (cd "$dirA/src" && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$dirA/wayfared" ./cmd/wayfared)
+
+          # Build in directory B
+          (cd "$dirB/src" && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$dirB/wayfared" ./cmd/wayfared)
+
+          hashA=$(sha256sum "$dirA/wayfared" | cut -d' ' -f1)
+          hashB=$(sha256sum "$dirB/wayfared" | cut -d' ' -f1)
+
+          echo "Build A hash ($dirA): $hashA"
+          echo "Build B hash ($dirB): $hashB"
+
+          if [ "$hashA" != "$hashB" ]; then
+            echo "Reproducibility failure: binary hashes differ between build locations"
+            exit 1
+          fi
+          echo "Verification passed: wayfared binary is byte-identical ($hashA)"

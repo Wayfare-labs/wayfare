@@ -175,6 +175,10 @@ type TrendRunJSON struct {
 
 	Finding string          `json:"finding"`
 	Rungs   []TrendRungJSON `json:"rungs"`
+
+	// Correction carries erratum metadata when this run amends an earlier run
+	// or was amended by a subsequent correction (issue #729).
+	Correction *route.CorrectionJSON `json:"correction,omitempty"`
 }
 
 // TrendRefJSON is the reference rate a run was scored against.
@@ -260,8 +264,46 @@ func toTrendJSON(recs []*runstore.Record, key, pair string, send, recv asset.Ass
 		IntegrityTransitions: make([]IntegrityTransitionJSON, 0),
 		Movements:            make([]MovementJSON, 0),
 	}
+
+	corrections := runstore.CorrectionMap(recs)
+	targetToOrig := make(map[int64]*runstore.Record)
+	for _, r := range recs {
+		if r != nil {
+			targetToOrig[r.Seq] = r
+		}
+	}
+
 	for _, rec := range recs {
-		out.Runs = append(out.Runs, toTrendRunJSON(rec))
+		runJSON := toTrendRunJSON(rec)
+		if rec.IsCorrection() {
+			orig := targetToOrig[rec.Correction.TargetSeq]
+			origFloor := ""
+			origWorst := ""
+			if orig != nil {
+				origFloor = orig.FloorLossPct
+				origWorst = orig.WorstLossPct
+			}
+			runJSON.Correction = &route.CorrectionJSON{
+				TargetSeq:             rec.Correction.TargetSeq,
+				Reason:                rec.Correction.Reason,
+				IsCorrection:          true,
+				OriginalFloorLossPct:  origFloor,
+				CorrectedFloorLossPct: rec.FloorLossPct,
+				OriginalWorstLossPct:  origWorst,
+				CorrectedWorstLossPct: rec.WorstLossPct,
+			}
+		} else if corr, ok := corrections[rec.Seq]; ok {
+			runJSON.Correction = &route.CorrectionJSON{
+				CorrectedBySeq:        corr.Seq,
+				Reason:                corr.Correction.Reason,
+				Corrected:             true,
+				OriginalFloorLossPct:  rec.FloorLossPct,
+				CorrectedFloorLossPct: corr.FloorLossPct,
+				OriginalWorstLossPct:  rec.WorstLossPct,
+				CorrectedWorstLossPct: corr.WorstLossPct,
+			}
+		}
+		out.Runs = append(out.Runs, runJSON)
 	}
 	transitions := runstore.TransitionsFromRecords(recs)
 	for _, transition := range transitions {

@@ -39,6 +39,7 @@ at all; [docs/offline-testing.md](offline-testing.md) is the full argument.
 |:---|:---|:---|:---|
 | `make` / `make all` | `go fmt ./...`, `go vet ./...`, `go test ./...`, `go build -o bin/ ./...` | — | The quick "is this tree sane" pass. |
 | `make build` | `go build -o bin/ ./...` | — | Compile every package and binary into `bin/` without testing. `bin/` is created if absent. |
+| `make build-reproducible` | `CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" -o bin/wayfared ./cmd/wayfared` | — | Build byte-identical `wayfared` binary regardless of filesystem location or host compiler variations (issue #728). |
 | `make test` | `go test ./...` | — | The full unit suite. Serial: no `-race`, no `-count`. |
 | `make race` | `go test -race ./...` | cgo-capable toolchain | Anything touching concurrency. `refrate.Cached` and `route.Engine.Ladder` both price concurrently, so a change there belongs here. |
 | `make vet` | `go vet ./...` | — | Cheap static check; part of `make all`. |

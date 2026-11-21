@@ -134,7 +134,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
           cache: true
           cache-dependency-path: go.sum
 
@@ -211,6 +211,14 @@ jobs:
       # later valid records, and runstore.Open refuses to load it afterwards.
       - name: Verify the chain
         run: go run ./cmd/wayfared -verify-store -data ./data
+
+      # Generate and commit the static corridors.json snapshot (issue #691).
+      # This file is served from GitHub Pages or a release asset so consumers
+      # can poll a static file instead of waking the hosted instance.
+      - name: Generate static corridors snapshot
+        run: |
+          go run ./cmd/wayfared -export-static ./corridors.json -data ./data
+          git add corridors.json
 
       - name: Commit and push the sweep
         id: push
