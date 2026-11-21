@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wayfare browser consumer</title>
+<!--
+  A browser consumer of the Wayfare API (issue #928).
+
+  This page exists to exercise the two things a browser needs and a Go program
+  does not: CORS (the page is served from a different origin than the API) and
+  conditional requests (the ETag the server exposes through
+  Access-Control-Expose-Headers, sent back as If-None-Match).
+
+  There is no build step and no dependency. Serve this directory from any
+  static file server and open it:
+
+      python3 -m http.server 8000 --directory examples/browser-consumer
+
+  The page must be served from an http:// origin. Opening it as a file:// URL
+  gives every fetch an Origin of null, which is not the contract this example
+  is about.
+
+  It implements the same four refusals as examples/api-consumer, and one more
+  it inherits from that program: it never turns a money field into a number.
+  Amounts, rates and percentages arrive as decimal strings (ADR 006) and are
+  printed as received.
+-->
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 52rem; padding: 0 1rem; }
+  label { display: block; margin: .75rem 0 .25rem; font-weight: 600; }
+  input { font: inherit; padding: .4rem .5rem; width: 100%; box-sizing: border-box; }
+  button { font: inherit; padding: .45rem 1rem; margin-top: .75rem; }
+  table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+  th, td { text-align: left; border-bottom: 1px solid #8884; padding: .3rem .5rem; }
+  .refused { color: #8a6d00; }
+  .ok { color: #1a7f37; }
+  .bad { color: #c1121f; }
+  #status { margin-top: 1rem; font-variant-numeric: tabular-nums; }
+  code { font-size: .92em; }
+</style>
+</head>
+<body>
+<h1>Wayfare browser consumer</h1>
+
+<p>
+  This page reads a corridor cross-origin, keeps the <code>ETag</code> the API
+  returns, and sends it back as <code>If-None-Match</code> on the next read.
+  A <code>304</code> means the stored measurement has not changed, so the page
+  keeps what it already has instead of downloading the body again.
+</p>
+
+<label for="base">API base URL</label>
+<input id="base" value="https://wayfare-cdb9.onrender.com" spellcheck="false">
+
+<label for="to">Receive asset</label>
+<input id="to" value="NGNC" spellcheck="false">
+
+<button id="read">Read corridor</button>
+<button id="poll">Read again (conditional)</button>
+
+<p id="status">Not read yet.</p>
+<table id="out" hidden>
+  <thead>
+    <tr><th>Size (sent)</th><th>Receive</th><th>Effective rate</th><th>Loss vs mid</th><th>Verdict</th></tr>
+  </thead>
+  <tbody id="rungs"></tbody>
+</table>
+
+<script>
+"use strict";
+
+// state holds what the last 200 carried, so a 304 has something to keep.
+const state = { etag: null, body: null };
+
+const $ = (id) => document.getElementById(id);
+
+function baseURL() {
+  // Strip a trailing slash so the path concatenation stays predictable.
+  return $("base").value.trim().replace(/\/+$/, "");
+}
+
+// renderRefusals writes what the response refuses to claim, before any figure.
+// Each line is one of the four refusals documented in docs/api-consumer.md.
+function renderRefusals(body) {
+  const lines = [];
+  if (!body.live) {
+    const age = body.stale && body.stale.age_human ? body.stale.age_human : "unknown age";
+    lines.push("live: false — this is a stored reading (" + age + " old), not a current one.");
+  }
+  if (!body.scored) {
+    lines.push("scored: false — no reference rate, so no loss figure and no verdict is shown.");
+  }
+  if (body.recommended === null) {
+    lines.push("recommended: null — nothing on this corridor is worth taking.");
+  }
+  if (body.recommended && body.recommended.verdict === "UNUSABLE") {
+    // The API does not produce this pair today. A consumer that rendered it
+    // anyway would be the one publishing an unusable quote as a suggestion.
+    lines.push("recommended.verdict: UNUSABLE — not rendered as a recommendation.");
+  }
+  return lines;
+}
+
+function render(body, note) {
+  state.body = body;
+  const refusals = renderRefusals(body);
+  const parts = [];
+  if (note) parts.push(note);
+  parts.push("measured at " + body.measured_at + (body.integrity ? " · integrity " + body.integrity : ""));
+  if (body.recommended) {
+    parts.push("recommended: " + body.recommended.description + " — " +
+      body.recommended.receive_amount + " received at " + body.recommended.effective_rate);
+  }
+  for (const line of refusals) parts.push(line);
+  if (body.finding) parts.push(body.finding);
+
+  const status = $("status");
+  status.textContent = "";
+  for (const line of parts) {
+    const div = document.createElement("div");
+    div.textContent = line;
+    if (refusals.includes(line) || line === body.finding) div.className = "refused";
+    status.appendChild(div);
+  }
+
+  const tbody = $("rungs");
+  tbody.textContent = "";
+  for (const rung of body.rungs || []) {
+    const tr = document.createElement("tr");
+    // Every value below is a string on the wire and stays one here: this page
+    // never does arithmetic on money.
+    const cells = [
+      rung.send_amount,
+      rung.priced ? rung.quote.receive_amount : "not priced",
+      rung.priced ? rung.quote.effective_rate : "—",
+      rung.priced && rung.quote.loss_pct !== undefined ? rung.quote.loss_pct : "—",
+      rung.priced ? rung.quote.verdict : "—",
+    ];
+    for (const value of cells) {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  $("out").hidden = !(body.rungs && body.rungs.length);
+}
+
+async function readCorridor() {
+  const url = baseURL() + "/api/corridor?to=" + encodeURIComponent($("to").value.trim());
+  const headers = { Accept: "application/json" };
+  // The conditional read. The ETag is readable cross-origin only because the
+  // server names it in Access-Control-Expose-Headers.
+  if (state.etag) headers["If-None-Match"] = state.etag;
+
+  const status = $("status");
+  status.className = "";
+  status.textContent = "Reading " + url + " …";
+
+  let response;
+  try {
+    response = await fetch(url, { headers, mode: "cors" });
+  } catch (err) {
+    status.className = "bad";
+    status.textContent = "Could not read the API: " + err + ". A CORS or network failure looks like this; the API base URL must be an http(s) origin that sends Access-Control-Allow-Origin.";
+    return;
+  }
+
+  if (response.status === 304) {
+    // The record the server holds is the one this page already has. The body
+    // is absent by definition; the copy in state is still the right one.
+    state.etag = response.headers.get("ETag") || state.etag;
+    if (state.body) render(state.body, "304 Not Modified — the stored record is unchanged; showing the copy already held.");
+    else status.textContent = "304 with no copy held — reload without If-None-Match.";
+    return;
+  }
+
+  if (!response.ok) {
+    // An error body is not a measurement: no figure is rendered from it.
+    let detail = "";
+    try { detail = JSON.stringify(await response.json()); } catch (_) { detail = await response.text(); }
+    status.className = "bad";
+    status.textContent = "HTTP " + response.status + " — " + detail;
+    return;
+  }
+
+  const body = await response.json();
+  state.etag = response.headers.get("ETag");
+  render(body, state.etag ? "200 OK — kept ETag " + state.etag + " for the next conditional read." : "200 OK — no ETag, so this reading cannot be revalidated (a live measurement has none).");
+}
+
+$("read").addEventListener("click", () => { state.etag = null; state.body = null; readCorridor(); });
+$("poll").addEventListener("click", readCorridor);
+</script>
+</body>
+</html>
