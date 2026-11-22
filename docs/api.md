@@ -51,6 +51,7 @@ A successful response contains:
 - `recommended_size` — the send size of the recommendation, when one exists.
 - `finding` — explanatory prose about the measurement.
 - `rungs` — one entry per requested size.
+- `ledger_range` — the first and last ledger observed across the rungs, as `first`, `last` and `span` (`last - first`, the number of ledgers that closed while the ladder was priced). A ladder takes several ledgers, so its rungs can be priced against different books; a large `span` marks a reading that may straddle a book change. Each ledger is the chain head Horizon's root reported right after that rung was priced. Omitted when no rung observed a ledger — never published as zeros. Stored readings carry it from record Version 6 on (see [run-store.md](run-store.md)).
 - `measured_at` — timestamp of the response measurement or stored reading.
 - `live` — `true` for a fresh measurement and `false` for history.
 - `stale` — present only when `live` is `false`; contains `recorded_at`, `age_seconds`, and `age_human`.
@@ -61,6 +62,8 @@ Each rung includes `send_amount`, `priced`, `integrity`, optional `quote`, notes
 - `marginal_cost` — the change in effective receive-asset cost from the previous valid priced rung.
 - `marginal_from` and `marginal_to` — the valid ladder sizes defining that marginal measurement.
 - `cost` — the available cost decomposition (see [cost-decomposition.md](cost-decomposition.md)).
+
+Any rung that priced may also include `ledger`, the chain head observed right after it was priced. It is omitted when unknown.
 
 The first valid priced rung has no marginal cost. Missing rungs are skipped, never treated as zero. The current marginal classification is available on the internal ladder result as `improving`, `flat`, `worsening`, or `undetermined`; fewer than two valid priced points are undetermined.
 

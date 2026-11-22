@@ -154,7 +154,7 @@ func TestUIBenchmarkPanel(t *testing.T) {
 		"chart-threshold",
 		"chart-point",
 		// The engine's own loss figure drives the geometry; nothing else.
-		"parseFloat(r.quote.loss_pct)",
+		"geometryNumber(r.quote.loss_pct)",
 		// Reference provenance printed with the headline (same figures the
 		// original bench panel printed).
 		"d.reference_mid",

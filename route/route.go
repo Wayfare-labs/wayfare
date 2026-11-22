@@ -381,6 +381,18 @@ type Engine struct {
 
 	// ProbeAmount sizes the slippage probe. Defaults to 10 send units.
 	ProbeAmount decimal.Decimal
+
+	// Ledgers reports the chain head, so a ladder can record the ledger range
+	// its rungs were priced across. It is deliberately not part of
+	// Pathfinder: it is never a pricing input. Nil leaves every rung's ledger
+	// unknown and the ladder's range absent.
+	Ledgers LedgerSource
+}
+
+// LedgerSource reports the ledger sequence the network has reached.
+// *dex.Client satisfies it through its Horizon-root ChainHead lookup.
+type LedgerSource interface {
+	ChainHead(ctx context.Context) (int64, error)
 }
 
 // Quote prices every available route for the request and ranks them.
