@@ -708,7 +708,7 @@ curl -s https://wayfare-cdb9.onrender.com/readyz
   "checks": {
     "verification": {
       "state": "unverified",
-      "note": "embedded history did not open or verify: runstore: USDC-NGNC: runstore: record seq 1 has hash 424b33fcf120… but its contents hash to 0f2dae02d403…; it was modified after it was written"
+      "note": "embedded history did not open or verify: runstore: USDC-NGNC: runstore: record seq 1 has hash 424b33fcf120… but its contents hash to 3c4afa7aa3ef…; it was modified after it was written"
     },
     "store": {
       "state": "readable",
@@ -717,6 +717,13 @@ curl -s https://wayfare-cdb9.onrender.com/readyz
   }
 }
 ```
+
+What the `checks` block reports in both responses is what a real binary
+returned: the 200 from a build of this tree, the 503 after appending text to
+the `finding` field of the first record of `data/USDC-NGNC.ndjson` and
+rebuilding, so the embedded chain no longer seals. `/healthz` on that same
+503-returning process still answered `200`. The two commit fields are the
+illustrative provenance used throughout this document.
 
 ### Check states
 

@@ -160,7 +160,7 @@ func TestReadyzRefusesAnUnverifiedChainIsNotARefusedHealthz(t *testing.T) {
 		// verify: keep serving, keep the reason.
 		Verification: &Verification{Note: "embedded history did not open or verify: " +
 			"runstore: USDC-NGNC: runstore: record seq 1 has hash 424b33fcf120… " +
-			"but its contents hash to 0f2dae02d403…; it was modified after it was written"},
+			"but its contents hash to 3c4afa7aa3ef…; it was modified after it was written"},
 	}
 	api := readyServer(t, s)
 
