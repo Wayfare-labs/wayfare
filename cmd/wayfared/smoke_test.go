@@ -98,7 +98,7 @@ func TestOpenStoreEmptyDirReturnsNop(t *testing.T) {
 	// When dataDir is empty, openStore returns a Nop store when
 	// embedded history is unavailable.
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store, err := openStore("", logger)
+	store, _, err := openStore("", logger)
 	if err != nil {
 		t.Fatalf("openStore(\"\"): %v", err)
 	}
@@ -113,12 +113,18 @@ func TestOpenStoreEmptyDirReturnsNop(t *testing.T) {
 func TestOpenStoreTempDir(t *testing.T) {
 	dir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store, err := openStore(dir, logger)
+	store, verdict, err := openStore(dir, logger)
 	if err != nil {
 		t.Fatalf("openStore(%q): %v", dir, err)
 	}
 	if store == nil {
 		t.Fatal("openStore returned nil store")
+	}
+	// An empty directory opens as a store with nothing to verify, which is
+	// still a chain this process checked: it is the fallback that must not
+	// claim readiness (issue #704).
+	if !verdict.ChainVerified {
+		t.Errorf("verdict on a freshly opened store = %+v, want verified", verdict)
 	}
 	corridors, err := store.Corridors(context.Background())
 	if err != nil {
@@ -140,7 +146,7 @@ func TestOpenStoreNonexistentDir(t *testing.T) {
 	}
 	dir := filepath.Join(file, "impossible")
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	_, err := openStore(dir, logger)
+	_, _, err := openStore(dir, logger)
 	if err == nil {
 		t.Fatal("expected error for unwritable dir, got nil")
 	}
@@ -153,7 +159,7 @@ func TestOpenStoreNonexistentDir(t *testing.T) {
 func TestVerifyStoreEmpty(t *testing.T) {
 	dir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store, err := openStore(dir, logger)
+	store, _, err := openStore(dir, logger)
 	if err != nil {
 		t.Fatalf("openStore: %v", err)
 	}

@@ -16,6 +16,7 @@ All endpoints are read-only. The service does not hold funds, issue tokens, sign
 | `GET` | `/api/market-structure` | Identify shared issuer dependencies across corridors |
 | `GET` | `/api/thresholds` | Publish verdict and divergence band thresholds from code constants |
 | `GET` | `/healthz` | Return service health |
+| `GET` | `/readyz` | Return whether traffic should be routed to this process |
 | `GET` | `/` | Serve the embedded single-file UI |
 
 Unsupported methods return `405`. Requests beyond the per-client rate limit return `429` with a `Retry-After` header (seconds) and the error code `rate_limited` (see [Rate limiting](#rate-limiting)). JSON errors have the shape `{ "error": "...", "code": "..." }`; the machine-readable codes are the contract and are enumerated in [errors.md](errors.md).
@@ -628,7 +629,7 @@ empty string. Together they answer "is the deploy stale or the pipeline
 dead?": if `data_commit` stops advancing while `code_commit` keeps moving, the
 measurement pipeline is not landing new history.
 
-This endpoint checks that the HTTP service is responding. It does not perform a live corridor measurement or validate upstream availability.
+This endpoint checks that the HTTP service is responding. It does not perform a live corridor measurement or validate upstream availability, and it does not report whether the history being served was verified: a process serving a chain that failed verification at startup still answers `200` here, because the process is up. That is what [`GET /readyz`](#get-readyz) is for.
 
 ### Freshness fields
 
@@ -648,6 +649,111 @@ while `chain_head` is still reported. A `200` with nulls means the check could
 not be made, not that data is absent. The freshness block does not change the
 endpoint's health verdict: it remains `200` as long as the HTTP service is
 answering.
+
+## `GET /readyz`
+
+Readiness, not liveness. `/healthz` answers "is this process up and how old is
+its data". `/readyz` answers the question a platform acts on: **should this
+process receive traffic at all?**
+
+A Wayfare process is ready when two things are true:
+
+1. **The history it serves verified at startup.** Opening the run store walks
+   every chain and checks each record's seal against the previous one. When the
+   binary's embedded history will not verify, the process logs the failure and
+   keeps serving from an empty store — which is the right call for liveness and
+   the wrong one for traffic routing, because the readings it publishes are no
+   longer ones this project will stand behind.
+2. **The store answers a read now.** `/readyz` lists the store's corridors on
+   every request, so a volume that unmounted or a chain file that became
+   unreadable takes the instance out of rotation while it is still serving.
+
+Ready returns `200`, not ready returns `503`, and both are the same document —
+a probe asked a valid question and got a complete answer either way. The two
+gates are reported separately because they fail for different reasons and a
+single boolean would hide which.
+
+**cURL:**
+```bash
+curl -s https://wayfare-cdb9.onrender.com/readyz
+```
+
+**Example Response (200 OK):**
+
+```json
+{
+  "status": "ready",
+  "code_commit": "c7436e2257ae391e6177e063a9012e631540e1d7",
+  "data_commit": "05b446626f6f169b927b18822bd08c700f4f80de",
+  "checks": {
+    "verification": {
+      "state": "verified",
+      "note": "embedded history verified at open across 4 corridors"
+    },
+    "store": {
+      "state": "readable",
+      "corridors": 4
+    }
+  }
+}
+```
+
+**Example Response (503 Service Unavailable):**
+
+```json
+{
+  "status": "not_ready",
+  "code_commit": "c7436e2257ae391e6177e063a9012e631540e1d7",
+  "data_commit": "05b446626f6f169b927b18822bd08c700f4f80de",
+  "checks": {
+    "verification": {
+      "state": "unverified",
+      "note": "embedded history did not open or verify: runstore: USDC-NGNC: runstore: record seq 1 has hash 424b33fcf120… but its contents hash to 0f2dae02d403…; it was modified after it was written"
+    },
+    "store": {
+      "state": "readable",
+      "corridors": 0
+    }
+  }
+}
+```
+
+### Check states
+
+`checks.verification.state`:
+
+| State | Meaning |
+|---|---|
+| `verified` | Every chain loaded at startup passed verification. |
+| `unverified` | Verification was attempted and did not pass, or there was nothing to verify. The process is serving history it cannot vouch for. |
+| `unrecorded` | No verdict was recorded, because nothing opened a store. Distinct from `unverified`: "nobody checked" is not "the check failed", and neither is a pass. |
+
+`checks.store.state`:
+
+| State | Meaning |
+|---|---|
+| `readable` | The store answered `Corridors`, and `corridors` is how many it named. |
+| `unreadable` | The read failed; `error` carries why and `corridors` is `null`. |
+| `absent` | No run store is configured, so there is nothing to read; `corridors` is `null`. |
+
+`corridors` is `null` rather than `0` whenever the count is unknown, the same
+rule `/healthz` applies to its freshness block: an unreadable store is not a
+report of an empty one. `code_commit` and `data_commit` are the build
+provenance fields described under [`GET /healthz`](#build-provenance-fields).
+
+### What readiness does not check
+
+`/readyz` makes no upstream call and re-walks no chain. A platform polls a
+readiness probe hard, and a probe that depends on Horizon goes red when the
+network does — which is a different fact about a different thing. Verification
+costs a full read of the published history, so it is recorded once at startup
+and reported from there; whether the store still answers is the part asked
+live.
+
+Point a platform's **readiness** check at `/readyz` and leave its **liveness**
+check on `/healthz`. Restarting an instance that has refused traffic tells you
+nothing you did not already know from the body, and a chain that fails
+verification fails the same way every time the process starts.
 
 ## Rate limiting
 
