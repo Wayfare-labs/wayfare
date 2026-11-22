@@ -407,6 +407,9 @@ func Registry() []Entry {
 // derives its corridors from: adding a live fiat-pegged asset to the registry
 // makes it measured automatically.
 //
+// This is the single source of truth for the monitor's sweep set; the monitor
+// must not maintain its own corridor list.
+//
 // Assets whose issuer declares status="pending" are excluded because SEP-1
 // only defines "live" as in service; sweeping a token its own issuer has not
 // launched would measure a corridor that cannot be traded.

@@ -14,6 +14,18 @@ asset with a fiat peg is measured automatically. Adding a corridor through
 [adding-a-corridor.md](adding-a-corridor.md) makes it part of the sweep without
 any change to `monitor.DefaultCorridors`.
 
+## Upstream request cost per sweep
+
+The sweep set is every registered live asset with a fiat peg, paired with the
+send asset (USDC). Each corridor is priced with the same per-corridor request
+count measured in #481: one Horizon `/paths/strict-send` request per trade size
+in the ladder. With the current registry that is five corridors (NGNC, GHSC,
+KESC, NGNT, and the remaining verified fiat-pegged assets) times the ladder
+length, so the total request count scales linearly with the number of
+registered corridors. Non-fiat pegs (USD→USD) are excluded from the sweep
+rather than measured as a self-corridor; see the separate issue for how those
+are handled.
+
 All figures are raw output from `cmd/ladder`, which prices each size through
 the same `route.Engine` the product uses. Nothing here is rounded in a
 direction that improves the result; percentages are truncated to two decimals
