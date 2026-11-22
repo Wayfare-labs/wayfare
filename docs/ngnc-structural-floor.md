@@ -9,7 +9,10 @@ rather than of any single route or pool — and it is the observation that turne
 a routing tool into a monitor.
 
 **Checked against the code and the committed measurement chain at commit
-`74c1f17`, 2026-09-30.**
+`74c1f17`, 2026-09-30.** Since #702 the check is continuous: both tables carry
+a `figures` marker, and `corridor_figures_test.go` recomputes every figure in
+them — from the snapshot, the committed chain, and the raw-figures document — on
+every CI run.
 
 This is a case study, so it is worth saying what it is not: it is not a
 [spread-versus-depth decomposition](#what-the-tool-cannot-yet-establish), and
@@ -34,6 +37,8 @@ above 20% (Good ≤3%, Fair ≤8%, Poor ≤20%, declared in `route/route.go` as
 `ThresholdGood`, `ThresholdFair` and `ThresholdPoor`, and applied in
 `verdictFor`). So the floor clears the unusable line on its own, before a single
 unit of size is added.
+
+<!-- figures: id=case-study-floors; kind=derived; check=case-study-floors; from=ngnc-comparison,ngnc-20260808,ngnc-20260821-replay; chain=USDC-NGNC -->
 
 | Date | Source | 0.1 USDC rung's best path | Floor loss at 0.1 | Worst loss |
 |:---|:---|:---|---:|---:|
@@ -100,6 +105,8 @@ way to unusable is not a corridor that more liquidity rescues.
 The issuer of NGNC also issues GHSC and KESC from the same Stellar account. The
 committed chain holds all three as recorded within seven seconds of each other
 on 2026-08-22, so the comparison is not confounded by market timing:
+
+<!-- figures: id=case-study-sisters; kind=chain; check=sister-corridors; chain=USDC-NGNC,USDC-GHSC,USDC-KESC -->
 
 | Corridor | Integrity | 0.1 USDC rung | Rungs graded `UNUSABLE` |
 |:---|:---|:---|---:|

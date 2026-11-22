@@ -5,6 +5,13 @@
 
 All endpoints are read-only. The service does not hold funds, issue tokens, sign transactions, or execute payments.
 
+Every `curl` example below is executed in CI against a local server replaying
+committed snapshots (issue #669). The marker comment above each block names the
+example and the top-level JSON keys it is expected to produce; the test rewrites
+the deployed host to the local server and fails the job if a request errors or a
+declared key is absent. Examples are what consumers copy, so an example that no
+longer runs is a documentation bug that reports itself.
+
 ## Endpoints
 
 | Method | Path | Purpose |
@@ -127,6 +134,7 @@ GET /api/corridor?from=USDC&to=NGNC HTTP/1.1
 
 **cURL — a polling client:**
 
+<!-- api-example: corridor-polling -> - -->
 ```bash
 # Fetch, and remember the tag. (-D - prints the response headers;
 # the endpoint answers GET only, so the header must come from a GET.)
@@ -140,6 +148,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "If-None-Match: $etag" \
 
 **cURL:**
 
+<!-- api-example: corridor -> send_asset,receive_asset,integrity,rungs,floor_loss_pct,recommended,live=true -->
 ```bash
 # History-first (fast, may be stale)
 curl -s "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC"
@@ -407,6 +416,7 @@ watch the log rather than poll the endpoint.
 
 **cURL:**
 
+<!-- api-example: corridor-trend -> corridor,send_asset,receive_asset,count,runs,integrity_transitions,latest_transition -->
 ```bash
 curl -s "https://wayfare-cdb9.onrender.com/api/corridor/trend?from=USDC&to=NGNC&limit=30"
 curl -s "https://wayfare-cdb9.onrender.com/api/corridor/trend?to=NGNC&limit=7"
@@ -479,6 +489,7 @@ chain. See [ADR 007](adr/007-why-the-committed-chain-is-a-rolling-window.md).
 
 **cURL:**
 
+<!-- api-example: chain-heads -> heads -->
 ```bash
 curl -s https://wayfare-cdb9.onrender.com/api/chain-heads
 ```
@@ -504,6 +515,7 @@ Returns an `assets` array. Each entry contains the asset fields and `can_be_dest
 
 **cURL:**
 
+<!-- api-example: assets -> assets -->
 ```bash
 curl -s https://wayfare-cdb9.onrender.com/api/assets
 ```
@@ -558,6 +570,7 @@ A successful response contains:
 
 **cURL:**
 
+<!-- api-example: market-structure -> issuer_concentrations,corridor_count,concentrated_corridor_count,generated_at -->
 ```bash
 curl -s https://wayfare-cdb9.onrender.com/api/market-structure
 curl -s https://wayfare-cdb9.onrender.com/api/market-structure?pretty=1
@@ -582,11 +595,36 @@ curl -s https://wayfare-cdb9.onrender.com/api/market-structure?pretty=1
 
 In the current registry, LinkIOIssuer (`GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6`) backs three corridors: NGNC (naira), GHSC (Ghanaian cedi), and KESC (Kenyan shilling). This concentration is a market-structure fact — if that issuer fails, all three corridors fail together.
 
+## `GET /api/thresholds`
+
+Publishes the verdict and divergence bands the code applies. The values are
+read from the constants in `route` and `refrate` at request time, so a consumer
+can discover the bands its data was graded under instead of hard-coding them.
+Query parameter: `pretty=1` is optional.
+
+**cURL:**
+
+<!-- api-example: thresholds -> verdict_thresholds,divergence_thresholds -->
+```bash
+curl -s https://wayfare-cdb9.onrender.com/api/thresholds
+```
+
+**Example Response (200 OK):**
+
+```json
+{
+  "verdict_thresholds": {"good": "3", "fair": "8", "poor": "20"},
+  "divergence_thresholds": {"agree": "1", "malfunction": "25"}
+}
+```
+
 ## `GET /healthz`
 
 A healthy service returns status `200` with:
 
 **cURL:**
+
+<!-- api-example: healthz -> status,data -->
 ```bash
 curl -s https://wayfare-cdb9.onrender.com/healthz
 ```

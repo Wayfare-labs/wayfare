@@ -103,8 +103,8 @@ The same corridor measured 2026-08-04 and again 2026-08-08
 
 | | 2026-08-04 | 2026-08-08 |
 |:---|---:|---:|
-| 100 USDC receives | 65,150.86 NGNC | 62,890.83 NGNC |
-| Effective rate | 651.51 | 628.91 |
+| 100 USDC receives | 65,100.14 NGNC | 62,890.83 NGNC |
+| Effective rate | 651.00 | 628.91 |
 | Reference mid | 1364.77 | 1364.0070 |
 | Loss | 52.3% | 53.89% |
 

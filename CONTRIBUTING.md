@@ -131,6 +131,12 @@ The per-area reasoning — exactly what is owned, what a mistake in it would
 publish, what defends it today, and what is open contribution — is
 **[docs/maintainer-owned-areas.md](docs/maintainer-owned-areas.md)**.
 
+Coverage in the packages behind those areas is enforced rather than reported:
+`make coverage-floors` compares it against the committed floors in
+[`coverage-floors.txt`](coverage-floors.txt), and CI fails below them. The
+policy and the ratchet procedure are in
+[docs/coverage-floors.md](docs/coverage-floors.md).
+
 ### What the labels mean
 
 Contributors have to be able to trust these:
