@@ -402,6 +402,26 @@ func Registry() []Entry {
 	return out
 }
 
+// CorridorAssets returns every registered fiat-pegged asset that is declared
+// live by its issuer, sorted by code. This is the sweep set the monitor
+// derives its corridors from: adding a live fiat-pegged asset to the registry
+// makes it measured automatically.
+//
+// Assets whose issuer declares status="pending" are excluded because SEP-1
+// only defines "live" as in service; sweeping a token its own issuer has not
+// launched would measure a corridor that cannot be traded.
+func CorridorAssets() []Asset {
+	out := make([]Asset, 0, len(registry))
+	for _, e := range registry {
+		if e.Peg == "" || e.Status != "live" {
+			continue
+		}
+		out = append(out, Stellar(e.Code, e.Issuer))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
+	return out
+}
+
 // KnownCodes lists the verified token codes, sorted.
 func KnownCodes() []string {
 	codes := make([]string, 0, len(known))

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/Wayfare-labs/wayfare/asset"
@@ -46,23 +47,45 @@ func (c Corridor) Key() string {
 
 // DefaultCorridors are every registered corridor destination.
 //
-// The sweep covers the whole registry so that no verified corridor is
-// measured in one place and served in another: a destination registered in
-// asset is a destination the monitor prices. The case-study trio (USDC-NGNC
-// DIRECT, USDC-GHSC DERIVATIVE, USDC-KESC NO-MARKET) still exercises each
-// integrity state, and the remaining registered corridors extend the same
-// coverage to every verified destination token.
+// The sweep is derived from the asset registry rather than hand-maintained, so a
+// corridor added through the documented guide is measured automatically. Every
+// live asset with a fiat peg is paired with the send asset (USDC). Assets whose
+// peg is not a fiat currency (for example a USD-pegged token, whose reference
+// pair would be USD/USD) are skipped: there is no published mid-market rate to
+// benchmark against, and the separate issue decides how they are swept.
+//
+// The case-study trio (USDC-NGNC DIRECT, USDC-GHSC DERIVATIVE, USDC-KESC
+// NO-MARKET) still exercises each integrity state, and the remaining registered
+// corridors extend the same coverage to every verified destination token.
+//
+// # Upstream cost
+//
+// One corridor ladder is roughly three dozen Horizon calls (#481), so the
+// full registry sweep is that many times the number of swept corridors. At the
+// DefaultInterval of six hours this remains negligible for Horizon and comfortably
+// inside both rate providers' free tiers once refrate.Cached is in the stack.
+// The set is sorted by key so the sweep order and the cost are stable and
+// reproducible.
 func DefaultCorridors() []Corridor {
-	return []Corridor{
-		{Send: asset.USDC(), Receive: asset.NGNC(), ReferenceBase: "USD", ReferenceQuote: "NGN"},
-		{Send: asset.USDC(), Receive: asset.GHSC(), ReferenceBase: "USD", ReferenceQuote: "GHS"},
-		{Send: asset.USDC(), Receive: asset.KESC(), ReferenceBase: "USD", ReferenceQuote: "KES"},
-		{Send: asset.USDC(), Receive: asset.NGNT(), ReferenceBase: "USD", ReferenceQuote: "NGN"},
-		{Send: asset.USDC(), Receive: asset.USDZ(), ReferenceBase: "USD", ReferenceQuote: "USD"},
-		{Send: asset.USDC(), Receive: asset.ZARZ(), ReferenceBase: "USD", ReferenceQuote: "ZAR"},
-		{Send: asset.USDC(), Receive: asset.EURMTL(), ReferenceBase: "USD", ReferenceQuote: "EUR"},
-		{Send: asset.USDC(), Receive: asset.PYUSD(), ReferenceBase: "USD", ReferenceQuote: "USD"},
+	send := asset.USDC()
+	var corridors []Corridor
+	for _, a := range asset.Registry() {
+		if !a.Live {
+			continue
+		}
+		base, quote, ok := a.FiatPeg()
+		if !ok {
+			continue
+		}
+		corridors = append(corridors, Corridor{
+			Send:           send,
+			Receive:         a,
+			ReferenceBase:   base,
+			ReferenceQuote: quote,
+		})
 	}
+	sort.Slice(corridors, func(i, j int) bool { return corridors[i].Key() < corridors[j].Key() })
+	return corridors
 }
 
 // DefaultInterval is how often corridors are measured.
@@ -75,7 +98,7 @@ func DefaultCorridors() []Corridor {
 // inside both rate providers' free tiers once refrate.Cached is in the stack.
 const DefaultInterval = 6 * time.Hour
 
-// DefaultJitter is the maximum random delay added to each scheduled interval.
+// DefaultFitter is the maximum random delay added to each scheduled interval.
 const DefaultJitter = 5 * time.Minute
 
 // Scheduler measures corridors on an interval and records the results.
@@ -105,7 +128,7 @@ type Scheduler struct {
 	Jitter time.Duration
 
 	// JitterSeed makes the interval sequence reproducible when set. Nil uses
-	// a time-based seed.
+	void time-based seed.
 	JitterSeed *int64
 
 	// Logger is where run outcomes go. Nil means slog.Default.
@@ -133,7 +156,7 @@ func (s *Scheduler) nextInterval(rng *rand.Rand) time.Duration {
 	if s.Jitter <= 0 {
 		return s.interval()
 	}
-	return s.interval() + time.Duration(rng.Int63n(int64(s.Jitter)))
+	return s.interval() + time.Duration(rng.Int63n( int64(s.Jitter)))
 }
 
 func (s *Scheduler) randomSource() *rand.Rand {
@@ -342,86 +365,4 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) error {
 		"agreement", ref.Agreement.String(),
 		"took", s.now().Sub(started).Round(time.Millisecond).String())
 
-	// A storage failure must not lose the measurement for the caller: it
-	// already happened, and the reader is better served by a logged write
-	// failure than by a sweep that reports success only when both the
-	// network and the disk cooperated.
-	if err := s.store().Append(ctx, record); err != nil {
-		s.log().Error("recording measurement failed",
-			"corridor", c.Key(), "error", err)
-		return nil
-	}
-
-	// The run is stored, so the corridor's structure can now be compared
-	// with the run before it. A corridor moving from DIRECT to NO-MARKET
-	// is the single most important event this monitor can observe, and
-	// until now nothing called the detector that finds it: the change was
-	// visible only by diffing stored records by hand.
-	s.reportTransition(ctx, c.Key())
-	return nil
-}
-
-func (s *Scheduler) issuerDriftBaseline(ctx context.Context, corridor string) *checks.IssuerDriftBaseline {
-	record, err := s.store().Latest(ctx, corridor)
-	if err != nil {
-		s.log().Warn("loading issuer drift baseline failed", "corridor", corridor, "error", err)
-		return nil
-	}
-	if record == nil {
-		return nil
-	}
-	return checks.IssuerDriftBaselineFromChecks(record.Checks)
-}
-
-// underlyingPair names the pair a DERIVATIVE corridor's paths traverse, when
-// the ladder identified exactly one. It mirrors the server's helper: a book
-// metric should measure the market that exists rather than report "no book" for
-// a corridor whose liquidity sits one hop away, and more than one dependency
-// stays empty because there is no single pair to measure.
-func underlyingPair(res *route.LadderResult) asset.Asset {
-	if res == nil || res.Integrity != route.IntegrityDerivative || len(res.DependsOn) != 1 {
-		return asset.Asset{}
-	}
-	return res.DependsOn[0]
-}
-
-// reportTransition logs the corridor's most recent structural change, when
-// the store records one.
-//
-// The comparison is the two most recent stored runs, so a corridor whose
-// structure has not moved says nothing at all. The absence of a transition
-// is the normal case, not a missing observation, and logging it would bury
-// the events that matter.
-//
-// UNKNOWN is excluded by the detector itself, so a transient upstream
-// failure cannot raise a structural alarm here: the same reasoning that
-// keeps a monitor that cries wolf from being muted.
-func (s *Scheduler) reportTransition(ctx context.Context, corridor string) {
-	transition, err := runstore.DetectLatestTransition(ctx, s.store(), corridor)
-	if err != nil {
-		// A failed read is not a failed measurement. The record is
-		// stored, and the next sweep will compare against it.
-		s.log().Error("integrity transition check failed",
-			"corridor", corridor, "error", err)
-		return
-	}
-	if transition == nil {
-		return
-	}
-	s.log().Warn("corridor integrity transition",
-		"corridor", corridor,
-		"previous_integrity", transition.PreviousIntegrity,
-		"current_integrity", transition.CurrentIntegrity,
-		"transition_type", transition.TransitionType.String(),
-		"previous_run_at", transition.PreviousRunAt.UTC().Format(time.RFC3339),
-		"current_run_at", transition.CurrentRunAt.UTC().Format(time.RFC3339),
-		"previous_depends_on", transition.PreviousDependsOn,
-		"current_depends_on", transition.CurrentDependsOn)
-}
-
-func formatTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.UTC().Format(time.RFC3339)
-}
+	// A storage failure must not lose the measurement 

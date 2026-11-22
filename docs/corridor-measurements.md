@@ -8,6 +8,12 @@ The [NGNC ladder](#run-of-2026-08-08) came first and established the method;
 the [sister-corridor sweep](#sister-corridor-sweep-2026-08-08) extends it to
 the rest of the issuer's set.
 
+This document records individual measurement runs. The monitor's sweep set is
+not fixed here: it is derived from the asset registry, so every registered live
+asset with a fiat peg is measured automatically. Adding a corridor through
+[adding-a-corridor.md](adding-a-corridor.md) makes it part of the sweep without
+any change to `monitor.DefaultCorridors`.
+
 All figures are raw output from `cmd/ladder`, which prices each size through
 the same `route.Engine` the product uses. Nothing here is rounded in a
 direction that improves the result; percentages are truncated to two decimals
