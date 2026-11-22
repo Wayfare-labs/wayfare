@@ -7,7 +7,7 @@ This document is the contract. The `snapshot` package implements it, and
 issues #20 and #21 build on it — so it is written as a spec, not as a
 description of the code.
 
-**Format:** `wayfare.snapshot`, **version 1**.
+**Format:** `wayfare.snapshot`, **version 2** (version 1 supported for backwards compatibility).
 
 ---
 

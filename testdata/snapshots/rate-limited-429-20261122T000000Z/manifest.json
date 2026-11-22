@@ -1,0 +1,92 @@
+{
+  "format": "wayfare.snapshot",
+  "version": 2,
+  "recorded_at": "2026-11-22T00:00:00Z",
+  "git_revision": "62eaaea",
+  "corridor": {
+    "send": {
+      "code": "USDC",
+      "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+    },
+    "receive": {
+      "code": "NGNC",
+      "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+    },
+    "reference_pair": "USD/NGN"
+  },
+  "sizes": [
+    "100"
+  ],
+  "sources": {
+    "horizon": {
+      "url": "https://horizon.stellar.org"
+    },
+    "reference": {
+      "url": "https://latest.currency-api.pages.dev"
+    }
+  },
+  "notes": [
+    "Crafted from real Horizon and CurrencyAPI 429 rate-limited response shapes to verify ErrRateLimited and Retry-After handling across dex and refrate packages."
+  ],
+  "interactions": [
+    {
+      "kind": "horizon",
+      "method": "GET",
+      "key": "GET /paths/strict-send?destination_assets=NGNC%3AGASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6\u0026source_amount=100\u0026source_asset_code=USDC\u0026source_asset_issuer=GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN\u0026source_asset_type=credit_alphanum4",
+      "url": "https://horizon.stellar.org/paths/strict-send?destination_assets=NGNC%3AGASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6&source_amount=100&source_asset_code=USDC&source_asset_issuer=GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&source_asset_type=credit_alphanum4",
+      "status": 429,
+      "header": {
+        "Content-Type": [
+          "application/problem+json; charset=utf-8"
+        ],
+        "Date": [
+          "Sun, 22 Nov 2026 00:00:00 GMT"
+        ],
+        "Retry-After": [
+          "30"
+        ],
+        "X-Ratelimit-Limit": [
+          "100"
+        ],
+        "X-Ratelimit-Remaining": [
+          "0"
+        ],
+        "X-Ratelimit-Reset": [
+          "1700000030"
+        ]
+      },
+      "content_type": "application/problem+json; charset=utf-8",
+      "recorded_at": "2026-11-22T00:00:00Z",
+      "body_file": "responses/001-paths-strict-send-429.json",
+      "body_sha256": "sha256:ba981013ca9d13f326563947af9e3b5ad5c2789fbe3550510973ef2cf0e78b82"
+    },
+    {
+      "kind": "reference",
+      "method": "GET",
+      "key": "GET /v1/currencies/usd.json",
+      "url": "https://latest.currency-api.pages.dev/v1/currencies/usd.json",
+      "status": 429,
+      "header": {
+        "Content-Type": [
+          "application/json"
+        ],
+        "Date": [
+          "Sun, 22 Nov 2026 00:00:00 GMT"
+        ],
+        "Retry-After": [
+          "45"
+        ],
+        "X-Ratelimit-Limit": [
+          "60"
+        ],
+        "X-Ratelimit-Remaining": [
+          "0"
+        ]
+      },
+      "content_type": "application/json",
+      "recorded_at": "2026-11-22T00:00:00Z",
+      "body_file": "responses/002-currencies-usd-429.json",
+      "body_sha256": "sha256:60c2be43efbfb74ea94259695cfa5604b0191f38831b1d9ff93a6eb902981fc3"
+    }
+  ]
+}

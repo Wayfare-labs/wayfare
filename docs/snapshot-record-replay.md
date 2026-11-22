@@ -186,6 +186,21 @@ snapshot: usdc-ngnc-20260821T223040Z has no recorded response for
 
 ---
 
+## Recorded response headers
+
+Manifests recorded under version 2 store an explicit allowlist of upstream response headers for each interaction. During replay, `Replayer.RoundTrip` reconstructs these headers on the response so retry, rate-limiting, and error-handling code paths can be tested realistically without live networks.
+
+### Allowed headers
+
+The allowlist is filtered by `snapshot.CleanHeaders`:
+
+- Exact headers: `Date`, `Retry-After`, `X-Request-Id`
+- Header prefixes: `Content-Type`, `Content-Length`, `Cache-Control`, `ETag`, `Stellar-`, `X-Ratelimit-`
+
+All other headers (such as sensitive cookies or transient infrastructure headers) are stripped at record time. Old version 1 snapshots without header dictionaries continue to load and replay default headers (`Content-Type`).
+
+---
+
 ## The three committed snapshots
 
 | Corridor | State | Why it is a required fixture |
