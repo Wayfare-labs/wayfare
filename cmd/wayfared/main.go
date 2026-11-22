@@ -5,6 +5,7 @@
 //	wayfared -schedule=0              # server only, no scheduled measurement
 //	wayfared -once                    # one sweep, record, exit (CI schedules this)
 //	wayfared -verify-store            # walk the hash chains and exit
+//	wayfared -verify-registry         # re-fetch every issuer's stellar.toml and exit
 //	wayfared -export USDC-NGNC        # export one verified chain as CSV and exit
 //	wayfared -rotate-store            # trim chains over the window ceiling and exit
 //	wayfared -check-fresh             # exit non-zero if any record is stale
@@ -33,6 +34,7 @@ import (
 	"time"
 
 	"github.com/Wayfare-labs/wayfare"
+	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/monitor"
@@ -57,6 +59,8 @@ func main() {
 			"maximum random delay added to each measurement interval; 0 disables jitter")
 		serve     = flag.Bool("serve", true, "serve HTTP")
 		verify    = flag.Bool("verify-store", false, "verify every corridor chain and exit")
+		verifyReg = flag.Bool("verify-registry", false,
+			"re-fetch every registered issuer's stellar.toml and report whether each entry still matches; exit 1 if any changed, 2 if any could not be fetched")
 		rotate    = flag.Bool("rotate-store", false, "trim every chain over the window ceiling and exit")
 		rotateRec = flag.Int("rotate-records", runstore.MaxWindow,
 			"per-corridor record ceiling for -rotate-store")
@@ -87,6 +91,14 @@ func main() {
 
 	logger := newLogger(*logLevel)
 	slog.SetDefault(logger)
+
+	// -verify-registry is a read-only answer about the compiled-in registry,
+	// so it runs before the store is opened: a broken or empty data directory
+	// has nothing to do with whether an issuer's stellar.toml still declares
+	// its asset, and must not be able to change the answer.
+	if *verifyReg {
+		os.Exit(verifyRegistryCmd(context.Background(), asset.Registry(), nil, os.Stdout, logger))
+	}
 
 	store, err := openStore(*dataDir, logger)
 	if err != nil {
