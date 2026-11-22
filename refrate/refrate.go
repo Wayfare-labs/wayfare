@@ -33,6 +33,11 @@ type Rate struct {
 	AsOf   time.Time
 	Source string // provider identity, surfaced so users can audit it
 
+	// Kind says whether Mid was observed from a provider or holds by
+	// definition (a same-peg pair). The zero value, KindObserved, is correct
+	// for every provider-built rate. See identity.go.
+	Kind Kind
+
 	// FetchedAt is when this project last obtained the rate from the
 	// provider, which is a different question from AsOf: AsOf is when the
 	// upstream says the rate was set, FetchedAt is when we asked. A cached

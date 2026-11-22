@@ -1057,6 +1057,10 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 			AgeHuman:   humanAge(age),
 		},
 	}
+	// The record stores no kind field; a definitional reference is
+	// recognisable from its source alone, so it is recovered rather than
+	// read back as an observation.
+	out.ReferenceKind = refrate.KindOfSource(rec.Reference.Source).String()
 
 	if rec.IsCorrection() {
 		out.Correction = &route.CorrectionJSON{

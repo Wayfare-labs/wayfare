@@ -154,4 +154,5 @@ against whichever endpoint is actually called, and the date bumped.
 - [`refrate/floatrates.go`](../refrate/floatrates.go) — the diagnostic provider
 - [`route/wire.go`](../route/wire.go) — `reference_diagnostic` on the wire
 - [ADR 001](adr-reference-mids.md) — never average provider mids
+- [ADR: same-peg corridors](adr-same-peg-corridors.md) — USD/USD is definitional, never fetched
 - [`docs/api.md`](api.md) — the corridor response contract

@@ -407,7 +407,7 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 		return nil, fmt.Errorf("route: send amount must be positive, got %s", req.SendAmount)
 	}
 
-	ref, err := e.RefRate.Rate(ctx, req.ReferenceBase, req.ReferenceQuote)
+	ref, err := e.reference(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("route: reference rate unavailable: %w", err)
 	}
@@ -431,7 +431,9 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 		ReferenceAsOf:   ref.AsOf,
 		Reference:       ref,
 	}
-	if e.Parallel != nil {
+	// A parallel market for a currency against itself does not exist, so the
+	// dimension is left off rather than reported as a failed lookup.
+	if e.Parallel != nil && !ref.Definitional() {
 		p := refrate.ParallelAgainst(ctx, e.Parallel, ref)
 		res.Parallel = &p
 	}
@@ -497,6 +499,22 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 		res.Notes = append(res.Notes, "No route could be priced for this corridor.")
 	}
 	return res, nil
+}
+
+// reference selects the benchmark for a request.
+//
+// A same-peg pair (USD/USD for USDC -> PYUSD) is answered with the
+// definitional identity rate and no provider is consulted: there is no FX
+// market between a currency and itself to observe, and a feed's echo of its
+// own base currency would be labelled as an observation it is not. Loss on
+// such a corridor is therefore deviation from par. Every other pair goes to
+// the configured provider exactly as before. The decision and the rejected
+// alternatives are recorded in docs/adr-same-peg-corridors.md.
+func (e *Engine) reference(ctx context.Context, req Request) (refrate.Rate, error) {
+	if refrate.SamePeg(req.ReferenceBase, req.ReferenceQuote) {
+		return refrate.Identity(req.ReferenceBase, req.ReferenceQuote)
+	}
+	return e.RefRate.Rate(ctx, req.ReferenceBase, req.ReferenceQuote)
 }
 
 // unscored reports a corridor whose benchmark could not be trusted.

@@ -164,6 +164,14 @@ type CorridorJSON struct {
 	ReferenceSource string `json:"reference_source"`
 	ReferencePair   string `json:"reference_pair"`
 
+	// ReferenceKind is "observed" when reference_mid was read from a
+	// provider, and "definitional" when it holds by definition: a same-peg
+	// corridor such as USDC -> PYUSD, benchmarked USD/USD = 1 with no
+	// provider consulted. A client must not present a definitional mid as a
+	// market observation; loss against it is deviation from par. See
+	// docs/adr-same-peg-corridors.md.
+	ReferenceKind string `json:"reference_kind"`
+
 	// The cross-check between reference providers.
 	//
 	// ReferenceAgreement is AGREE, DISAGREE, STALE, MALFUNCTION or SINGLE.
@@ -486,6 +494,7 @@ func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) Corrid
 		ReferenceMid:       l.ReferenceMid.String(),
 		ReferenceSource:    l.ReferenceSource,
 		ReferencePair:      pair,
+		ReferenceKind:      l.Reference.Kind.String(),
 		ReferenceAgreement: l.Reference.Agreement.String(),
 		ReferenceNote:      l.Reference.Note,
 		Scored:             l.Reference.Scorable(),

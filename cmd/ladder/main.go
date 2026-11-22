@@ -568,7 +568,13 @@ func printTable(ctx context.Context, result *route.LadderResult, ref refrate.Pro
 		}
 	}
 
-	if r, err := ref.Rate(ctx, result.Request.ReferenceBase, result.Request.ReferenceQuote); err == nil {
+	// A same-peg corridor was benchmarked against the identity rate without
+	// asking a provider; re-asking one here would print its echo of its own
+	// base currency as though that were what the ladder was scored against.
+	if result.Reference.Definitional() {
+		fmt.Printf("\nreference mid: %s %s by definition (same-peg corridor; no provider consulted, "+
+			"loss is deviation from par)\n", result.Reference.Mid.String(), pair)
+	} else if r, err := ref.Rate(ctx, result.Request.ReferenceBase, result.Request.ReferenceQuote); err == nil {
 		fmt.Printf("\nreference mid: %s %s via %s, as of %s\n",
 			r.Mid.StringFixed(4), pair, r.Source, r.AsOf.UTC().Format(time.RFC3339))
 	}
