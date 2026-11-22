@@ -5,6 +5,9 @@ set is case study #1, not the product, and adding a new corridor is the most
 useful contribution you can make: every corridor added is a claim the monitor
 can check.
 
+To propose a new corridor, open a [Corridor Proposal](https://github.com/Wayfare-labs/wayfare/issues/new?template=corridor_proposal.yml)
+issue to record the candidate issuers, toml URLs, and economic rationale.
+
 This guide walks the whole path, from reading an issuer's `stellar.toml` to
 seeing a verdict curve in the UI. It should take under an hour.
 
