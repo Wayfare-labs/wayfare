@@ -1,6 +1,14 @@
 # Research: does a usable ZAR (South African Rand) issuer exist on Stellar?
 
-**Status: completed. 2026-08-27.** South Africa has a plausible Stellar
+**Status: updated 2026-11-22. A ZAR corridor exists: USDC → ZARZ (Zeam) is
+DIRECT and measured.** The original 2026-08-27 finding below still holds for
+the issuers it examined, ZARC (TD Markets, NO-MARKET) and the lobstr.co
+`ZAR` (unverifiable, degenerate). It did not examine ZARZ, which was verified
+and registered on 2026-08-26 from Zeam's own `stellar.toml`. A live ladder on
+2026-11-22 settles the disagreement between the registry and this document:
+see [Update 2026-11-22: USDC → ZARZ, measured](#update-2026-11-22-usdc--zarz-measured).
+
+**Original status: completed. 2026-08-27.** South Africa has a plausible Stellar
 presence and one **real, self-declared Rand anchor exists** — TD Markets'
 **ZARC**. But no usable corridor exists: ZARC is **NO-MARKET** on-chain (zero
 Horizon path data to USDC at every size tested, no pools, no SEP-38), and the
@@ -12,6 +20,104 @@ This mirrors the KESC/GHSC and BRL findings: a token existing on the ledger,
 or even a company announcing a Rand partner, is not a corridor. The lesson
 carries over unchanged — **no issuer found that can be measured means the
 corridor is not added.**
+
+---
+
+## Update 2026-11-22: USDC → ZARZ, measured
+
+Issue [#672](https://github.com/Wayfare-labs/wayfare/issues/672). The registry
+and this research disagreed in spirit. `asset/known.go` registers a ZAR token,
+ZARZ, verified 2026-08-26, while the finding above, dated a day later, says
+"no usable corridor exists". The two were never in factual conflict, because
+the 2026-08-27 survey searched the `ZAR` and `ZARC` codes and never looked at
+`ZARZ`. Nobody had measured it, though. This section measures it.
+
+### Identity, re-checked live 2026-11-22
+
+- **Issuer account:** `GAROH4EV3WVVTRQKEY43GZK3XSRBEYETRVZ7SVG5LHWOAANSMCTJBB3U`
+  (Zeam Mint (Pty) Ltd), on-chain `home_domain` = `zeam.money`.
+- **SEP-1:** `https://zeam.money/.well-known/stellar.toml` returned HTTP 200
+  (04:30:30Z) and still declares `code = "ZARZ"`, this issuer,
+  `anchor_asset = "ZAR"`, `anchor_asset_type = "fiat"`, `status = "live"`.
+  The project's `toml.home-domain-roundtrip` check passes.
+- **Footprint (Horizon `/assets`, 04:31:46Z):** 181,551 authorized holders,
+  4,715,061.52 ZARZ issued, 26 liquidity pools.
+- **Flags:** `auth_revocable` and `auth_clawback_enabled`. The
+  `issuer.auth-flags` check reports this at **critical**: the issuer can
+  freeze a balance and claw it back. This is the regulated-issuer posture, and
+  it is stated rather than judged.
+
+### Ladder: snapshot `testdata/snapshots/usdc-zarz-20261122T043028Z`
+
+Recorded with `go run ./cmd/ladder -to ZARZ -record testdata/snapshots` from a
+clean tree at `git_revision` `2c2d8e6`. The run started at 2026-11-22T04:30:28Z.
+All 19 upstream responses are recorded, including the reference and the checks'
+traffic. Reference mid: **17.529792 USD/ZAR** via exchangerate-api
+(`open.er-api.com`, `time_last_update_utc` 2026-11-22T00:02:32Z). The figures
+below are parsed from the recorded strict-send bodies.
+
+| Send (USDC) | Receive (ZARZ) | Effective rate (ZARZ/USDC) | vs mid | Loss (engine) | Verdict | Best path |
+|---:|---:|---:|---:|---:|:---|:---|
+| 0.1 | 1.7659638 | 17.6596 | +0.74% | 0.00% | GOOD | USDC → XLM → GBPZ → ZARZ |
+| 1 | 17.6519645 | 17.6520 | +0.70% | 0.00% | GOOD | USDC → XLM → ZARZ |
+| 5 | 88.1854838 | 17.6371 | +0.61% | 0.00% | GOOD | USDC → ZARZ |
+| 10 | 176.3703703 | 17.6370 | +0.61% | 0.00% | GOOD | USDC → ZARZ |
+| 25 | 440.9259259 | 17.6370 | +0.61% | 0.00% | GOOD | USDC → ZARZ |
+| 50 | 881.8548387 | 17.6371 | +0.61% | 0.00% | GOOD | USDC → ZARZ |
+| 100 | 1763.5995282 | 17.6360 | +0.61% | 0.00% | GOOD | USDC → USDZ → ZARZ |
+| 250 | 4408.9987861 | 17.6360 | +0.61% | 0.00% | GOOD | USDC → USDZ → ZARZ |
+| 500 | 8816.0556897 | 17.6321 | +0.58% | 0.00% | GOOD | USDC → USDZ → ZARZ |
+| 1000 | 17625.2870185 | 17.6253 | +0.54% | 0.00% | GOOD | USDC → USDZ → ZARZ |
+| 2500 | 43942.4422353 | 17.5770 | +0.27% | 0.00% | GOOD | USDC → USDZ → ZARZ |
+| 5000 | 73648.7992742 | 14.7298 | −15.97% | 15.97% | POOR | USDC → USDZ → ZARZ |
+
+Integrity is **DIRECT** at every size. At 5–50 USDC Horizon returned a single
+path, the direct USDC/ZARZ book. At 100 USDC and above the best path routes
+through USDZ, Zeam's own USD token, which is registered with peg USD. The
+corridor stays DIRECT at those sizes because the direct USDC/ZARZ path is
+still returned at every size, and `classify` needs only one path with no fiat
+hop. That independent path is much worse at size, though: at 5000 USDC it
+delivers 24,671.84 ZARZ against 73,648.80 via USDZ. In practice the
+corridor's depth above ~500 USDC rides on Zeam's USDZ book. At 0.1 USDC the best path
+crosses GBPZ (`GCTG4YT2…GBPZ`). That hop is unregistered and is surfaced
+as such, per the documented false-negative in `asset/known.go`.
+
+A cross-check run against currency-api at 04:22Z (mid 17.5723, as of
+2026-11-21) gave the same shape. The 5000 rung lost 16.18% and every smaller
+rung still beat the mid. The two providers were 0.24% apart.
+
+- **Floor:** none. From 0.1 to 2500 USDC the corridor pays 0.27–0.74%
+  *more* than the reference mid, so the engine's loss is 0.00%. A
+  rate slightly above an interbank mid is normal for a token whose issuer
+  makes its own market. It is not evidence of a parallel rate. The rand has
+  no exchange-control gap of the size that ARS or NGN do.
+- **Depth:** the rate holds within 0.4% of its 10-USDC level up to 2500 USDC
+  and collapses between 2500 and 5000. The engine's "thin liquidity" warning
+  fires at 5000 (16.5% worse than the 10-USDC rate). Usable depth is between
+  2,500 and 5,000 USDC.
+- **SEP-38:** Zeam declares `ANCHOR_QUOTE_SERVER = "https://anchor.zeam.money/sep38"`,
+  which the earlier ZARC research never saw on any Rand issuer. Its `/info`
+  (04:31:07Z) lists only `stellar:USDC`, a Stellar `BRL` and `iso4217:BRL`,
+  with no ZAR or ZARZ. So the quote server exists but does not price the
+  ZAR off-ramp, and the anchor leg remains unpriced.
+
+### Reconciliation with the 2026-08-27 finding
+
+| Issuer | 2026-08-27 | 2026-11-22 |
+|:---|:---|:---|
+| ZARC, TD Markets (`GAJKJQSV…`) | verified, **NO-MARKET** | not re-measured; the finding stands as dated |
+| `ZAR`, lobstr.co (`GDYG7OEX…`) | unverifiable, degenerate | not re-measured; the finding stands as dated |
+| **ZARZ, Zeam (`GAROH4EV…`)** | not examined | verified, **DIRECT**, price-stable to 2,500 USDC |
+
+The earlier sentence "no usable corridor exists" was true of the issuers it
+surveyed and is **superseded** for the corridor as a whole. A verified Rand
+issuer with an executable, price-defensible USDC market exists, and it is
+the one the registry already carries. The earlier lesson still applies:
+holder counts and announcements are not a corridor. What changed the answer
+here was a measurement.
+
+The earlier recommendation, "do not register the corridor", referred to ZARC
+and the lobstr.co `ZAR` and still holds for them. ZARZ stays registered.
 
 ---
 
@@ -282,6 +388,8 @@ curl -sG "https://horizon.stellar.org/order_book" \
 
 - Issue [#58](https://github.com/Wayfare-labs/wayfare/issues/58) — this
   research task
+- Issue [#672](https://github.com/Wayfare-labs/wayfare/issues/672) — the
+  2026-11-22 ZARZ measurement and snapshot
 - Issue [#33](https://github.com/Wayfare-labs/wayfare/issues/33) — the
   reference standard for detail
 - [`docs/adding-a-corridor.md`](adding-a-corridor.md) — the verification
