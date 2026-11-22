@@ -47,6 +47,15 @@ type Client struct {
 	HorizonURL string
 	HTTPClient *http.Client
 
+	// Budget is the shared outbound quota every Horizon request passes
+	// through. Nil means unlimited, which is what tests and one-shot CLIs
+	// want: a single request cannot exceed a per-IP limit on its own.
+	//
+	// It lives on the client rather than on each call because Horizon's limit
+	// is per IP, so the sweep and the live ladder are rationed together, not
+	// separately (issue #700).
+	Budget *transport.Budget
+
 	// Logger is the structured logger for upstream call logging.
 	// Nil means slog.Default().
 	Logger *slog.Logger
@@ -408,6 +417,13 @@ func log() *slog.Logger {
 
 func (c *Client) get(ctx context.Context, path string, q url.Values, out any) error {
 	started := time.Now()
+
+	// Ration before the request is built, so a refused caller costs no socket
+	// and the refusal is distinguishable from a 429: this process decided not
+	// to spend the request, Horizon never saw it.
+	if err := c.Budget.Wait(ctx, transport.PriorityOf(ctx)); err != nil {
+		return fmt.Errorf("dex: %s: %w", path, err)
+	}
 
 	u := c.horizonURL() + path
 	if len(q) > 0 {
