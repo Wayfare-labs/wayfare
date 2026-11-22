@@ -23,6 +23,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
+	"github.com/Wayfare-labs/wayfare/transport"
 )
 
 // Server serves the monitor API and its UI.
@@ -32,6 +33,12 @@ type Server struct {
 	// Store is the measurement history. Optional: with none, a failed live
 	// measurement is an error, exactly as it was before history existed.
 	Store runstore.Store
+
+	// Budget is the shared outbound Horizon quota, reported by /healthz. It is
+	// the same instance the DEX client spends from, so the numbers answer "is
+	// this process rationing itself" rather than describing a second limiter
+	// nothing uses. Nil means unlimited.
+	Budget *transport.Budget
 
 	// Checks runs counterparty checks alongside a measurement. Nil disables
 	// them, and the response then carries no findings block at all — absent
@@ -626,6 +633,16 @@ func (s *Server) healthFreshness(ctx context.Context) healthFreshnessJSON {
 	return f
 }
 
+// budgetStats reports the shared Horizon budget, or nil when the client has
+// none configured — absent means unlimited, and that must not look like a
+// budget of zero.
+func (s *Server) budgetStats() any {
+	if s == nil || s.Budget == nil {
+		return nil
+	}
+	return s.Budget.Stats()
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET and HEAD are supported")
@@ -641,6 +658,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"data_commit": dataCommit,
 		"data":        s.healthData(r.Context()),
 		"freshness":   s.healthFreshness(r.Context()),
+		// Outbound budget, so a slow answer can be told apart from a slow
+		// upstream: "we are rationing ourselves" and "Horizon is slow" look the
+		// same to a caller otherwise (issue #700).
+		"budget": s.budgetStats(),
 	})
 }
 
@@ -921,12 +942,18 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 	if rec.DependencyChain != nil {
 		out.DependencyChain = rec.DependencyChain
 	}
+	// The ledger range is served back as recorded; a record written before
+	// Version 6 has none and honestly serves none.
+	if lr := rec.LedgerRange; lr != nil {
+		out.LedgerRange = &route.LedgerRangeJSON{First: lr.First, Last: lr.Last, Span: lr.Last - lr.First}
+	}
 	for _, r := range rec.Rungs {
 		rj := route.RungJSON{
 			SendAmount: r.SendAmount,
 			Priced:     r.Priced,
 			Integrity:  r.Integrity,
 			Notes:      []string{},
+			Ledger:     r.Ledger,
 		}
 		if r.Priced {
 			rj.Quote = &route.QuoteJSON{
