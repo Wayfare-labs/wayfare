@@ -524,11 +524,8 @@ func TestSchedulerNeedsAnEngine(t *testing.T) {
 	}
 }
 
-// TestDefaultCorridorsCoverEveryState documents why the sweep includes the
-// case-study trio: each corridor exercises a different integrity state, so a
-// deployment measuring them continuously exercises the whole taxonomy. The
-// sweep now covers every registered corridor destination; this test guards the
-// trio that anchors it.
+// TestDefaultCorridorsCoverEveryRegisteredFiatDestination verifies that the
+// default sweep includes every registered non-USD fiat-pegged destination.
 func TestDefaultCorridorsCoverEveryRegisteredFiatDestination(t *testing.T) {
 	got := DefaultCorridors()
 	gotKeys := make(map[string]bool, len(got))
