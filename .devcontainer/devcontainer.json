@@ -1,0 +1,18 @@
+{
+  // Wayfare development container (#664). Versions are not set here: see
+  // install-toolchain.sh for where each one is read from.
+  "name": "wayfare",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "vscode",
+  // The harness's node_modules live in the workspace; the browsers were
+  // installed into the image at the version package-lock.json pins.
+  "postCreateCommand": "go mod download && cd docs/qa/browser && npm ci",
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.go"]
+    }
+  }
+}

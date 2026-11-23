@@ -1,0 +1,10 @@
+# Used instead of the root .dockerignore for this Dockerfile (BuildKit reads
+# <Dockerfile>.dockerignore beside it). The root one excludes .github/ and
+# docs/, which is right for the production image and wrong here: the
+# devcontainer reads its versions from those files. Allow-list exactly them.
+*
+!.github/workflows/ci.yml
+!.github/workflows/qa-accessibility.yml
+!.devcontainer/install-toolchain.sh
+!docs/qa/browser/package.json
+!docs/qa/browser/package-lock.json
