@@ -479,6 +479,10 @@ func requireCleanTree(dir string, allowDirty bool) (dirty bool, err error) {
 		strings.Join(files, "\n  "))
 }
 
+// now is the clock -json mode stamps measured_at with. It is a variable only
+// so the golden test (issue #668) can pin it; production never reassigns it.
+var now = time.Now
+
 // printJSON writes the shared wire shape and nothing else to stdout, so
 // `go run ./cmd/ladder -to GHSC -json | jq` works.
 func printJSON(result *route.LadderResult, pair string, findings *checks.Findings) {
@@ -502,7 +506,7 @@ func printJSON(result *route.LadderResult, pair string, findings *checks.Finding
 // the server attaches them, through route.WithFindings — the one composition
 // point — so a corridor measured by either binary carries the same facts.
 func encodeCorridorJSON(w io.Writer, result *route.LadderResult, pair string, findings *checks.Findings) error {
-	out := route.ToCorridorJSON(result, pair)
+	out := route.ToCorridorJSONAt(result, pair, now())
 	out = route.WithFindings(out, findings)
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
