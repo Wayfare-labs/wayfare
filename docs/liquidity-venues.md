@@ -133,6 +133,28 @@ that neither is implemented today, and that a book metric labelled
 
 ---
 
+## Soroban AMMs: outside both venues
+
+Neither venue sees Soroban-native AMMs (Soroswap, Aquarius, Phoenix).
+Pathfinding prices classic offers and classic pools only. Whether that leaves
+liquidity out of the published figures was measured on 2026-11-23:
+
+- **Only NGNC has any Soroban liquidity:** 3.43% of the NGNC on the ledger.
+  NGNT, GHSC and KESC have no deployed Stellar Asset Contract, so no Soroban
+  contract can hold them
+  ([soroban-amm-liquidity-research.md](soroban-amm-liquidity-research.md), #681).
+- **No Soroban router quote beat the `pathfinding` route** at any rung on NGNC
+  or NGNT. Splitting a trade across both venues improved NGNC delivery by at
+  most 2.65% and changed no grade
+  ([soroban-aggregator-comparison-research.md](soroban-aggregator-comparison-research.md), #682).
+
+The `pathfinding` venue therefore still means "classic liquidity, as Horizon
+routes it". A figure from it is not a statement about Soroban. Re-run
+`docs/research/soroban-liquidity/run.sh` if that question needs answering
+again.
+
+---
+
 ## What this document does not do
 
 It does not change any pricing arithmetic; it does not add a new metric; it
