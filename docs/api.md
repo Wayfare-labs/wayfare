@@ -3,7 +3,7 @@
 **Status:** implemented API contracts, including `GET /api/chain-heads` added
 2026-09-26. This document does not describe roadmap capabilities.
 
-All endpoints are read-only. The service does not hold funds, issue tokens, sign transactions, or execute payments.
+All endpoints are read-only. The service does not hold funds, issue tokens, sign transactions, or execute payments. The machine-readable OpenAPI 3.0 contract is defined in [`openapi.yaml`](../openapi.yaml).
 
 ## Endpoints
 

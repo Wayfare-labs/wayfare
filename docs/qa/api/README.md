@@ -7,6 +7,7 @@ Reusable, consumer-perspective QA for the Wayfare HTTP API. Backlog section
 |:---|:---|:---|:---|
 | [#259](https://github.com/Wayfare-labs/wayfare/issues/259) | Does the deployed instance serve the history the repository claims? | [`run-history-verification.mjs`](run-history-verification.mjs) | [`results/history-verification.json`](results/history-verification.json) |
 | [#260](https://github.com/Wayfare-labs/wayfare/issues/260) | Does every documented endpoint and parameter behave as `docs/api.md` says? | [`run-endpoints.mjs`](run-endpoints.mjs) | [`results/endpoints.json`](results/endpoints.json) |
+| [#697](https://github.com/Wayfare-labs/wayfare/issues/697) | Do recorded endpoint responses validate against `openapi.yaml` schemas? | [`validate-responses.mjs`](validate-responses.mjs) | (validated against `openapi.yaml`) |
 | [#258](https://github.com/Wayfare-labs/wayfare/issues/258) | What does a cold start actually do, across more than one sample? | [`run-cold-start.mjs`](run-cold-start.mjs) | [`results/cold-start.json`](results/cold-start.json) |
 | [#262](https://github.com/Wayfare-labs/wayfare/issues/262) | What does `/healthz` return while the instance is waking? | [`run-cold-start.mjs`](run-cold-start.mjs) | [`results/cold-start.json`](results/cold-start.json) |
 
@@ -28,6 +29,9 @@ the scripts have no dependencies.
 ```bash
 # #260 — record every documented endpoint and parameter as a fixture
 node docs/qa/api/run-endpoints.mjs
+
+# #697 — validate recorded endpoint responses against openapi.yaml
+node docs/qa/api/validate-responses.mjs
 
 # #259 — verify the served history against the committed chain
 node docs/qa/api/run-history-verification.mjs
