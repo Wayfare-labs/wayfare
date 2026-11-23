@@ -163,7 +163,7 @@ LAYER 2 — DETERMINISTIC CALCULATION                               [live]
   packages: route, refrate, checks
 
   spread, depth, price impact, concentration
-                                             [implemented, not yet reachable]
+                                             [reachable through corridor sweeps]
   cost decomposition                         [implemented, on the wire]
 
   Market-structure vocabulary and current limits:
@@ -691,8 +691,12 @@ Issues are labelled by area and by difficulty, and assigned to a roadmap
 milestone so you can see which part of the project your work moves. Start with
 [`good first issue`](https://github.com/Wayfare-labs/wayfare/labels/good%20first%20issue).
 
-The full contributor backlog — every gap found in the current tree, with the
-file or response that evidences it — is **[docs/backlog.md](docs/backlog.md)**.
+The live source of open work is the
+**[issue tracker](https://github.com/Wayfare-labs/wayfare/issues)**.
+[docs/backlog.md](docs/backlog.md) is a dated snapshot of the gaps found in the
+tree at commit `93f5cda` (2026-08-24), each with the file or response that
+evidenced it; much of it has since been done, so check the linked issue before
+relying on an entry.
 The dated review of the open `good first issue` label set is
 **[docs/good-first-issue-audit.md](docs/good-first-issue-audit.md)**.
 

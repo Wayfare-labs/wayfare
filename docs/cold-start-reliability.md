@@ -52,27 +52,10 @@ or changing the Render plan would be future work. None is described as built
 here. This note does not change verdict thresholds, integrity semantics, check
 composition, or the run-record layout.
 
-## Decision: Free-instance keep-warm policy
-
-**Decision:** We do **not** run an artificial keep-alive ping (such as a cron job
-or scheduled monitor ping) to keep the Render free-tier instance awake.
-
-**Reasons:**
-
-1. **Terms of service and fair use:** Render's free tier policies explicitly
-   forbid artificial keep-alive pingers designed to defeat the 15-minute idle
-   sleep. Defeating the sleep mechanism abuses free-tier infrastructure.
-2. **Quota exhaustion risk:** The free plan provides 750 free instance hours per
-   calendar month shared across all services on the account. An instance kept
-   awake 24/7 exhausts the monthly quota in ~31 days, leaving zero buffer and
-   risking a full account service suspension near month-end.
-3. **Observability integrity:** An artificial pinger masks cold-start latency and
-   connection failures from measurement tools, preventing accurate recording of
-   real-world user experience.
-4. **Architectural mitigation:** The UI provides an embedded CSS-only cold-start
-   loading indicator, and history-first caching ensures that once awake, responses
-   are served in sub-20ms. Guidance in `README.md` and this document advises
-   users to retry once after sleep.
+`/readyz` (issue #704) is not the endpoint this boundary excludes. It reports
+the verdict recorded on the embedded chain at startup and whether the run
+store answers a read now, and it makes no upstream call by design — so it says
+nothing about Horizon being slow, which is what a cold start is.
 
 ## Related
 

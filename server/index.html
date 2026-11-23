@@ -463,6 +463,12 @@
   .f-evidence { font-family: var(--mono); font-size: .74rem; color: var(--muted);
                 margin-top: var(--space-1); word-break: break-all; }
   .f-evidence-list { list-style: none; margin: 0; padding: 0; }
+  /* Per-check evidence disclosure (issues #294, #647): source link and the
+     age of each observation, collapsed so the summary stays scannable. */
+  .f-ev { margin-top: var(--space-1); }
+  .f-ev > summary { cursor: pointer; font-family: var(--mono); font-size: .74rem; color: var(--muted); }
+  .f-ev a { color: inherit; text-decoration: underline; }
+  .f-age { white-space: nowrap; }
   .m-value {
     font: 700 1.2rem/1.15 var(--mono); font-variant-numeric: tabular-nums;
     margin-top: var(--space-1); color: var(--ink);
@@ -1463,6 +1469,33 @@ function formatRelativeAge(isoString) {
   }
 }
 
+// observationAge renders when a counterparty fact was observed, as a relative
+// age with the exact local time on hover (issue #647). A check result is a
+// fact observed at a time, and an old observation means less than a fresh
+// one, so the age is shown rather than left for the reader to work out. A
+// missing or zero timestamp (Go's zero time encodes as year 1) is reported as
+// unrecorded — never as "2025 years ago", and never as fresh.
+function observationAge(iso) {
+  const ms = Date.parse(iso || '');
+  if (isNaN(ms) || new Date(ms).getUTCFullYear() < 2000) {
+    return '<span class="f-age">time not recorded</span>';
+  }
+  return `<time class="f-age" datetime="${esc(iso)}" title="${esc(formatLocalDateTime(iso))}">${esc(formatRelativeAge(iso))}</time>`;
+}
+
+// evidenceSource renders an evidence source, linking it only when it is an
+// http(s) URL. Sources are also account IDs and TOML field paths, which must
+// stay text; and a javascript: or data: "source" must never become a link.
+// Links open in a new tab with rel=noopener so the opened page cannot reach
+// back into this one.
+function evidenceSource(source) {
+  const text = String(source ?? '');
+  let url;
+  try { url = new URL(text); } catch (e) { return esc(text); }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return esc(text);
+  return `<a href="${esc(url.href)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>`;
+}
+
 let corridorRequest = 0;
 
 // readSizes returns the trimmed input, or '' when it is empty. Validation is
@@ -2385,15 +2418,22 @@ function findings(f) {
 
     const text = c.determined ? c.summary : (c.reason || c.summary);
 
-    const evidence = (c.evidence || []).map(e =>
-      `<li class="f-evidence">${esc(e.source)} → ${esc(e.observed)}</li>`).join('');
+    // Each evidence line names its source (linked when it is a URL) and how
+    // old the observation is, behind a disclosure so the check list stays
+    // scannable (issues #294, #647).
+    const ev = c.evidence || [];
+    const evidence = ev.map(e =>
+      `<li class="f-evidence">${evidenceSource(e.source)} → ${esc(e.observed)} · observed ${observationAge(e.observed_at)}</li>`).join('');
+    const evidenceBlock = evidence
+      ? `<details class="f-ev"><summary>Evidence (${ev.length})</summary><ul class="f-evidence-list">${evidence}</ul></details>`
+      : '';
 
     return `<li class="finding-row">
       <span class="f-state ${state[1]}">${state[0]}</span>
       <div class="f-body">
         <div class="f-summary">${esc(text)}</div>
-        <div class="f-id">${esc(c.id)}${c.determined && !c.passed ? ' · ' + esc(c.severity) : ''}</div>
-        ${evidence ? `<ul class="f-evidence-list">${evidence}</ul>` : ''}
+        <div class="f-id">${esc(c.id)}${c.determined && !c.passed ? ' · ' + esc(c.severity) : ''} · checked ${observationAge(c.observed_at)}</div>
+        ${evidenceBlock}
       </div>
     </li>`;
   }).join('');

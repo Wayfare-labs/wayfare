@@ -1,4 +1,3 @@
-// Package snapshot records and replays the upstream responses behind one
 // ladder run, so a measurement can be re-read rather than re-taken.
 //
 // # Why raw bytes and not parsed structs

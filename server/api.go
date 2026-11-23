@@ -1,8 +1,3 @@
-// Package api serves the corridor monitor over HTTP.
-//
-// The wire shape for a measured corridor lives in package route
-// (route.CorridorJSON / route.ToCorridorJSON) so that this HTTP handler and
-// cmd/ladder's -json mode emit identical JSON from the same conversion code.
 package server
 
 import (
@@ -74,6 +69,21 @@ type Server struct {
 	// it. Tests that hammer one endpoint build their own Server or call
 	// NewRateLimiter with a disabled configuration.
 	Limiter *RateLimiter
+
+	// Verification is what the process proved about the history it serves,
+	// before it started listening. It is the input to `/readyz` and to
+	// nothing else: `/healthz` reports liveness and freshness, which stay
+	// true of a process serving a chain that failed verification — and a
+	// probe that reads liveness should not be told the process is down
+	// because the data is not one this project will stand behind (issue
+	// #704).
+	//
+	// Nil means no verdict was recorded, which is reported as its own state
+	// rather than folded into "verified": the claim `/readyz` makes needs a
+	// source, and an absent one cannot supply it. wayfared always records a
+	// verdict, because opening the store is what produces it; the nil case
+	// is a Server assembled by something else.
+	Verification *Verification
 
 	// now is the clock the handlers stamp a "generated at" field with. It is
 	// swapped in tests, which pin it so the timestamp can be frozen in a
@@ -165,6 +175,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/badge/", s.handleBadge)
 	mux.HandleFunc("/feed.atom", s.handleFeed)
 	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.HandleFunc("/readyz", s.handleReady)
 	mux.Handle("/", s.uiHandler())
 	return withCORS(withGzip(s.limit(mux)))
 }
@@ -663,6 +674,146 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		// same to a caller otherwise (issue #700).
 		"budget": s.budgetStats(),
 	})
+}
+
+// Verification is what the process proved about the history it serves,
+// recorded by whoever opened the store before anything started listening.
+//
+// It describes the store as opened, not as it reads now. Verification is a
+// property of the bytes loaded at startup, and re-walking every chain to
+// answer a probe would make readiness cost what the published history is
+// worth; whether the store still answers a read is a separate question, asked
+// live on every request (issue #704).
+type Verification struct {
+	// ChainVerified reports that every chain the store loaded was walked at
+	// open and passed. A false value is a verdict, not a missing measurement:
+	// the process knows the history it is serving is not one this project
+	// will stand behind, and says so on /readyz rather than serving it
+	// quietly.
+	ChainVerified bool
+
+	// Note is the verdict in the caller's own words — the error that made the
+	// process fall back to serving nothing, or what it checked and passed.
+	// /readyz reports it verbatim so a negative answer is diagnosable from
+	// outside the box.
+	Note string
+}
+
+// Readiness answers, as reported by /readyz. Two states per gate because the
+// gates fail for different reasons and one boolean would hide which.
+const (
+	statusReady    = "ready"
+	statusNotReady = "not_ready"
+
+	stateVerified   = "verified"
+	stateUnverified = "unverified"
+	stateUnrecorded = "unrecorded"
+
+	stateReadable   = "readable"
+	stateUnreadable = "unreadable"
+	stateAbsent     = "absent"
+)
+
+// readinessJSON is the /readyz document, with the same shape whatever the
+// answer.
+//
+// A negative readiness is not a request error, so it does not use the error
+// envelope: the probe asked a valid question and received a complete answer.
+// One shape also means one parser, which is the reason /healthz reports an
+// unknown as a null field rather than as a different document.
+type readinessJSON struct {
+	Status     string          `json:"status"`
+	CodeCommit string          `json:"code_commit"`
+	DataCommit string          `json:"data_commit"`
+	Checks     readinessChecks `json:"checks"`
+}
+
+// readinessChecks are the two gates /readyz is made of, named for the two
+// conditions issue #704 lists.
+type readinessChecks struct {
+	Verification verificationCheck `json:"verification"`
+	Store        storeCheck        `json:"store"`
+}
+
+type verificationCheck struct {
+	// State is verified, unverified, or unrecorded. The third is separate
+	// from the second on purpose: "the chain failed" and "nobody checked"
+	// are different facts, and both refuse traffic for different reasons.
+	State string `json:"state"`
+	Note  string `json:"note,omitempty"`
+}
+
+type storeCheck struct {
+	// State is readable, unreadable, or absent.
+	State string `json:"state"`
+	// Corridors is nil when the store could not be asked at all, so an
+	// unreadable store never reports a count of zero as though it were a
+	// measurement.
+	Corridors *int   `json:"corridors"`
+	Error     string `json:"error,omitempty"`
+}
+
+// readiness answers /readyz: the verdict recorded at startup, plus one cheap
+// read of the store asked now.
+func (s *Server) readiness(ctx context.Context) readinessJSON {
+	verified := s.Verification != nil && s.Verification.ChainVerified
+
+	state := stateUnrecorded
+	note := "no store was opened, so nothing was verified"
+	if s.Verification != nil {
+		note = s.Verification.Note
+		if verified {
+			state = stateVerified
+		} else {
+			state = stateUnverified
+		}
+	}
+
+	readable := false
+	store := storeCheck{State: stateAbsent, Error: "no run store is configured"}
+	if s.Store != nil {
+		corridors, err := s.Store.Corridors(ctx)
+		if err != nil {
+			store = storeCheck{State: stateUnreadable, Error: err.Error()}
+			log().Debug("readyz: corridor listing failed", "error", err)
+		} else {
+			count := len(corridors)
+			store = storeCheck{State: stateReadable, Corridors: &count}
+			readable = true
+		}
+	}
+
+	status := statusNotReady
+	if verified && readable {
+		status = statusReady
+	}
+
+	return readinessJSON{
+		Status:     status,
+		CodeCommit: codeCommit,
+		DataCommit: dataCommit,
+		Checks: readinessChecks{
+			Verification: verificationCheck{State: state, Note: note},
+			Store:        store,
+		},
+	}
+}
+
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET and HEAD are supported")
+		return
+	}
+	if err := checkParams(r, "pretty"); err != nil {
+		writeError(w, r, http.StatusBadRequest, codeInvalidQuery, err.Error())
+		return
+	}
+	doc := s.readiness(r.Context())
+	status := http.StatusOK
+	if doc.Status != statusReady {
+		status = http.StatusServiceUnavailable
+	}
+	writeJSON(w, r, status, doc)
 }
 
 // helpers --------------------------------------------------------------------

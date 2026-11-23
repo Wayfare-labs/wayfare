@@ -1,5 +1,3 @@
-// Package asset models the assets moving through a remittance corridor.
-//
 // Two very different things are both "assets" here: Stellar-issued tokens
 // (USDC, NGNC) and off-chain fiat (NGN in a bank account). SEP-38 gives us a
 // single string form that covers both, and we lean on it rather than inventing
