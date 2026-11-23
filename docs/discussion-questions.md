@@ -66,23 +66,24 @@ other, let alone the measurement:
 
 `docs/deployment.md:301-306` says:
 
-> One sweep is roughly sixty-eight Horizon calls across the three corridors —
-> NGNC and GHSC each run twelve rungs with pathfinding plus a slippage probe on
-> rungs above the probe threshold (28 calls each); KESC short-circuits as
-> NO-MARKET after twelve pathfinding calls (12) — plus about twelve counterparty
-> requests and two reference-provider calls, near eighty requests every six
-> hours.
+> The registry currently yields six scheduled corridors: NGNC, GHSC,
+> KESC, NGNT, ZARZ and EURMTL. USDZ and PYUSD are USD-pegged swaps and remain
+> out until issue #671 defines a meaningful USD-to-USD reference.
 
-The reporter measured **28** calls for a priced corridor, not 12: twelve
-`/paths/strict-send` requests for the ladder, plus a two-call slippage probe
-(`dex/dex.go:298` `MeasureSlippage` prices the requested amount *and* a small
-probe) on each rung above the probe threshold of 10 send units
-(`route/route.go:334`). Across the three corridors they counted 68, not 110,
-because a `NO-MARKET` corridor short-circuits before the probe.
+> The three additional corridors therefore add at most 84 calls, for a
+> conservative ceiling of **152 Horizon calls per six-hour sweep**. A corridor
+> that returns NO-MARKET short-circuits its probes and costs 12 calls instead.
+> This is an upper-bound estimate for the new corridors, not a claim that their
+> live request counts have been measured.
 
-Both mechanisms described are real; the arithmetic in both places is not. This
-is a documentation defect with a measurement attached, and the measurement is
-reproducible with a counting proxy.
+The reporter's original three-corridor measurement remains useful as a
+baseline: **68 Horizon calls** (NGNC 28, GHSC 28 and KESC 12). Each priced
+corridor uses twelve `/paths/strict-send` requests for the ladder plus a
+two-call slippage probe (`dex/dex.go:298` `MeasureSlippage` prices the
+requested amount *and* a small probe) on each rung above the probe threshold of
+10 send units (`route/route.go:334`). The current six-corridor figure is a
+conservative upper-bound estimate, not a claim that all six have been measured
+live at those request counts.
 
 ### 2. "Why does a self-contained page carry a Cloudflare challenge script?"
 
