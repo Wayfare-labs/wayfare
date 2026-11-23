@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -121,8 +122,9 @@ func TestCheckFreshStaleCorridorFails(t *testing.T) {
 	if strings.Contains(out, "FAIL USDC-NGNC") {
 		t.Errorf("output flags a fresh corridor:\n%s", out)
 	}
-	if !strings.Contains(out, "1 of 8 corridors") {
-		t.Errorf("output missing failure tally:\n%s", out)
+	wantTally := fmt.Sprintf("1 of %d corridors are stale or missing", len(monitor.DefaultCorridors()))
+	if !strings.Contains(out, wantTally) {
+		t.Errorf("output missing failure tally %q:\n%s", wantTally, out)
 	}
 }
 
