@@ -63,14 +63,19 @@ func TestQuestionsDocQuotesTheCodeItRestsOn(t *testing.T) {
 			quote: "One Horizon call per rung, plus a two-call slippage probe",
 		},
 		{
-			claim: "deployment.md puts a sweep at 'roughly sixty-eight Horizon calls'",
+			claim: "deployment.md identifies the six registry-derived scheduled corridors",
 			file:  "docs/deployment.md",
-			quote: "One sweep is roughly sixty-eight Horizon calls across the three corridors",
+			quote: "The registry currently yields six scheduled corridors: NGNC, GHSC,",
 		},
 		{
-			claim: "deployment.md puts a sweep at 'near eighty requests every six hours'",
+			claim: "deployment.md gives the conservative Horizon-call ceiling",
 			file:  "docs/deployment.md",
-			quote: "near eighty requests every six hours",
+			quote: "conservative ceiling of **152 Horizon calls per six-hour sweep**",
+		},
+		{
+			claim: "deployment.md gives the conservative total upstream-request estimate",
+			file:  "docs/deployment.md",
+			quote: "no more than about **178 upstream requests every six hours**",
 		},
 		{
 			claim: "writeError publishes a machine-readable code alongside the prose",
