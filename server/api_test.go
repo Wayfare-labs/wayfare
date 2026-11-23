@@ -63,7 +63,7 @@ func testServer(t *testing.T, horizonBody, mid string) *httptest.Server {
 
 func rawGet(t *testing.T, url string) (int, []byte) {
 	t.Helper()
-	resp, err := http.Get(url)
+	resp, err := httpGet(url)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -77,7 +77,7 @@ func rawGet(t *testing.T, url string) (int, []byte) {
 
 func getJSON(t *testing.T, url string) (int, map[string]any) {
 	t.Helper()
-	resp, err := http.Get(url)
+	resp, err := httpGet(url)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -181,7 +181,7 @@ func TestNoMarketIsReportedAsItsOwnState(t *testing.T) {
 // the wire as a JSON number would fail this decode with a type error.
 func getCorridor(t *testing.T, url string) route.CorridorJSON {
 	t.Helper()
-	resp, err := http.Get(url)
+	resp, err := httpGet(url)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -365,7 +365,7 @@ func TestV1RoutesAndDeprecationHeaders(t *testing.T) {
 	defer srv.Close()
 
 	// Test v1 corridor endpoint returns OK
-	resp, err := http.Get(srv.URL + "/api/v1/corridor?to=NGNC")
+	resp, err := httpGet(srv.URL + "/api/v1/corridor?to=NGNC")
 	if err != nil {
 		t.Fatalf("GET /api/v1/corridor: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestV1RoutesAndDeprecationHeaders(t *testing.T) {
 	}
 
 	// Test unversioned alias returns deprecation headers
-	respAlias, err := http.Get(srv.URL + "/api/corridor?to=NGNC")
+	respAlias, err := httpGet(srv.URL + "/api/corridor?to=NGNC")
 	if err != nil {
 		t.Fatalf("GET /api/corridor: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestV1RoutesAndDeprecationHeaders(t *testing.T) {
 func TestUIIsServed(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
 
-	resp, err := http.Get(srv.URL + "/")
+	resp, err := httpGet(srv.URL + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}
@@ -464,7 +464,7 @@ func TestHeadMatchesGetOnHealthAndUI(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
 	for _, path := range []string{"/healthz", "/"} {
 		t.Run(path, func(t *testing.T) {
-			getResp, err := http.Get(srv.URL + path)
+			getResp, err := httpGet(srv.URL + path)
 			if err != nil {
 				t.Fatalf("GET %s: %v", path, err)
 			}
@@ -474,7 +474,7 @@ func TestHeadMatchesGetOnHealthAndUI(t *testing.T) {
 				t.Fatalf("reading GET %s: %v", path, err)
 			}
 
-			headReq, err := http.NewRequest(http.MethodHead, srv.URL+path, nil)
+			headReq, err := http.NewRequestWithContext(context.Background(), http.MethodHead, srv.URL+path, nil)
 			if err != nil {
 				t.Fatalf("building HEAD %s: %v", path, err)
 			}
@@ -1022,7 +1022,7 @@ func TestAPIAnswersCrossOriginRequests(t *testing.T) {
 		"/api/assets",
 		"/api/corridor?to=NGNC&sizes=100",
 	} {
-		req, err := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+path, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1050,7 +1050,7 @@ func TestAPIAnswersCrossOriginRequests(t *testing.T) {
 func TestCORSPreflightIsAnswered(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
 
-	req, err := http.NewRequest(http.MethodOptions, srv.URL+"/api/corridor?to=NGNC&sizes=100", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodOptions, srv.URL+"/api/corridor?to=NGNC&sizes=100", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

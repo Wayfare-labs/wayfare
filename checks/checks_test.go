@@ -952,7 +952,7 @@ anchor_asset="NGN"
 		paths = append(paths, "/sep6/info")
 	}
 	for _, path := range paths {
-		resp, err := capture.Get(server.URL + path)
+		resp, err := clientGet(capture, server.URL+path)
 		if err != nil {
 			t.Fatalf("capturing %s: %v", path, err)
 		}
@@ -1107,7 +1107,7 @@ func TestGuardRejectsInternalTargets(t *testing.T) {
 	client := GuardedClient(3 * time.Second)
 	for name, host := range blocked {
 		t.Run(name, func(t *testing.T) {
-			_, err := client.Get("http://" + host + "/latest/meta-data/")
+			_, err := clientGet(client, "http://"+host+"/latest/meta-data/")
 			if err == nil {
 				t.Fatalf("%s was reachable; an anchor-published URL must never "+
 					"make this server probe its own network", host)
@@ -2600,4 +2600,15 @@ func TestHomeDomainRoundTrip(t *testing.T) {
 			}
 		})
 	}
+}
+
+// clientGet is client.Get with an explicit context. The noctx linter rejects
+// the context-free helpers; the tests route through this one function rather
+// than suppressing it.
+func clientGet(client *http.Client, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return client.Do(req)
 }

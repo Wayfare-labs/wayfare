@@ -1,6 +1,7 @@
 package wayfare
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -47,7 +48,7 @@ func TestWayfaredBuildIsByteIdenticalAcrossPaths(t *testing.T) {
 	binB := filepath.Join(dirB, "wayfared")
 
 	build := func(outPath string) string {
-		cmd := exec.Command("go", "build",
+		cmd := exec.CommandContext(context.Background(), "go", "build",
 			"-trimpath",
 			"-buildvcs=false",
 			"-ldflags=-s -w",

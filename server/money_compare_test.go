@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -85,7 +86,7 @@ const out = pairs.map(([a, b]) => Math.sign(compareDecimalStrings(a, b)));
 const rounds = ['27.155', '27.154', '0.005', '9.999', '99.995', '-0.004', '7'].map(roundDecimal2);
 require('fs').writeFileSync(1, JSON.stringify({ out, rounds }));
 `
-	cmd := exec.Command(node, "-e", driver)
+	cmd := exec.CommandContext(context.Background(), node, "-e", driver)
 	cmd.Stdin = bytes.NewReader(input)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

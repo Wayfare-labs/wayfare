@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"html/template"
 	"io"
@@ -20,7 +21,7 @@ import (
 // store-less server at srvURL: the Open Graph block names the request host.
 func renderedIndexHTML(t *testing.T, srvURL string) []byte {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, srvURL+"/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, srvURL+"/", nil)
 	var buf bytes.Buffer
 	if err := uiTemplate.Execute(&buf, uiPageData{SocialMeta: template.HTML(socialMetadata(req, nil))}); err != nil {
 		t.Fatalf("rendering template: %v", err)
@@ -47,7 +48,7 @@ func TestGzipAccepted_IndexHTML(t *testing.T) {
 	defer srv.Close()
 
 	client := clientWithoutDecompression()
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestGzipNotAccepted_IndexHTML(t *testing.T) {
 	defer srv.Close()
 
 	client := clientWithoutDecompression()
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +160,7 @@ func TestGzipAccepted_JSON(t *testing.T) {
 	defer srv.Close()
 
 	client := clientWithoutDecompression()
-	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +213,7 @@ func TestGzipNotAccepted_JSON(t *testing.T) {
 	defer srv.Close()
 
 	client := clientWithoutDecompression()
-	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +253,7 @@ func TestGzipSkipTinyBody(t *testing.T) {
 
 	client := clientWithoutDecompression()
 	// An invalid query triggers writeError which produces a tiny error JSON payload (< 100 bytes).
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/corridor?unknown_param=1", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/api/corridor?unknown_param=1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +317,7 @@ func TestGzipAcceptEncodingParsing(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.header, func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodGet, "/", nil)
+			req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 			if tc.header != "" {
 				req.Header.Set("Accept-Encoding", tc.header)
 			}
@@ -340,7 +341,7 @@ func TestGzipChunkedWritesCrossingThreshold(t *testing.T) {
 	defer srv.Close()
 
 	client := clientWithoutDecompression()
-	req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 
 	resp, err := client.Do(req)
@@ -380,7 +381,7 @@ func TestGzipPreEncodedContentBypassesCompression(t *testing.T) {
 	defer srv.Close()
 
 	client := clientWithoutDecompression()
-	req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 
 	resp, err := client.Do(req)
@@ -403,7 +404,7 @@ func TestGzipNoContentStatus(t *testing.T) {
 	defer srv.Close()
 
 	client := clientWithoutDecompression()
-	req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 
 	resp, err := client.Do(req)
@@ -434,7 +435,7 @@ func TestGzipPreservesExistingVary(t *testing.T) {
 	defer srv.Close()
 
 	client := clientWithoutDecompression()
-	req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 
 	resp, err := client.Do(req)

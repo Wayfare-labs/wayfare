@@ -1,6 +1,7 @@
 package automerge
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -500,7 +501,7 @@ func runGate(t *testing.T, s scenario) result {
 		env[k] = v
 	}
 
-	cmd := exec.Command("bash", scriptPath)
+	cmd := exec.CommandContext(context.Background(), "bash", scriptPath)
 	cmd.Env = mergeEnv(env)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout

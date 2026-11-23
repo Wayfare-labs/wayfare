@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -127,7 +126,7 @@ func TestTrendServesMovements(t *testing.T) {
 	}
 
 	api := trendServer(t, st)
-	res, err := http.Get(api.URL + "/api/corridor/trend?from=USDC&to=NGNC")
+	res, err := httpGet(api.URL + "/api/corridor/trend?from=USDC&to=NGNC")
 	if err != nil {
 		t.Fatalf("GET trend: %v", err)
 	}
@@ -184,7 +183,7 @@ func TestTrendServesMovements(t *testing.T) {
 		t.Fatal(err)
 	}
 	api1 := trendServer(t, st1)
-	res1, err := http.Get(api1.URL + "/api/corridor/trend?from=USDC&to=NGNC")
+	res1, err := httpGet(api1.URL + "/api/corridor/trend?from=USDC&to=NGNC")
 	if err != nil {
 		t.Fatalf("GET solo trend: %v", err)
 	}

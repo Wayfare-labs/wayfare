@@ -14,7 +14,7 @@ func healthzBody(t *testing.T, s *Server) map[string]any {
 	api := httptest.NewServer(s.Handler())
 	t.Cleanup(api.Close)
 
-	resp, err := http.Get(api.URL + "/healthz")
+	resp, err := httpGet(api.URL + "/healthz")
 	if err != nil {
 		t.Fatalf("get /healthz: %v", err)
 	}

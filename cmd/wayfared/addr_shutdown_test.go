@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net"
@@ -29,7 +30,7 @@ func TestShutdownWaitsForInFlightRequest(t *testing.T) {
 		time.Sleep(300 * time.Millisecond)
 		_, _ = w.Write([]byte("done"))
 	})}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +42,12 @@ func TestShutdownWaitsForInFlightRequest(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		resp, err := http.Get("http://" + ln.Addr().String())
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+ln.Addr().String(), nil)
+		if err != nil {
+			done <- result{err: err}
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			done <- result{err: err}
 			return

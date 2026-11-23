@@ -437,7 +437,7 @@ func printVersion(w io.Writer, prog string) {
 // disagrees with the current parser can be traced to the code that wrote it.
 // An unavailable revision is recorded as absent rather than guessed.
 func gitRevision() string {
-	out, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+	out, err := exec.CommandContext(context.Background(), "git", "rev-parse", "--short", "HEAD").Output()
 	if err != nil {
 		return ""
 	}
@@ -456,7 +456,7 @@ func gitRevision() string {
 // error means git could not answer, which is not the same thing and must not
 // be reported as clean.
 func dirtyFiles(dir string) ([]string, error) {
-	out, err := exec.Command("git", "-C", dir, "status", "--porcelain").Output()
+	out, err := exec.CommandContext(context.Background(), "git", "-C", dir, "status", "--porcelain").Output()
 	if err != nil {
 		return nil, fmt.Errorf("could not determine whether the tree is clean: %w", err)
 	}

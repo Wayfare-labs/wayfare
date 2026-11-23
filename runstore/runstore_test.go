@@ -665,7 +665,11 @@ func TestVerifySnapshotsChecksPresentArtifact(t *testing.T) {
 		},
 		Sizes: []string{"0.1"},
 	}
-	resp, err := (&http.Client{Transport: recorder}).Get(server.URL + "/info")
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/info", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := (&http.Client{Transport: recorder}).Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

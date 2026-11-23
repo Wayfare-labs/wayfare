@@ -12,6 +12,7 @@ package main
 // suite's own cleanliness cannot influence the result.
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,7 +25,7 @@ import (
 // output so a failure in test setup is diagnosable.
 func runGit(t *testing.T, dir string, args ...string) error {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", dir}, args...)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git %v: %w\n%s", args, err, out)
 	}

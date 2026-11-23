@@ -2,6 +2,7 @@ package route
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/Wayfare-labs/wayfare/asset"
@@ -17,7 +18,7 @@ func TestQuoteHonoursCancelledContextBeforeUpstreams(t *testing.T) {
 		SendAsset: asset.USDC(), ReceiveAsset: asset.NGNC(),
 		SendAmount: decimal.NewFromInt(1), ReferenceBase: "USD", ReferenceQuote: "NGN",
 	})
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Quote error = %v, want context.Canceled", err)
 	}
 }

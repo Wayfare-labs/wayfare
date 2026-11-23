@@ -26,7 +26,7 @@ import (
 func TestSmokeHealthReportsOK(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "660")
 
-	resp, err := http.Get(srv.URL + "/healthz")
+	resp, err := httpGet(srv.URL + "/healthz")
 	if err != nil {
 		t.Fatalf("GET /healthz: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestSmokeHealthReportsOK(t *testing.T) {
 func TestSmokeServesTheMonitorUI(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "660")
 
-	resp, err := http.Get(srv.URL + "/")
+	resp, err := httpGet(srv.URL + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}

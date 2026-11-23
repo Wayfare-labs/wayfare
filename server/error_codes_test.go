@@ -17,6 +17,7 @@ package server
 // consumer. It is the test the prose in docs/errors.md points to.
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -27,7 +28,7 @@ import (
 // status. It fails the test if the body is not the documented error shape.
 func errorCode(t *testing.T, method, url string) (string, int) {
 	t.Helper()
-	req, err := http.NewRequest(method, url, nil)
+	req, err := http.NewRequestWithContext(context.Background(), method, url, nil)
 	if err != nil {
 		t.Fatalf("building %s %s: %v", method, url, err)
 	}

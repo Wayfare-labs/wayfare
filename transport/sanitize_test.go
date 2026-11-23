@@ -16,7 +16,9 @@ func TestSanitizeTransportError_NilError(t *testing.T) {
 func TestSanitizeTransportError_NonTransportError(t *testing.T) {
 	orig := errors.New("something went wrong")
 	got := SanitizeTransportError(orig)
-	if got != orig {
+	// Identity, not errors.Is: the contract is that a non-transport error is
+	// returned as the same value, not merely one that wraps it.
+	if got != orig { //nolint:errorlint // identity is the property under test
 		t.Errorf("non-transport error should pass through unchanged, got %v", got)
 	}
 }

@@ -45,7 +45,7 @@ func TestCorridorImageServesStoredSVG(t *testing.T) {
 	srv := ogServer(t, st)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/corridor/image?from=USDC&to=NGNC")
+	resp, err := httpGet(srv.URL + "/api/corridor/image?from=USDC&to=NGNC")
 	if err != nil {
 		t.Fatalf("GET /api/corridor/image: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestCorridorImageReturns404WhenNoHistory(t *testing.T) {
 	srv := ogServer(t, st)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/corridor/image?from=USDC&to=NGNC")
+	resp, err := httpGet(srv.URL + "/api/corridor/image?from=USDC&to=NGNC")
 	if err != nil {
 		t.Fatalf("GET /api/corridor/image: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestCorridorImageRejectsUnknownAssets(t *testing.T) {
 	srv := ogServer(t, st)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/corridor/image?from=USDC&to=SCAMC")
+	resp, err := httpGet(srv.URL + "/api/corridor/image?from=USDC&to=SCAMC")
 	if err != nil {
 		t.Fatalf("GET /api/corridor/image: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestCorridorImageAcceptsDefaults(t *testing.T) {
 	srv := ogServer(t, st)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/corridor/image")
+	resp, err := httpGet(srv.URL + "/api/corridor/image")
 	if err != nil {
 		t.Fatalf("GET /api/corridor/image: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestCorridorImageRejectsUnsupportedMethod(t *testing.T) {
 	srv := ogServer(t, st)
 	defer srv.Close()
 
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/corridor/image?from=USDC&to=NGNC", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/api/corridor/image?from=USDC&to=NGNC", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestCorridorImageRejectsUnknownQueryParams(t *testing.T) {
 	srv := ogServer(t, st)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/corridor/image?from=USDC&to=NGNC&debug=1")
+	resp, err := httpGet(srv.URL + "/api/corridor/image?from=USDC&to=NGNC&debug=1")
 	if err != nil {
 		t.Fatalf("GET /api/corridor/image: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestCorridorImagePrefersStaleRecordedAt(t *testing.T) {
 	srv := ogServer(t, st)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/corridor/image?from=USDC&to=NGNC")
+	resp, err := httpGet(srv.URL + "/api/corridor/image?from=USDC&to=NGNC")
 	if err != nil {
 		t.Fatalf("GET /api/corridor/image: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestCorridorImageWireShapeFromStoredRecord(t *testing.T) {
 
 	// Read the image for content, then also assert the wire shape via the same
 	// stored record so the renderer is covered by a typed assertion too.
-	resp, err := http.Get(imgURL)
+	resp, err := httpGet(imgURL)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -61,7 +61,7 @@ func TestUIHandlerServesNoscriptSummary(t *testing.T) {
 	api := httptest.NewServer((&Server{Store: st}).Handler())
 	defer api.Close()
 
-	res, err := http.Get(api.URL + "/")
+	res, err := httpGet(api.URL + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestUIHandlerServesNoscriptSummary(t *testing.T) {
 	// No store: the explicit no-history message, still 200.
 	empty := httptest.NewServer((&Server{}).Handler())
 	defer empty.Close()
-	res2, err := http.Get(empty.URL + "/")
+	res2, err := httpGet(empty.URL + "/")
 	if err != nil {
 		t.Fatalf("GET / with no store: %v", err)
 	}

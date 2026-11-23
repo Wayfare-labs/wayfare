@@ -243,7 +243,7 @@ func FuzzQueryParams(f *testing.F) {
 				targetURL += "?" + queryString
 			}
 
-			req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, targetURL, nil)
 			if err != nil {
 				// If net/url or http.NewRequest rejects the URL, skip iteration
 				t.Skip()

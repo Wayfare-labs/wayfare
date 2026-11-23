@@ -31,7 +31,7 @@ import (
 // an empty body into an error rather than into the fact that is being tested.
 func etagRequest(t *testing.T, url string, headers map[string]string) (int, http.Header, []byte) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestETagIsReadableAcrossOrigins(t *testing.T) {
 	st := storedRun(t, t.TempDir(), time.Now().UTC().Add(-6*time.Hour))
 
 	srv := historyFirstServer(t, st)
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/corridor?to=NGNC&sizes=100", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/api/corridor?to=NGNC&sizes=100", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +414,7 @@ func TestRecordETagQuotesTheSeal(t *testing.T) {
 // TestIfNoneMatchRejectsAnEmptyTag pins the rule that a response with no
 // validator is never answered conditionally.
 func TestIfNoneMatchRejectsAnEmptyTag(t *testing.T) {
-	req, err := http.NewRequest(http.MethodGet, "http://example.invalid/api/corridor", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.invalid/api/corridor", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +443,7 @@ func TestETagSurvivesCompression(t *testing.T) {
 	api := httptest.NewServer(s.Handler())
 	t.Cleanup(api.Close)
 
-	req, err := http.NewRequest(http.MethodGet, api.URL+"/api/corridor?to=NGNC&sizes=100", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, api.URL+"/api/corridor?to=NGNC&sizes=100", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

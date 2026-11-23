@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -226,7 +227,7 @@ func TestRateLimiterConcurrentAccess(t *testing.T) {
 // request demonstrably came through a local proxy: a directly-connected
 // public peer that sets the header must not get to choose its own bucket.
 func TestClientKeyFromDirectPublicPeer(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/api/corridor", nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/corridor", nil)
 	r.RemoteAddr = "203.0.113.7:4432"
 	r.Header.Set("X-Forwarded-For", "1.2.3.4")
 	if got := clientKey(r); got != "203.0.113.7" {
@@ -237,7 +238,7 @@ func TestClientKeyFromDirectPublicPeer(t *testing.T) {
 // TestClientKeyBehindLoopbackProxy is the Render shape: TLS terminates on the
 // same host, the app sees 127.0.0.1 and the proxy appends the real client to the right.
 func TestClientKeyBehindLoopbackProxy(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/api/corridor", nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/corridor", nil)
 	r.RemoteAddr = "127.0.0.1:55555"
 	r.Header.Set("X-Forwarded-For", "10.0.0.1, 198.51.100.23")
 	if got := clientKey(r); got != "198.51.100.23" {
@@ -343,7 +344,7 @@ func TestClientKey(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/api/corridor", nil)
+			r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/corridor", nil)
 			r.RemoteAddr = tc.remoteAddr
 			for _, h := range tc.headers {
 				r.Header.Add("X-Forwarded-For", h)
@@ -366,7 +367,7 @@ func TestHandlerRateLimitsSpoofedXForwardedFor(t *testing.T) {
 	var lastStatus int
 
 	for i := 0; i < 4; i++ {
-		req, err := http.NewRequest(http.MethodGet, api.URL+"/api/corridor?sizes=1", nil)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, api.URL+"/api/corridor?sizes=1", nil)
 		if err != nil {
 			t.Fatalf("request %d: %v", i+1, err)
 		}
@@ -388,7 +389,7 @@ func TestHandlerRateLimitsSpoofedXForwardedFor(t *testing.T) {
 // TestClientKeyBehindPrivateProxy covers a proxy on the RFC 1918 side, e.g. a
 // container network front.
 func TestClientKeyBehindPrivateProxy(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	r.RemoteAddr = "10.0.0.5:4432"
 	r.Header.Set("X-Forwarded-For", "198.51.100.99")
 	if got := clientKey(r); got != "198.51.100.99" {
@@ -400,7 +401,7 @@ func TestClientKeyBehindPrivateProxy(t *testing.T) {
 // falls back to the peer, so every proxied client shares one bucket. Bounded
 // total cost — not per-client fairness — is the guarantee there.
 func TestClientKeyBehindProxyWithoutHeader(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	r.RemoteAddr = "127.0.0.1:55555"
 	if got := clientKey(r); got != "127.0.0.1" {
 		t.Errorf("clientKey = %q, want the peer host %q when no forwarding header exists", got, "127.0.0.1")
@@ -410,7 +411,7 @@ func TestClientKeyBehindProxyWithoutHeader(t *testing.T) {
 // TestClientKeyUnparseableRemoteAddr: RemoteAddr without a port (some test
 // harnesses) must still yield a usable key rather than panicking.
 func TestClientKeyUnparseableRemoteAddr(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	r.RemoteAddr = "203.0.113.9"
 	if got := clientKey(r); got != "203.0.113.9" {
 		t.Errorf("clientKey = %q, want %q", got, "203.0.113.9")
@@ -430,7 +431,7 @@ func TestHandlerAppliesRateLimit(t *testing.T) {
 	var body map[string]any
 	var retryAfter string
 	for i := 0; i < 4; i++ {
-		resp, err := http.Get(api.URL + "/api/corridor?sizes=1")
+		resp, err := httpGet(api.URL + "/api/corridor?sizes=1")
 		if err != nil {
 			t.Fatalf("request %d: %v", i+1, err)
 		}
@@ -463,7 +464,7 @@ func TestHandlerAppliesRateLimit(t *testing.T) {
 // something false about every normal response.
 func TestHandlerRateLimitHeadersOnlyOn429(t *testing.T) {
 	api := newLimiterTestServer(t, 1000, 50)
-	resp, err := http.Get(api.URL + "/api/corridor?sizes=1")
+	resp, err := httpGet(api.URL + "/api/corridor?sizes=1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,13 +498,13 @@ func TestHandlerRateLimitCoversEveryRoute(t *testing.T) {
 			api := newLimiterTestServer(t, 1, 1)
 
 			// Spend the single-token bucket on the first hit of this path.
-			resp1, err := http.Get(api.URL + path)
+			resp1, err := httpGet(api.URL + path)
 			if err != nil {
 				t.Fatalf("%s: %v", path, err)
 			}
 			resp1.Body.Close()
 
-			resp2, err := http.Get(api.URL + path)
+			resp2, err := httpGet(api.URL + path)
 			if err != nil {
 				t.Fatalf("%s: %v", path, err)
 			}
@@ -522,7 +523,7 @@ func TestHandlerRateLimitCoversEveryRoute(t *testing.T) {
 func TestHandlerWithoutLimiterIsUnlimited(t *testing.T) {
 	api := testServer(t, liveNGNCPaths, "1500")
 	for i := 0; i < 30; i++ {
-		resp, err := http.Get(api.URL + "/api/corridor?sizes=1")
+		resp, err := httpGet(api.URL + "/api/corridor?sizes=1")
 		if err != nil {
 			t.Fatalf("request %d: %v", i+1, err)
 		}
