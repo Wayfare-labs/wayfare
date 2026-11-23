@@ -467,7 +467,17 @@ func ToCostBlockJSON(d CostDecomposition) *CostBlockJSON {
 	return out
 }
 
+// ToCorridorJSON renders a ladder result as the shared wire shape, stamping
+// measured_at with the current time.
 func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
+	return ToCorridorJSONAt(l, pair, time.Now())
+}
+
+// ToCorridorJSONAt is ToCorridorJSON with the measured_at instant supplied by
+// the caller. It exists so a producer with an injectable clock (cmd/ladder's
+// golden test, issue #668) can render the exact bytes it ships without the
+// wall clock leaking into them; every other field is identical.
+func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) CorridorJSON {
 	out := CorridorJSON{
 		SendAsset:          ToAssetJSON(l.Request.SendAsset),
 		ReceiveAsset:       ToAssetJSON(l.Request.ReceiveAsset),
@@ -487,7 +497,7 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 		Live:               true,
 		Finding:            l.Finding,
 		Rungs:              make([]RungJSON, 0, len(l.Rungs)),
-		MeasuredAt:         time.Now().UTC().Format(time.RFC3339),
+		MeasuredAt:         measuredAt.UTC().Format(time.RFC3339),
 	}
 	if !l.Reference.AsOf.IsZero() {
 		out.ReferenceAsOf = l.Reference.AsOf.UTC().Format(time.RFC3339)
