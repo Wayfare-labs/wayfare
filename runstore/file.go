@@ -121,7 +121,7 @@ func (s *FileStore) readAll(corridor string) ([]*Record, error) {
 // is what stands between a committed chain and a served measurement, so it is
 // fuzzed rather than reached only through a file on disk (FuzzDecodeRecord).
 //
-// Versions 1 through 4 are loadable: each migration added its fields with
+// Versions 1 through 6 are loadable: each migration added its fields with
 // omitempty after every earlier field, so older records encode byte-for-byte as
 // they did when they were written and verify unchanged (see Record and
 // docs/run-store.md). Any other version is a schema this build does not
@@ -143,6 +143,10 @@ func decodeLine(corridor string, line int, raw []byte) (*Record, error) {
 	}
 	if r.Version < 5 && r.Correction != nil {
 		return nil, fmt.Errorf("runstore: %s line %d has correction metadata in legacy record version %d",
+			corridor, line, r.Version)
+	}
+	if r.Version < 6 && r.hasLedgers() {
+		return nil, fmt.Errorf("runstore: %s line %d has ledger metadata in legacy record version %d",
 			corridor, line, r.Version)
 	}
 	return &r, nil

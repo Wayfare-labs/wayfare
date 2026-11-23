@@ -116,6 +116,19 @@ type RungJSON struct {
 	Cost         *CostBlockJSON `json:"cost,omitempty"`
 	Notes        []string       `json:"notes"`
 	Error        string         `json:"error,omitempty"`
+
+	// Ledger is the chain head observed right after this rung was priced.
+	// Omitted when unknown; never published as 0.
+	Ledger int64 `json:"ledger,omitempty"`
+}
+
+// LedgerRangeJSON is the span of ledgers a ladder's rungs were observed at.
+// Span is Last minus First: the number of ledgers that closed while the
+// ladder was being priced.
+type LedgerRangeJSON struct {
+	First int64 `json:"first"`
+	Last  int64 `json:"last"`
+	Span  int64 `json:"span"`
 }
 
 // ReferenceDiagnosticJSON is the third-provider attribution of a DISAGREE.
@@ -229,6 +242,10 @@ type CorridorJSON struct {
 	Curve      *ExecutionRateCurveJSON `json:"curve"`
 	Rungs      []RungJSON              `json:"rungs"`
 	MeasuredAt string                  `json:"measured_at"`
+
+	// LedgerRange is the first and last ledger observed across the rungs.
+	// Omitted when no rung observed one.
+	LedgerRange *LedgerRangeJSON `json:"ledger_range,omitempty"`
 }
 
 // StaleJSON labels a reading served from history rather than measured now.
@@ -450,7 +467,17 @@ func ToCostBlockJSON(d CostDecomposition) *CostBlockJSON {
 	return out
 }
 
+// ToCorridorJSON renders a ladder result as the shared wire shape, stamping
+// measured_at with the current time.
 func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
+	return ToCorridorJSONAt(l, pair, time.Now())
+}
+
+// ToCorridorJSONAt is ToCorridorJSON with the measured_at instant supplied by
+// the caller. It exists so a producer with an injectable clock (cmd/ladder's
+// golden test, issue #668) can render the exact bytes it ships without the
+// wall clock leaking into them; every other field is identical.
+func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) CorridorJSON {
 	out := CorridorJSON{
 		SendAsset:          ToAssetJSON(l.Request.SendAsset),
 		ReceiveAsset:       ToAssetJSON(l.Request.ReceiveAsset),
@@ -470,7 +497,7 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 		Live:               true,
 		Finding:            l.Finding,
 		Rungs:              make([]RungJSON, 0, len(l.Rungs)),
-		MeasuredAt:         time.Now().UTC().Format(time.RFC3339),
+		MeasuredAt:         measuredAt.UTC().Format(time.RFC3339),
 	}
 	if !l.Reference.AsOf.IsZero() {
 		out.ReferenceAsOf = l.Reference.AsOf.UTC().Format(time.RFC3339)
@@ -542,6 +569,9 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 		out.DependsOn = append(out.DependsOn, ToAssetJSON(d))
 	}
 	out.DependencyChain = ToDependencyChainJSON(l.Chain)
+	if lr := l.LedgerRange; lr != nil {
+		out.LedgerRange = &LedgerRangeJSON{First: lr.First, Last: lr.Last, Span: lr.Span()}
+	}
 
 	for _, r := range l.Rungs {
 		rj := RungJSON{
@@ -549,6 +579,7 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 			Priced:     r.Priced(),
 			Integrity:  IntegrityUnknown.String(),
 			Notes:      []string{},
+			Ledger:     r.Ledger,
 		}
 		if r.MarginalCost != nil {
 			rj.MarginalCost = r.MarginalCost.Cost.String()

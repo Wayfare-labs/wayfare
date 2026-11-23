@@ -254,7 +254,7 @@ func TestAppendNormalisesBeforeOrdering(t *testing.T) {
 func TestOpenServesAChainWithAHistoricalBackwardsStep(t *testing.T) {
 	dir := t.TempDir()
 	base := time.Date(2026, 8, 21, 22, 0, 0, 0, time.UTC)
-	writeChain(t, dir, "USDC-NGNC", []time.Time{
+	writeTimestampedChain(t, dir, "USDC-NGNC", []time.Time{
 		base,
 		base.Add(6 * time.Hour),
 		base.Add(6 * time.Hour).Add(-4 * time.Hour),
@@ -422,14 +422,14 @@ func chainLines(t *testing.T, dir, corridor string) []string {
 	return strings.Split(text, "\n")
 }
 
-// writeChain seals one record per timestamp into a corridor file without going
+// writeTimestampedChain seals one record per timestamp into a corridor file without going
 // through Append.
 //
 // A chain with a backwards step is history an older build wrote, and the only
 // way to have one now: Append refuses to produce it. The records are sealed the
 // same way Append seals them, so what the test hands Open is byte-identical to
 // what that build committed.
-func writeChain(t *testing.T, dir, corridor string, times []time.Time) {
+func writeTimestampedChain(t *testing.T, dir, corridor string, times []time.Time) {
 	t.Helper()
 
 	prev := GenesisPrevHash

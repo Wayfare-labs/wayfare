@@ -46,6 +46,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/runstore"
 	"github.com/Wayfare-labs/wayfare/server"
 	"github.com/Wayfare-labs/wayfare/snapshot"
+	"github.com/Wayfare-labs/wayfare/transport"
 )
 
 // The wait each upstream package gives a client it builds for itself: 20s in
@@ -104,6 +105,13 @@ func main() {
 			"per-client requests per second; 0 disables rate limiting")
 		rateBurst = flag.Int("rate-burst", defaultRateBurst,
 			"per-client instantaneous request allowance")
+		// Outbound Horizon budget (issue #700). Horizon's public limit is per
+		// IP and counts the sweep and live requests together, so one bucket is
+		// shared by both; 12/s sits under it with room for one retry burst.
+		horizonRate = flag.Float64("horizon-rate-limit", defaultHorizonRate,
+			"outbound Horizon requests per second shared by sweeps and live requests; 0 disables the budget")
+		horizonBurst = flag.Float64("horizon-rate-burst", defaultHorizonBurst,
+			"outbound Horizon instantaneous request allowance")
 		logLevel = flag.String("log-level", envOr("WAYFARE_LOG_LEVEL", "info"), "debug, info, warn or error")
 		version  = flag.Bool("version", false,
 			"print the build provenance (code commit, embedded data commit, Go version) and exit")
@@ -189,6 +197,16 @@ func main() {
 	// answers.
 	collector := metrics.New()
 
+	// One outbound budget for the process (issue #700), shared by the live
+	// client, the scheduled sweep and every request the server serves, because
+	// the quota is per upstream host rather than per caller. It is nil unless
+	// both the rate and the burst are configured, and a nil budget lets
+	// everything through.
+	var outbound *transport.Budget
+	if *horizonRate > 0 && *horizonBurst > 0 {
+		outbound = transport.NewBudget(*horizonRate, *horizonBurst)
+	}
+
 	// Horizon failover (issue #701). Both addresses are parsed here, at startup,
 	// rather than on the first outage: a typo in the fallback is invisible until
 	// the moment it is the only way to answer, which is the worst possible time
@@ -207,15 +225,19 @@ func main() {
 		os.Exit(2)
 	}
 
+	dexClient := &dex.Client{
+		HorizonURL: *horizon,
+		// horizonTimeout is dex.Client's own default, copied rather than
+		// chosen: replacing the client it builds for itself must not
+		// change how long a rung is allowed to take.
+		HTTPClient: &http.Client{Transport: horizonFailover, Timeout: horizonTimeout},
+		Logger:     logger,
+		Budget:     outbound,
+	}
 	engine := &route.Engine{
-		DEX: &dex.Client{
-			HorizonURL: *horizon,
-			// horizonTimeout is dex.Client's own default, copied rather than
-			// chosen: replacing the client it builds for itself must not
-			// change how long a rung is allowed to take.
-			HTTPClient: &http.Client{Transport: horizonFailover, Timeout: horizonTimeout},
-			Logger:     logger,
-		},
+		DEX: dexClient,
+		// Records the ledger range each ladder's rungs were priced across.
+		Ledgers: dexClient,
 		// Two independent providers, each cached, cross-checked for
 		// divergence. Caching matters here specifically: a ladder is a
 		// dozen quotes that would otherwise each fetch the same mid.
@@ -251,14 +273,16 @@ func main() {
 	// Built once for either use: the -once path and the interval path configure
 	// the same snapshots and the same failover, and a second construction would
 	// be a second place for the two to disagree.
-	sched, err := newScheduler(engine, store, *dataDir, *horizon, *horizonSecondary, logger, collector)
+	sched, err := newScheduler(engine, store, *dataDir, *horizon, *horizonSecondary, outbound, logger, collector)
 	if err != nil {
 		logger.Error("configuring the scheduler", "error", err)
 		os.Exit(2)
 	}
 
 	if *once {
-		if err := sched.RunOnce(ctx); err != nil {
+		// Sweeps carry their priority on the context: it is what lets a run
+		// finish when the budget is otherwise spent (issue #700).
+		if err := sched.RunOnce(transport.WithPriority(ctx, transport.Sweep)); err != nil {
 			logger.Error("sweep failed", "error", err)
 			os.Exit(1)
 		}
@@ -273,7 +297,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := sched.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			if err := sched.Run(transport.WithPriority(ctx, transport.Sweep)); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("scheduler stopped", "error", err)
 			}
 		}()
@@ -285,6 +309,7 @@ func main() {
 		limiter := server.NewRateLimiter(*rateLimit, *rateBurst)
 		srv := &server.Server{
 			Engine:       engine,
+			Budget:       outbound,
 			Store:        store,
 			Timeout:      *timeout,
 			HistoryFirst: *histFirst,
@@ -356,7 +381,7 @@ func shutdownServer(srv *http.Server, grace time.Duration, logger *slog.Logger) 
 // fallback host that was rejected at startup is one that will not be there
 // during the outage it was configured for.
 func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon, horizonSecondary string,
-	logger *slog.Logger, collector *metrics.Collector) (*monitor.Scheduler, error) {
+	budget *transport.Budget, logger *slog.Logger, collector *metrics.Collector) (*monitor.Scheduler, error) {
 	sched := &monitor.Scheduler{
 		Engine: engine, Store: store, Logger: logger, Metrics: collector,
 		Checks: instrumentedChecksRunner(horizon, collector),
@@ -402,8 +427,17 @@ func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon, 
 				Timeout:   30 * time.Second,
 			}
 		}
+		snapshotDEX := &dex.Client{
+			HorizonURL: horizon,
+			HTTPClient: client(metrics.UpstreamHorizon),
+			Logger:     logger,
+			Budget:     budget,
+		}
 		return &route.Engine{
-			DEX: &dex.Client{HorizonURL: horizon, HTTPClient: client(metrics.UpstreamHorizon), Logger: logger},
+			DEX: snapshotDEX,
+			// The root lookups go through the same recorder, so the ledger a
+			// stored range names is itself in the snapshot evidence.
+			Ledgers: snapshotDEX,
 			RefRate: &refrate.Cross{
 				Primary:    &refrate.Cached{Inner: &refrate.ExchangeRateAPI{Client: client(metrics.UpstreamExchangeRateAPI), Logger: logger}},
 				Secondary:  &refrate.Cached{Inner: &refrate.CurrencyAPI{Client: client(metrics.UpstreamCurrencyAPI), Logger: logger}},

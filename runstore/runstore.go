@@ -1,31 +1,3 @@
-// Package runstore keeps a tamper-evident history of corridor measurements.
-//
-// # Why a hash chain
-//
-// The project's central claim is of the form "measured live on 2026-08-08,
-// USDC to NGNC lost 25.02% at 0.1 USDC". A reader has to take two things on
-// trust: that the measurement happened, and that nobody adjusted it
-// afterwards. The first is what snapshots address. This package addresses the
-// second.
-//
-// Each record carries the hash of the one before it, so a stored history is a
-// chain rather than a pile. Editing any past record — a loss percentage, a
-// timestamp, an integrity state — changes its hash, which breaks every record
-// after it. Verify walks the chain and names the first record that does not
-// reconcile.
-//
-// This does not prove a measurement was correct. It proves the stored history
-// is the one that was written, which is the part a reader cannot otherwise
-// check. A monitor whose past can be quietly rewritten is a monitor whose
-// present cannot be trusted either.
-//
-// # What it is not
-//
-// Not a blockchain and not a distributed ledger. There is one writer and the
-// chain lives in a file. Someone with write access can rewrite the whole chain
-// from any point; what they cannot do is edit one record and leave the rest
-// intact, which is the realistic failure — a number quietly improved long
-// after it was published.
 package runstore
 
 import (
@@ -49,8 +21,9 @@ import (
 // encodes to exactly the bytes that were hashed when it was written, and
 // still verifies. Version 4 adds snapshot this way after every Version 3
 // field, and Version 5 adds correction this way after every Version 4 field,
-// so older records still verify unchanged. See docs/run-store.md.
-const Version = 5
+// so older records still verify unchanged. Version 6 adds ledger_range and
+// a per-rung ledger the same way (issue #720). See docs/run-store.md.
+const Version = 6
 
 // LegacyVersion is the prior record schema, retained for existing chains.
 const LegacyVersion = 1
@@ -119,6 +92,20 @@ type Rung struct {
 	LossPct       string `json:"loss_pct,omitempty"`
 	Verdict       string `json:"verdict,omitempty"`
 	Path          string `json:"path,omitempty"`
+
+	// Ledger is the chain head observed right after the rung was priced
+	// (Version 6, issue #720). omitempty and after every earlier field, so a
+	// rung stored before Version 6 encodes to exactly the bytes it did.
+	Ledger int64 `json:"ledger,omitempty"`
+}
+
+// LedgerRange is the first and last ledger observed across a measurement's
+// rungs (Version 6, issue #720). A ladder takes several ledgers to price, so
+// its rungs can reflect different books; the range lets a reader discard a
+// measurement that straddled a large book change.
+type LedgerRange struct {
+	First int64 `json:"first"`
+	Last  int64 `json:"last"`
 }
 
 // Correction records an erratum or correction against an earlier record in the chain (issue #729).
@@ -204,6 +191,11 @@ type Record struct {
 	// Optional; omitted when empty so pre-Version 5 record hashes verify unchanged.
 	Correction *Correction `json:"correction,omitempty"`
 
+	// LedgerRange is the span of ledgers the rungs were observed at
+	// (Version 6, issue #720). Optional; omitted when unknown, and declared
+	// after every Version 5 field, so pre-Version 6 hashes verify unchanged.
+	LedgerRange *LedgerRange `json:"ledger_range,omitempty"`
+
 	PrevHash string `json:"prev_hash"`
 	Hash     string `json:"hash"`
 }
@@ -267,6 +259,19 @@ func (r *Record) VerifySelf() error {
 			r.Seq, short(r.Hash), short(want))
 	}
 	return nil
+}
+
+// hasLedgers reports whether the record carries any Version 6 ledger field.
+func (r *Record) hasLedgers() bool {
+	if r.LedgerRange != nil {
+		return true
+	}
+	for _, rung := range r.Rungs {
+		if rung.Ledger != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // IsCorrection reports whether the record is a correction of an earlier record.
