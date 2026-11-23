@@ -1,7 +1,3 @@
-// Package runstore keeps a tamper-evident history of corridor measurements.
-//
-// This file implements integrity transition detection: comparing consecutive
-// runs for the same corridor to detect structural changes in market integrity.
 package runstore
 
 import (
