@@ -163,7 +163,7 @@ LAYER 2 — DETERMINISTIC CALCULATION                               [live]
   packages: route, refrate, checks
 
   spread, depth, price impact, concentration
-                                             [implemented, not yet reachable]
+                                             [reachable through corridor sweeps]
   cost decomposition                         [implemented, on the wire]
 
   Market-structure vocabulary and current limits:
