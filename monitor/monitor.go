@@ -65,14 +65,13 @@ func DefaultCorridors() []Corridor {
 	return corridors
 }
 
-// // DefaultInterval is how often corridors are measured.
+// DefaultInterval is how often corridors are measured.
 //
 // Six hours. The corridors measured so far move on the scale of days — the
 // 2026-08-04 and 2026-08-08 runs differ by about a percent — so a shorter
 // interval would buy resolution nobody needs while multiplying load on a
-// shared public service. One run is roughly three dozen Horizon calls per
-// corridor; at this cadence that is negligible for Horizon and comfortably
-// inside both rate providers' free tiers once refrate.Cached is in the stack.
+// shared public service. The deployment guide documents the aggregate
+// Horizon request ceiling for the registry-derived sweep.
 const DefaultInterval = 6 * time.Hour
 
 // DefaultJitter is the maximum random delay added to each scheduled interval.
