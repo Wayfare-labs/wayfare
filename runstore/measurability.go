@@ -1,5 +1,3 @@
-// Package runstore keeps a tamper-evident history of corridor measurements.
-//
 // This file implements measurability uptime: how often a corridor was
 // measurable at all. Uptime of the measurement, not of the service — how
 // many scheduled sweeps produced a priced ladder, regardless of whether that

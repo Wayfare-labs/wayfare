@@ -212,6 +212,11 @@ backup nobody has restored from is a hypothesis. See
 
 ## Related
 
+- [Runnable runstore example](../runstore/example_test.go) — open a temporary
+  file store, append records, and verify their hash chain
+- [Runnable snapshot example](../snapshot/example_test.go) — replay recorded
+  upstream bytes without network access
+
 - [rollback.md](rollback.md) — the rollback procedure this command anchors:
   how to return to an older image (including one with older embedded
   history) and verify the chain afterwards
