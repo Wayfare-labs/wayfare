@@ -107,6 +107,11 @@ type DivergenceStatsJSON struct {
 	// count toward the minimum sample size below.
 	ObservationCount int `json:"observation_count"`
 
+	// FirstAt and LastAt bound the divergence observations used for these
+	// statistics. They are omitted when no divergence was recorded.
+	FirstAt string `json:"first_at,omitempty"`
+	LastAt  string `json:"last_at,omitempty"`
+
 	// Determined is false below the documented minimum sample size (see
 	// analysis.MinSampleSizeForMeanStdDev); Reason then explains why, and
 	// MeanPct/StdDevPct/trend are absent rather than a plausible-looking
@@ -136,6 +141,12 @@ func toDivergenceStatsJSON(s *analysis.MetricStats) DivergenceStatsJSON {
 		ObservationCount: s.ObservationCount,
 		Determined:       !s.Undetermined,
 		Reason:           s.Reason,
+	}
+	if s.FirstAt != nil {
+		out.FirstAt = s.FirstAt.UTC().Format(time.RFC3339)
+	}
+	if s.LastAt != nil {
+		out.LastAt = s.LastAt.UTC().Format(time.RFC3339)
 	}
 	if s.Mean != nil {
 		out.MeanPct = s.Mean.StringFixed(4)

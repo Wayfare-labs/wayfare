@@ -1,4 +1,3 @@
-// Package route renders a corridor's measurement into a static social-preview
 // SVG. The image is generated entirely from the measured document — there is
 // no live lookup, no template rendering on the browser, and no dependency on a
 // graphic binary. It is meant to be served by the monitor as a corridor's

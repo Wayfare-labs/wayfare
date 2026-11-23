@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Wayfare-labs/wayfare/metrics"
 )
 
 // RateLimiter bounds what a population of clients can cost the service.
@@ -39,6 +41,18 @@ type RateLimiter struct {
 	// normal page load (assets, corridor, trend) without the reader ever
 	// seeing a 429.
 	Burst int
+
+	// Metrics counts requests this limiter refused (issue #705). Nil is
+	// allowed and observes nothing, so a limiter built by an existing caller
+	// or a test is unchanged. Server.limit fills it from the server's own
+	// collector when a limiter is handed one without, which is the shape the
+	// binary builds.
+	//
+	// The count carries no client key: the number an operator alerts on is
+	// "is the limit set too tight", which is a property of the service, and
+	// publishing per-client counts would put request volume by identity into
+	// a document that is fetched without authentication.
+	Metrics *metrics.Collector
 
 	mu      sync.Mutex
 	buckets map[string]*clientBucket
@@ -154,6 +168,7 @@ func (rl *RateLimiter) middleware(next http.Handler) http.Handler {
 		key := clientKey(r)
 		ok, retryAfter := rl.Allow(key)
 		if !ok {
+			rl.Metrics.RateLimitRejection()
 			w.Header().Set("Retry-After", formatRetryAfter(retryAfter))
 			writeError(w, r, http.StatusTooManyRequests, codeRateLimited,
 				"rate limit exceeded; retry after the delay in the Retry-After header")

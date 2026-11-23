@@ -842,6 +842,33 @@ func TestAutoMergeGate(t *testing.T) {
 			noCalls: true,
 		},
 		{
+			// issue_comment also fires for plain issues. Those carry no
+			// issue.pull_request.url, and looking them up as a pull request
+			// 404s, which failed the run for every comment on every issue.
+			name: "comment-on-plain-issue-is-not-a-pr",
+			env: map[string]string{
+				"EVENT_PR": "",
+				"ISSUE_PR": "655",
+				"IS_PR":    "",
+				"HEAD_SHA": "",
+			},
+			stdout:  []string{"comment on issue #655, not a pull request; nothing to gate"},
+			noCalls: true,
+		},
+		{
+			// A comment on a pull request still re-evaluates that PR.
+			name: "comment-on-pr-is-evaluated",
+			env: map[string]string{
+				"EVENT_PR": "",
+				"ISSUE_PR": prNumber,
+				"IS_PR":    "https://api.github.com/repos/" + repoSlug + "/pulls/" + prNumber,
+				"HEAD_SHA": "",
+			},
+			stdout:    []string{"evaluating PR #" + prNumber},
+			merged:    true,
+			commented: true,
+		},
+		{
 			// If the merge itself is refused, the gate fails loudly rather
 			// than reporting an approval that landed nothing.
 			name: "merge-refused",

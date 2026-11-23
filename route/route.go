@@ -1,4 +1,3 @@
-// Package route ranks the ways money can travel a corridor, and says plainly
 // when none of them are worth taking.
 //
 // # Why a verdict, and not just a ranking
