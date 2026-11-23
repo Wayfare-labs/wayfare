@@ -363,6 +363,14 @@ The trend endpoint's own derived statistics are the exception, and they are all 
 | `divergence_stats.stddev_pct` | exactly 4 | half away from zero |
 | `divergence_stats.trend_magnitude_pct` | exactly 4 | half away from zero |
 
+`divergence_stats.trend_magnitude_pct` is percentage points per day. Its
+signed counterpart is not returned by this endpoint; `trend_direction` names
+whether divergence is improving, stable, or worsening. The statistics also
+include `first_at` and `last_at` when at least one divergence-bearing run was
+recorded; these RFC 3339 timestamps define the covered span. The trend is an
+OLS regression on elapsed time from `first_at`, not on observation index, so
+gaps between recorded runs affect the slope according to their actual length.
+
 ## `GET /api/corridor/trend`
 
 Query parameters:
