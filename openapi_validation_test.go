@@ -49,7 +49,7 @@ func parseYAMLBlock(lines []string, startLine int, minIndent int) (any, error) {
 		lineContent := stripYAMLComment(trimmed)
 
 		if strings.HasPrefix(lineContent, "- ") {
-			if m != nil && len(m) > 0 {
+			if len(m) > 0 {
 				return nil, fmt.Errorf("line %d: mixed list and map at indent %d", i+1, indent)
 			}
 			if l == nil {
@@ -124,7 +124,7 @@ func parseYAMLBlock(lines []string, startLine int, minIndent int) (any, error) {
 		}
 
 		// Otherwise it's a map entry: "key:" or "key: value"
-		if l != nil && len(l) > 0 {
+		if len(l) > 0 {
 			return nil, fmt.Errorf("line %d: mixed list and map at indent %d", i+1, indent)
 		}
 		if m == nil {
