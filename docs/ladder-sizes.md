@@ -71,6 +71,22 @@ order provided.
 
 ---
 
+## Adaptive midpoint rungs (opt-in)
+
+A fixed ladder can miss the exact size where the curve bends. An opt-in rule
+can add a small, bounded number of midpoint rungs between adjacent measured
+sizes whose losses differ by more than a threshold. Added rungs are real
+quotes — never interpolated — and are marked `adaptive: true` on the wire.
+
+The default rule adds at most four rungs when adjacent losses differ by more
+than five percentage points, and a hard ceiling caps any rule at eight. It is
+requested with `?adaptive=1` on the API or `-adaptive` on `cmd/ladder`; the
+scheduler leaves it off, so recorded history keeps the requested ladder.
+
+Full rule, cost bound and marking contract: **[adaptive-ladder.md](adaptive-ladder.md)**.
+
+---
+
 ## What the ladder measures
 
 For each rung, the engine:

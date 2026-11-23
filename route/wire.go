@@ -95,6 +95,10 @@ type ExecutionRatePointJSON struct {
 	Rate   string `json:"rate,omitempty"`
 	Priced bool   `json:"priced"`
 	Reason string `json:"reason,omitempty"`
+
+	// Adaptive marks a point measured at a size the adaptive rule added.
+	// Omitted for every requested rung.
+	Adaptive bool `json:"adaptive,omitempty"`
 }
 
 type ExecutionRateCurveJSON struct {
@@ -120,6 +124,12 @@ type RungJSON struct {
 	// Ledger is the chain head observed right after this rung was priced.
 	// Omitted when unknown; never published as 0.
 	Ledger int64 `json:"ledger,omitempty"`
+
+	// Adaptive is true only for a rung added by the adaptive midpoint rule,
+	// never for one the caller requested. It is omitted when false, so a
+	// fixed rung's wire shape is unchanged while an added rung is
+	// distinguishable without consulting the request.
+	Adaptive bool `json:"adaptive,omitempty"`
 }
 
 // LedgerRangeJSON is the span of ledgers a ladder's rungs were observed at.
@@ -557,7 +567,7 @@ func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) Corrid
 			NonMonotonic:     l.Curve.NonMonotonic,
 		}
 		for _, p := range l.Curve.Points {
-			point := ExecutionRatePointJSON{Size: p.Size.String(), Priced: p.Priced, Reason: p.Reason}
+			point := ExecutionRatePointJSON{Size: p.Size.String(), Priced: p.Priced, Reason: p.Reason, Adaptive: p.Adaptive}
 			if p.Priced {
 				point.Rate = p.Rate.String()
 			}
@@ -580,6 +590,7 @@ func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) Corrid
 			Integrity:  IntegrityUnknown.String(),
 			Notes:      []string{},
 			Ledger:     r.Ledger,
+			Adaptive:   r.Adaptive,
 		}
 		if r.MarginalCost != nil {
 			rj.MarginalCost = r.MarginalCost.Cost.String()

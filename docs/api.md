@@ -35,6 +35,7 @@ Query parameters:
 - `from` — send asset code; defaults to `USDC`.
 - `to` — receive asset code; defaults to `NGNC`.
 - `sizes` — optional comma-separated positive decimal send amounts. The server accepts at most 24 values. When omitted, the route ladder's default sizes are used.
+- `adaptive=1` — opt in to adaptive midpoint rungs: up to four extra sizes measured between adjacent rungs whose losses differ by more than five percentage points. Added rungs carry `adaptive: true`; the count is bounded and they share the request's measurement budget. See [adaptive-ladder.md](adaptive-ladder.md).
 - `live=1` — when history-first mode is enabled, bypass stored history and request a live measurement. Without it, a history-first instance answers from the chain alone, and a corridor the scheduler has not swept yet returns `404` with `code: "no_history"` rather than a measurement the mode did not promise.
 
 The destination must be a configured asset with a verified fiat peg. Amounts, rates, percentages, and sizes are decimal strings, not JSON numbers.
@@ -52,7 +53,7 @@ A successful response contains:
 - `recommended` — the best acceptable quote, or JSON `null` when no size is recommendable.
 - `recommended_size` — the send size of the recommendation, when one exists.
 - `finding` — explanatory prose about the measurement.
-- `rungs` — one entry per requested size.
+- `rungs` — one entry per requested size, plus any adaptive midpoint rungs the request opted into.
 - `ledger_range` — the first and last ledger observed across the rungs, as `first`, `last` and `span` (`last - first`, the number of ledgers that closed while the ladder was priced). A ladder takes several ledgers, so its rungs can be priced against different books; a large `span` marks a reading that may straddle a book change. Each ledger is the chain head Horizon's root reported right after that rung was priced. Omitted when no rung observed a ledger — never published as zeros. Stored readings carry it from record Version 6 on (see [run-store.md](run-store.md)).
 - `measured_at` — timestamp of the response measurement or stored reading.
 - `live` — `true` for a fresh measurement and `false` for history.
@@ -66,6 +67,8 @@ Each rung includes `send_amount`, `priced`, `integrity`, optional `quote`, notes
 - `cost` — the available cost decomposition (see [cost-decomposition.md](cost-decomposition.md)).
 
 Any rung that priced may also include `ledger`, the chain head observed right after it was priced. It is omitted when unknown.
+
+A rung added by adaptive sampling carries `adaptive: true`; requested rungs omit the field. The same marker appears on that size's `curve.points[]` entry. Added rungs are quoted like any other and are never interpolated — see [adaptive-ladder.md](adaptive-ladder.md).
 
 The first valid priced rung has no marginal cost. Missing rungs are skipped, never treated as zero. The current marginal classification is available on the internal ladder result as `improving`, `flat`, `worsening`, or `undetermined`; fewer than two valid priced points are undetermined.
 

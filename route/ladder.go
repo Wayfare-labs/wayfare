@@ -36,6 +36,13 @@ type LadderRequest struct {
 	// Sizes are the send amounts to price. Empty means DefaultSizes.
 	Sizes []decimal.Decimal
 
+	// Adaptive, when non-nil, allows the ladder to price extra midpoint
+	// rungs between adjacent priced sizes whose losses differ by more than
+	// the rule's threshold. The added rungs are real quotes, never
+	// interpolated values, and each is marked Adaptive. Nil leaves the
+	// requested ladder unchanged.
+	Adaptive *AdaptiveRule
+
 	ReferenceBase  string
 	ReferenceQuote string
 }
@@ -54,6 +61,13 @@ type Rung struct {
 	// components. It is populated when the rung priced; an unpriced rung
 	// carries an empty decomposition, which rendering omits entirely.
 	Decomposition CostDecomposition
+
+	// Adaptive reports that this rung was not in the requested ladder; it
+	// was added because the losses at two adjacent rungs differed by more
+	// than the adaptive rule's threshold. It is false for every requested
+	// rung. On the wire it is published only when true, so an added rung is
+	// distinguishable without changing the shape of a fixed one.
+	Adaptive bool
 
 	// Err is set when this size alone failed to price, so one transient
 	// failure does not discard the whole ladder.
@@ -181,6 +195,8 @@ type ExecutionRatePoint struct {
 	Rate   decimal.Decimal
 	Priced bool
 	Reason string
+	// Adaptive marks a point measured at a size the adaptive rule added.
+	Adaptive bool
 }
 
 // ExecutionRateCurve publishes the effective rate by measured size.
@@ -199,7 +215,7 @@ func (l *LadderResult) buildCurve() *ExecutionRateCurve {
 	var previous decimal.Decimal
 	var havePrevious bool
 	for _, r := range l.Rungs {
-		point := ExecutionRatePoint{Size: r.SendAmount, Reason: rungReason(r)}
+		point := ExecutionRatePoint{Size: r.SendAmount, Reason: rungReason(r), Adaptive: r.Adaptive}
 		if r.Priced() {
 			point.Priced = true
 			point.Rate = r.Result.Quotes[0].EffectiveRate
@@ -346,10 +362,38 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 		Rungs:   make([]Rung, len(sorted)),
 	}
 
+	out.Rungs = e.priceRungs(ctx, req, sorted)
+
+	if err := ctx.Err(); err != nil {
+		// The partial result is returned alongside the error so a caller can
+		// report which rungs finished (CompletedSizes). It is not summarised
+		// and must not be presented as a measurement.
+		return out, err
+	}
+
+	// Adaptive sampling happens after the requested ladder, in one pass. It
+	// spends no additional time budget: the extras are priced inside the
+	// context the requested ladder was given, and are abandoned if that
+	// context runs out rather than extending the measurement. The count is
+	// bounded by MaxAdaptiveExtraRungs.
+	if req.Adaptive != nil {
+		out.Rungs = mergeAdaptiveRungs(out.Rungs, e.adaptiveRungs(ctx, req, out.Rungs, *req.Adaptive))
+	}
+
+	out.summarise()
+	out.LedgerRange = ledgerRange(out.Rungs)
+	return out, nil
+}
+
+// priceRungs prices each size concurrently and returns one rung per size, in
+// the order given. A size that cannot be priced leaves its own unmeasured rung
+// rather than failing the batch; the caller decides what a partial batch means.
+func (e *Engine) priceRungs(ctx context.Context, req LadderRequest, sizes []decimal.Decimal) []Rung {
+	rungs := make([]Rung, len(sizes))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, ladderConcurrency)
 
-	for i, size := range sorted {
+	for i, size := range sizes {
 		wg.Add(1)
 		go func(i int, size decimal.Decimal) {
 			defer wg.Done()
@@ -367,20 +411,40 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 			if err == nil {
 				rung.Ledger = e.observedLedger(ctx)
 			}
-			out.Rungs[i] = rung
+			rungs[i] = rung
 		}(i, size)
 	}
 	wg.Wait()
+	return rungs
+}
 
-	if err := ctx.Err(); err != nil {
-		// The partial result is returned alongside the error so a caller can
-		// report which rungs finished (CompletedSizes). It is not summarised
-		// and must not be presented as a measurement.
-		return out, err
+// adaptiveRungs prices the extra midpoint rungs the rule selects, and marks
+// each one Adaptive.
+//
+// The pass is best-effort. If the measurement's context expires while it runs,
+// the requested ladder stands: adaptive sampling is an optional refinement and
+// must not turn a completed measurement into a timeout. A rung that learns
+// nothing (an unreachable upstream) is dropped rather than published as a hole,
+// because a hole would make the ladder look partially measured at a size the
+// caller never asked for.
+func (e *Engine) adaptiveRungs(ctx context.Context, req LadderRequest, measured []Rung, rule AdaptiveRule) []Rung {
+	sizes := adaptiveMidpoints(measured, rule)
+	if len(sizes) == 0 || ctx.Err() != nil {
+		return nil
 	}
-	out.summarise()
-	out.LedgerRange = ledgerRange(out.Rungs)
-	return out, nil
+	priced := e.priceRungs(ctx, req, sizes)
+	if ctx.Err() != nil {
+		return nil
+	}
+	out := make([]Rung, 0, len(priced))
+	for _, r := range priced {
+		if r.Unmeasured() {
+			continue
+		}
+		r.Adaptive = true
+		out = append(out, r)
+	}
+	return out
 }
 
 // observedLedger asks the engine's ledger source for the current chain head.

@@ -272,7 +272,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusMethodNotAllowed, codeMethodNotAllowed, "only GET is supported")
 		return
 	}
-	if err := checkParams(r, "from", "to", "sizes", "live", "pretty"); err != nil {
+	if err := checkParams(r, "from", "to", "sizes", "live", "adaptive", "pretty"); err != nil {
 		writeError(w, r, http.StatusBadRequest, codeInvalidQuery, err.Error())
 		return
 	}
@@ -311,6 +311,16 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, r, http.StatusBadRequest, codeInvalidSizes, err.Error())
 		return
+	}
+
+	// Adaptive sampling is opt-in and uses the documented default rule. The
+	// extra rungs are capped in route and share this request's measurement
+	// budget: the X-Measurement-Budget header still describes the requested
+	// ladder, and adaptive work is abandoned rather than extending it.
+	var adaptive *route.AdaptiveRule
+	if r.URL.Query().Get("adaptive") != "" {
+		rule := route.DefaultAdaptiveRule()
+		adaptive = &rule
 	}
 
 	// History-first: answer from the chain unless a live reading was asked
@@ -374,6 +384,7 @@ func (s *Server) handleCorridor(w http.ResponseWriter, r *http.Request) {
 		SendAsset:      sendAsset,
 		ReceiveAsset:   recvAsset,
 		Sizes:          sizes,
+		Adaptive:       adaptive,
 		ReferenceBase:  pegBase,
 		ReferenceQuote: pegQuote,
 	})
