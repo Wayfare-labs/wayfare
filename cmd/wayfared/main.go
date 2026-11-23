@@ -129,7 +129,7 @@ func main() {
 	logger := newLogger(*logLevel)
 	slog.SetDefault(logger)
 
-	store, err := openStore(*dataDir, logger)
+	store, verification, err := openStore(*dataDir, logger)
 	if err != nil {
 		// Open verifies every chain, so a broken one surfaces here. Under
 		// -verify-store that is the answer being asked for rather than a
@@ -320,6 +320,9 @@ func main() {
 			// refusals count in the document this process serves.
 			Limiter: limiter,
 			Metrics: collector,
+			// The startup verdict on the history this process serves. /readyz
+			// answers with it; /healthz never looks at it.
+			Verification: &verification,
 		}
 		httpSrv := &http.Server{
 			Addr:              *addr,
@@ -489,12 +492,19 @@ func instrumentedChecksRunner(horizon string, collector *metrics.Collector) *che
 	}
 }
 
-// openStore opens the run store, or returns a no-op store when history is off.
+// openStore opens the run store, or returns a no-op store when history is off,
+// along with what it managed to prove about the history it is serving.
 //
 // A store that fails to open is fatal rather than silently degraded: on a
 // deployment with a volume attached, a failure here means the volume did not
 // mount, and running anyway would record nothing while appearing healthy.
-func openStore(dir string, logger *slog.Logger) (runstore.Store, error) {
+//
+// The second return value is the reason the fallbacks below are allowed to
+// keep serving at all. Opening a store verifies every chain it loads, so a
+// store that came back without a check is a store this process cannot vouch
+// for — and it says so on /readyz instead of letting a platform route traffic
+// to it on the strength of /healthz (issue #704).
+func openStore(dir string, logger *slog.Logger) (runstore.Store, server.Verification, error) {
 	if dir == "" {
 		// No writable directory, but the binary carries the published
 		// history and verified it at build time. Serving it is better than
@@ -507,24 +517,34 @@ func openStore(dir string, logger *slog.Logger) (runstore.Store, error) {
 		if err != nil {
 			logger.Warn("embedded history unavailable; measurements will not be recorded",
 				"error", err)
-			return runstore.Nop{}, nil
+			return runstore.Nop{}, server.Verification{
+				Note: fmt.Sprintf("embedded history did not open or verify: %v", err),
+			}, nil
 		}
 		corridors, _ := embedded.Corridors(context.Background())
 		if len(corridors) == 0 {
 			logger.Warn("embedded history is empty; measurements will not be recorded")
-			return runstore.Nop{}, nil
+			return runstore.Nop{}, server.Verification{
+				Note: "embedded history holds no corridors",
+			}, nil
 		}
 		logger.Info("serving embedded history (read-only)",
 			"corridors", len(corridors))
-		return embedded, nil
+		return embedded, server.Verification{
+			ChainVerified: true,
+			Note:          fmt.Sprintf("embedded history verified at open across %d corridors", len(corridors)),
+		}, nil
 	}
 	store, err := runstore.Open(dir)
 	if err != nil {
-		return nil, err
+		return nil, server.Verification{}, err
 	}
 	corridors, _ := store.Corridors(context.Background())
 	logger.Info("run store open", "dir", dir, "corridors", len(corridors))
-	return store, nil
+	return store, server.Verification{
+		ChainVerified: true,
+		Note:          fmt.Sprintf("run store verified at open across %d corridors", len(corridors)),
+	}, nil
 }
 
 // verifyStore walks every chain and reports. Intended for use after a deploy

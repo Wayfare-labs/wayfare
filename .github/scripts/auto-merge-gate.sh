@@ -25,7 +25,13 @@ fi
 PR="${EVENT_PR:-}"
 
 # issue_comment fires for issues as well as pull requests, and only
-# the latter can be merged.
+# the latter can be merged. A plain issue carries no
+# issue.pull_request.url, so stop here: the pulls endpoint below would
+# 404 on it and fail the run for every comment on every issue.
+if [ -n "${ISSUE_PR:-}" ] && [ -z "${IS_PR:-}" ]; then
+  echo "comment on issue #${ISSUE_PR}, not a pull request; nothing to gate"
+  exit 0
+fi
 if { [ -z "$PR" ] || [ "$PR" = "null" ]; } && [ -n "${ISSUE_PR:-}" ]; then
   PR="${ISSUE_PR}"
 fi
