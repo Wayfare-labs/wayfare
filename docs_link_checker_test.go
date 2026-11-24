@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode"
@@ -34,7 +35,7 @@ func TestDocsLinksAreNotBroken(t *testing.T) {
 			continue
 		}
 		srcDir := filepath.Dir(src)
-		links := parseLinksFromMarkdown(string(raw))
+		links := parseLinksFromMarkdown(inlineCode.ReplaceAllString(withoutFences(string(raw)), ""))
 		for _, lnk := range links {
 			if strings.HasPrefix(lnk.url, "http://") || strings.HasPrefix(lnk.url, "https://") {
 				continue // skip external links
@@ -55,6 +56,10 @@ func TestDocsLinksAreNotBroken(t *testing.T) {
 			targetFile := src
 			if rawURL != "" {
 				targetFile = filepath.Join(srcDir, rawURL)
+				if strings.HasPrefix(rawURL, "/") {
+					// GitHub resolves these from the repository root.
+					targetFile = filepath.Join(".", rawURL)
+				}
 			}
 
 			if _, err := os.Stat(targetFile); os.IsNotExist(err) {
@@ -79,7 +84,7 @@ func TestDocsLinksAreNotBroken(t *testing.T) {
 // It is a signal to a human reviewer.
 func TestDocsLineNumberCitationsAreNotTooStale(t *testing.T) {
 	// Pattern: someFile.go:123  (only Go source files, to avoid false positives)
-	lineRef := regexp.MustCompile(`(\S+\.go):(\d+)`)
+	lineRef := regexp.MustCompile(`([A-Za-z0-9_./-]+\.go):(\d+)`)
 
 	sources := collectDocsSources(t)
 	for _, src := range sources {
@@ -97,16 +102,49 @@ func TestDocsLineNumberCitationsAreNotTooStale(t *testing.T) {
 			if _, err := os.Stat(goFile); os.IsNotExist(err) {
 				t.Logf("WARNING %s: cites %s:%s but %s does not exist (file moved or removed?)",
 					src, goFile, lineNoStr, goFile)
+				continue
 			}
-			// We don't validate the line number itself here: that would require
-			// parsing Go source, which is out of scope. The existence check is
-			// enough to catch the most common staleness — the file is gone.
-			_ = lineNoStr
+			code, err := os.ReadFile(goFile)
+			if err != nil {
+				continue
+			}
+			lines := strings.Count(string(code), "\n") + 1
+			if n, err := strconv.Atoi(lineNoStr); err != nil || n < 1 || n > lines {
+				t.Logf("WARNING %s: cites %s:%s but the file has %d lines", src, goFile, lineNoStr, lines)
+			}
 		}
 	}
 }
 
 // --- helpers ----------------------------------------------------------------
+
+var (
+	inlineCode   = regexp.MustCompile("`[^`\\n]+`")
+	closingATX   = regexp.MustCompile(`[ \t]+#+[ \t]*$`)
+	fenceOpening = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})")
+)
+
+// withoutFences drops fenced code blocks, whose content is literal. A closing
+// fence repeats the opening marker at least as many times.
+func withoutFences(md string) string {
+	var out []string
+	open := ""
+	for _, line := range strings.Split(md, "\n") {
+		m := fenceOpening.FindStringSubmatch(line)
+		if open == "" {
+			if m != nil {
+				open = m[1]
+				continue
+			}
+			out = append(out, line)
+			continue
+		}
+		if m != nil && strings.HasPrefix(m[1], open) && strings.TrimSpace(line) == m[1] {
+			open = ""
+		}
+	}
+	return strings.Join(out, "\n")
+}
 
 type markdownLink struct {
 	url string
@@ -209,7 +247,7 @@ func headingAnchors(md string) map[string]bool {
 	anchors := map[string]bool{}
 	counts := map[string]int{}
 
-	for _, line := range strings.Split(md, "\n") {
+	for _, line := range strings.Split(withoutFences(md), "\n") {
 		stripped := strings.TrimLeft(line, "#")
 		if stripped == line {
 			continue // not a heading
@@ -217,7 +255,7 @@ func headingAnchors(md string) map[string]bool {
 		if len(stripped) > 0 && stripped[0] != ' ' {
 			continue // no space after hashes — not an ATX heading
 		}
-		text := strings.TrimSpace(stripped)
+		text := strings.TrimSpace(closingATX.ReplaceAllString(stripped, ""))
 		slug := headingToAnchor(text)
 		if counts[slug] == 0 {
 			anchors[slug] = true

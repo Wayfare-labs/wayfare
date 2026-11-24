@@ -30,6 +30,10 @@ func TestDocsIndexCoversEveryDoc(t *testing.T) {
 		t.Fatalf("cannot read %s: %v", indexPath, err)
 	}
 	indexText := string(raw)
+	linked := map[string]bool{}
+	for _, link := range extractMarkdownLinks(string(raw)) {
+		linked[link] = true
+	}
 
 	var missing []string
 	err = filepath.Walk("docs", func(path string, info os.FileInfo, err error) error {
@@ -48,7 +52,7 @@ func TestDocsIndexCoversEveryDoc(t *testing.T) {
 		}
 		// Convert to the relative form used in the index (strip "docs/").
 		rel := strings.TrimPrefix(path, "docs/")
-		if !strings.Contains(indexText, rel) {
+		if !linked[rel] {
 			missing = append(missing, path)
 		}
 		return nil
@@ -147,7 +151,7 @@ func TestDocsIndexDocCount(t *testing.T) {
 
 	// If this number is wrong after you added or removed a doc, update it
 	// and also update docs/README.md to list the new doc.
-	const wantCount = 150
+	const wantCount = 151
 	if got := len(paths); got != wantCount {
 		sort.Strings(paths)
 		t.Errorf("docs/ contains %d .md files (excluding README.md), want %d; "+

@@ -1,6 +1,6 @@
 # Docs index
 
-143 documents in `docs/`, grouped by primary audience. Every file is listed
+151 documents in `docs/`, grouped by primary audience. Every file is listed
 exactly once; the grouping reflects who is most likely to need it first.
 
 ---
@@ -90,6 +90,7 @@ exactly once; the grouping reflects who is most likely to need it first.
 | Document | What it covers |
 |:---|:---|
 | [deployment.md](deployment.md) | Production deployment: Render, environment variables, health checks |
+| [load-capacity.md](load-capacity.md) | Deployed configuration capacity and load benchmarks |
 | [rollback.md](rollback.md) | How to roll back a bad deployment |
 | [cold-start-reliability.md](cold-start-reliability.md) | Cold-start reliability: what happens before the first sweep |
 | [regime-classification.md](regime-classification.md) | Regime classification — how corridors are labelled LIVE/STALE/etc. |
