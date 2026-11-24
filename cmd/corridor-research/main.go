@@ -152,7 +152,7 @@ func fetchAccount(ctx context.Context, issuer, horizonURL string, client *http.C
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Horizon returned HTTP %d for /accounts/%s", resp.StatusCode, issuer)
+		return nil, fmt.Errorf("horizon returned HTTP %d for /accounts/%s", resp.StatusCode, issuer)
 	}
 	var acc horizonAccountResp
 	if err := json.NewDecoder(resp.Body).Decode(&acc); err != nil {
@@ -301,7 +301,7 @@ func printTemplate(w *os.File, r *ProbeResult) {
 	fmt.Fprintln(w)
 
 	// Direct order book section.
-	fmt.Fprintln(w, "### Direct order book (USDC selling, " + r.Code + " buying)")
+	fmt.Fprintln(w, "### Direct order book (USDC selling, "+r.Code+" buying)")
 	fmt.Fprintln(w)
 	bookURL := horizonBase + "/order_book?selling_asset_type=credit_alphanum4&selling_asset_code=USDC" +
 		"&selling_asset_issuer=" + usdcIssuer +

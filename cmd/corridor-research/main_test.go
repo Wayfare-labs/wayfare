@@ -63,6 +63,30 @@ func newTestServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// redirectTransport sends every request to the test server whatever host it
+// names. The recorded account declares a real home domain, and the resolver
+// builds an https URL from it, so without this the tests would reach the live
+// network.
+type redirectTransport struct {
+	host string
+	base http.RoundTripper
+}
+
+func (rt redirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r := req.Clone(req.Context())
+	r.URL.Scheme = "http"
+	r.URL.Host = rt.host
+	return rt.base.RoundTrip(r)
+}
+
+func testClient(t *testing.T, srv *httptest.Server) *http.Client {
+	t.Helper()
+	return &http.Client{Transport: redirectTransport{
+		host: strings.TrimPrefix(srv.URL, "http://"),
+		base: srv.Client().Transport,
+	}}
+}
+
 func readTestdata(t *testing.T, name string) []byte {
 	t.Helper()
 	path := filepath.Join("testdata", name)
@@ -81,7 +105,7 @@ func TestProbeUsesRecordedResponses(t *testing.T) {
 		code   = "NGNC"
 		issuer = "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
 	)
-	r := probe(context.Background(), code, issuer, srv.URL, srv.Client())
+	r := probe(context.Background(), code, issuer, srv.URL, testClient(t, srv))
 
 	if r.AccountErr != nil {
 		t.Fatalf("unexpected AccountErr: %v", r.AccountErr)
@@ -137,7 +161,7 @@ func TestProbeOutputContainsKeyFacts(t *testing.T) {
 		code   = "NGNC"
 		issuer = "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
 	)
-	r := probe(context.Background(), code, issuer, srv.URL, srv.Client())
+	r := probe(context.Background(), code, issuer, srv.URL, testClient(t, srv))
 	// Repoint the stellar.toml URLs to the test server so printTemplate can
 	// resolve them.  The home_domain is taken from the recorded account
 	// response, which names "ngnc.online"; override it so the template prints
@@ -205,7 +229,7 @@ func TestProbeNoHomeDomain(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	r := probe(context.Background(), "NGNC", "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
-		srv.URL, srv.Client())
+		srv.URL, testClient(t, srv))
 
 	if r.Account == nil {
 		t.Fatal("Account should not be nil even with empty home_domain")
@@ -241,7 +265,7 @@ func TestProbeAccountError(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	r := probe(context.Background(), "NGNC", "GNOPE",
-		srv.URL, srv.Client())
+		srv.URL, testClient(t, srv))
 
 	if r.AccountErr == nil {
 		t.Error("expected AccountErr for 404 response")
@@ -280,7 +304,7 @@ func TestProbePathsNOMarket(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	r := probe(context.Background(), "NGNC", "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
-		srv.URL, srv.Client())
+		srv.URL, testClient(t, srv))
 
 	for i, pp := range r.Paths {
 		if pp.Err != nil {
@@ -300,4 +324,3 @@ func TestProbePathsNOMarket(t *testing.T) {
 		t.Error("output should label zero-path response as NO-MARKET")
 	}
 }
-
