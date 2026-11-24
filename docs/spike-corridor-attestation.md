@@ -360,5 +360,5 @@ claims and no publisher trust model.
 - `checks/wire.go` — tri-state check/metric wire format
 - [spike-alerting-semantics.md](spike-alerting-semantics.md) — alerting on transitions, not single runs
 - [spike-second-maintainer-verification.md](spike-second-maintainer-verification.md) — what is reproducible without trust
-- [spike-the-publisher-trust-tradeoff.md](spike-the-publisher-trust-tradeoff.md) — #212, the sibling spike
+- [spike-publisher-trust-tradeoff.md](spike-publisher-trust-tradeoff.md) — #212, the sibling spike
 - [docs/backlog.md](backlog.md#151) — initiative E4, this issue's context
