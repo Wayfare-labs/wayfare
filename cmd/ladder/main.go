@@ -84,7 +84,9 @@ func main() {
 		jsonOut = flag.Bool("json", false, "emit JSON on stdout instead of the text table")
 		record  = flag.String("record", "",
 			"record upstream responses as a snapshot in a new directory under this parent")
-		refName    = flag.String("ref", defaultRefProvider, refHelp())
+		refName   = flag.String("ref", defaultRefProvider, refHelp())
+		refMaxAge = flag.Duration("ref-max-age", refrate.DefaultMaxAge,
+			"maximum allowed age of a reference rate (default: 72h)")
 		allowDirty = flag.Bool("allow-dirty", false,
 			"record even though the working tree is modified, marking the manifest dirty")
 		checksFlag = flag.Bool("checks", true,
@@ -105,6 +107,10 @@ func main() {
 	if *version {
 		printVersion(os.Stdout, progName)
 		return
+	}
+	if *refMaxAge <= 0 {
+		fmt.Fprintln(os.Stderr, "-ref-max-age must be positive")
+		os.Exit(2)
 	}
 
 	run, err := resolveDirection(*from, *to)
@@ -164,7 +170,7 @@ func main() {
 
 	eng := &route.Engine{
 		DEX:     dexClient,
-		RefRate: &refrate.Checked{Inner: refProvider},
+		RefRate: checkedReferenceProvider(refProvider, *refMaxAge),
 		// Records the ledger range the ladder's rungs were priced across.
 		Ledgers: dexClient,
 	}
@@ -254,6 +260,10 @@ func main() {
 	if !result.Viable() {
 		os.Exit(1)
 	}
+}
+
+func checkedReferenceProvider(provider refrate.Provider, maxAge time.Duration) refrate.Provider {
+	return &refrate.Checked{Inner: provider, MaxAge: maxAge}
 }
 
 // corridorCodes returns the destination asset codes of all registered corridors
