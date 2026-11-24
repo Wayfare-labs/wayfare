@@ -26,3 +26,4 @@ Each ADR follows a lightweight format:
 | [007](007-why-the-committed-chain-is-a-rolling-window.md) | Why the committed chain is a rolling window | Accepted |
 | [008](008-why-measurements-stay-on-main.md) | Why measurements stay on main | Accepted |
 | [009](009-why-the-health-score-stays-off-the-wire.md) | Why the health score stays off the wire | Accepted |
+| [010](010-why-pathfinder-defers-horizon-replacement.md) | Keep Horizon behind a Pathfinder seam until a trigger appears | Accepted |

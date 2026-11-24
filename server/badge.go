@@ -1,4 +1,3 @@
-// Package badge serves embeddable SVG status badges for corridors.
 package server
 
 import (
