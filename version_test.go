@@ -1,6 +1,7 @@
 package wayfare
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -139,7 +140,7 @@ func TestVersionFlagNeedsNoDataDirectoryOrPort(t *testing.T) {
 
 	bin := buildBinary(t, "./cmd/wayfared", "wayfared", nil)
 
-	cmd := exec.Command(bin, "-version", "-data", filepath.Join(t.TempDir(), "does", "not", "exist"))
+	cmd := exec.CommandContext(context.Background(), bin, "-version", "-data", filepath.Join(t.TempDir(), "does", "not", "exist"))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("-version with an unavailable data dir failed: %v\n%s", err, out)
@@ -175,7 +176,7 @@ func TestMakeBuildStampedProducesAStampedBinary(t *testing.T) {
 	// into the developer's tree. -e makes the override win over the makefile's
 	// own `BIN := bin` assignment.
 	outDir := t.TempDir()
-	build := exec.Command("make", "-e", "BIN="+outDir, "build-stamped")
+	build := exec.CommandContext(context.Background(), "make", "-e", "BIN="+outDir, "build-stamped")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("make build-stamped failed: %v\n%s", err, output)
 	}
@@ -213,7 +214,7 @@ func TestMakeBuildStampedProducesAStampedBinary(t *testing.T) {
 func gitOutput(t *testing.T, args ...string) string {
 	t.Helper()
 
-	out, err := exec.Command("git", args...).Output()
+	out, err := exec.CommandContext(context.Background(), "git", args...).Output()
 	if err != nil {
 		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
 	}
@@ -225,7 +226,7 @@ func gitOutput(t *testing.T, args ...string) string {
 func mustOutput(t *testing.T, name string, args ...string) string {
 	t.Helper()
 
-	out, err := exec.Command(name, args...).Output()
+	out, err := exec.CommandContext(context.Background(), name, args...).Output()
 	if err != nil {
 		t.Fatalf("%s %s failed: %v", name, strings.Join(args, " "), err)
 	}
@@ -261,7 +262,7 @@ func buildBinary(t *testing.T, pkg, exe string, stamps map[string]string) string
 	out := filepath.Join(t.TempDir(), exe)
 	args = append(args, "-o", out, pkg)
 
-	cmd := exec.Command("go", args...)
+	cmd := exec.CommandContext(context.Background(), "go", args...)
 	if buildOutput, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("building %s: %v\n%s", pkg, err, buildOutput)
 	}

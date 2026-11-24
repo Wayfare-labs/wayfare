@@ -106,7 +106,7 @@ func TestTransportClassifiesEveryExchangeShape(t *testing.T) {
 				client.Timeout = tc.timeout
 			}
 
-			req, err := http.NewRequest(http.MethodGet, url, nil)
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 			if err != nil {
 				t.Fatalf("building request: %v", err)
 			}
@@ -160,7 +160,11 @@ func TestTransportLeavesTheExchangeAlone(t *testing.T) {
 	collector := metrics.New()
 	client := &http.Client{Transport: metrics.NewTransport(metrics.UpstreamHorizon, collector, nil)}
 
-	resp, err := client.Get(srv.URL)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -224,7 +228,11 @@ func TestTransportCountsEachRedirectHop(t *testing.T) {
 
 	collector := metrics.New()
 	client := &http.Client{Transport: metrics.NewTransport(metrics.UpstreamHorizon, collector, nil)}
-	resp, err := client.Get(srv.URL + "/start")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/start", nil)
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -252,7 +260,11 @@ func TestTransportWithoutCollectorIsAPassThrough(t *testing.T) {
 	tr := &metrics.Transport{Upstream: metrics.UpstreamHorizon}
 	client := &http.Client{Transport: tr}
 
-	resp, err := client.Get(srv.URL)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -285,7 +297,12 @@ func TestTransportIsSafeUnderConcurrentLadders(t *testing.T) {
 	for i := 0; i < requests; i++ {
 		go func() {
 			defer wg.Done()
-			resp, err := client.Get(srv.URL)
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+			if err != nil {
+				t.Errorf("building request: %v", err)
+				return
+			}
+			resp, err := client.Do(req)
 			if err != nil {
 				t.Errorf("GET: %v", err)
 				return
@@ -313,7 +330,11 @@ func TestUpstreamNamesAreTheWiredOnes(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	client := &http.Client{Transport: tr}
-	resp, err := client.Get(srv.URL)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -338,7 +359,7 @@ func (f failingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) { 
 
 func mustGet(t *testing.T, url string) *http.Request {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatalf("building request: %v", err)
 	}

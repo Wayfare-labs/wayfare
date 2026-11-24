@@ -172,7 +172,11 @@ func TestWithoutAPinThePrimaryAloneAnswers(t *testing.T) {
 
 	client := &http.Client{Transport: mustTransport(t, primary.URL, secondary.URL, nil)}
 
-	resp, err := client.Get(primary.URL)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, primary.URL, nil)
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -617,7 +621,7 @@ func TestRequestBodyIsNotReissued(t *testing.T) {
 
 	client := &http.Client{Transport: mustTransport(t, primary.URL, secondary.URL, nil)}
 	ctx, pin := failover.WithPin(context.Background())
-	req, err := http.NewRequest(http.MethodPost, primary.URL, strings.NewReader("a body"))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, primary.URL, strings.NewReader("a body"))
 	if err != nil {
 		t.Fatalf("building request: %v", err)
 	}
@@ -651,7 +655,7 @@ func TestRequestIsNotModified(t *testing.T) {
 
 	tr := mustTransport(t, primary.URL, secondary.URL, nil)
 	ctx, _ := failover.WithPin(context.Background())
-	req, err := http.NewRequest(http.MethodGet, primary.URL+"/paths/strict-send?destination_asset=NGNC", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, primary.URL+"/paths/strict-send?destination_asset=NGNC", nil)
 	if err != nil {
 		t.Fatalf("building request: %v", err)
 	}
@@ -691,7 +695,7 @@ func TestQueryAndHostReachTheFailoverHost(t *testing.T) {
 
 	client := &http.Client{Transport: mustTransport(t, primary.URL, secondary.URL, nil)}
 	ctx, _ := failover.WithPin(context.Background())
-	req, err := http.NewRequest(http.MethodGet,
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
 		primary.URL+"/paths/strict-send?destination_asset=NGNC%3Aissuer&source_amount=100", nil)
 	if err != nil {
 		t.Fatalf("building request: %v", err)
@@ -734,7 +738,7 @@ func TestUsesTheBaseTransportItWasGiven(t *testing.T) {
 	}
 
 	ctx, pin := failover.WithPin(context.Background())
-	req, err := http.NewRequest(http.MethodGet, "https://primary.example/order_book", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://primary.example/order_book", nil)
 	if err != nil {
 		t.Fatalf("building request: %v", err)
 	}
@@ -1047,7 +1051,7 @@ func mustTransport(t *testing.T, primary, secondary string, tweak func(*failover
 
 func mustGet(t *testing.T, url string, ctx context.Context) *http.Request {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatalf("building request: %v", err)
 	}
@@ -1064,7 +1068,7 @@ func get(t *testing.T, client *http.Client, ctx context.Context, url string) str
 }
 
 func tryGet(client *http.Client, ctx context.Context, url string) (string, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
