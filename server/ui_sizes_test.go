@@ -1,6 +1,7 @@
 package server
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -28,6 +29,12 @@ func TestUISizesControlExists(t *testing.T) {
 	if !strings.Contains(page, `input id="sizes"`) {
 		t.Error(`no <input id="sizes">; the reader cannot choose a transfer size`)
 	}
+	if got := strings.Count(page, `id="sizes"`); got != 1 {
+		t.Errorf(`id="sizes" occurs %d times, want exactly once`, got)
+	}
+	if got := strings.Count(page, `id="sizes-help"`); got != 1 {
+		t.Errorf(`id="sizes-help" occurs %d times, want exactly once`, got)
+	}
 	if !strings.Contains(page, `<label for="sizes">`) {
 		t.Error(`no <label for="sizes">; the control must be labelled, not colour- or placeholder-only`)
 	}
@@ -46,17 +53,32 @@ func TestUISizesControlExists(t *testing.T) {
 func TestUIMeasureSendsSizes(t *testing.T) {
 	page := uiHTML(t)
 
-	if !strings.Contains(page, "q.set('sizes', sizesRaw)") {
-		t.Error("measure() never sets sizes on the request; the ladder stays fixed at the default")
+	if !strings.Contains(page, "function parseSizesInput(raw)") {
+		t.Error("measurement sizes are not parsed and validated before use")
 	}
-	if !strings.Contains(page, "if (sizesRaw !== '') q.set('sizes', sizesRaw);") {
+	if !strings.Contains(page, "if (sizes.norm !== '') q.set('sizes', sizes.norm);") {
 		t.Error("empty input must send no sizes parameter, not an empty one")
 	}
 	// The fetch itself must go through the params object, so the sizes value
 	// cannot drift out of the URL the server actually receives.
 	if !strings.Contains(page, "const q = new URLSearchParams({ to })") ||
-		!strings.Contains(page, "fetch(`/api/corridor?${q}&live=1`)") {
+		!strings.Contains(page, "fetch(`/api/corridor?${q}&live=1`)") ||
+		!strings.Contains(page, "const sizes = parseSizesInput(sizesRaw)") {
 		t.Error("measure() does not build its query from URLSearchParams; sizes would not reach /api/corridor")
+	}
+}
+
+func TestUIUniqueIDAttributes(t *testing.T) {
+	page := uiHTML(t)
+	markup := regexp.MustCompile(`(?s)<script\b[^>]*>.*?</script>`).ReplaceAllString(page, "")
+	ids := regexp.MustCompile(`\bid="([^"]+)"`).FindAllStringSubmatch(markup, -1)
+	seen := make(map[string]bool, len(ids))
+	for _, match := range ids {
+		id := match[1]
+		if seen[id] {
+			t.Errorf("static markup repeats id=%q", id)
+		}
+		seen[id] = true
 	}
 }
 
@@ -75,7 +97,7 @@ func TestUIMirrorsParseSizesContract(t *testing.T) {
 	}
 	for _, want := range []string{
 		"function sizesValidation",              // the one validator
-		"is not a number",                       // non-numeric parts are named, not swallowed
+		"is not a decimal number",               // non-decimal parts are named, not swallowed
 		"Every size must be a positive amount.", // zero and negatives are refused
 		"At most ${MAX_SIZES} sizes can be measured in one request.",
 	} {
@@ -88,7 +110,7 @@ func TestUIMirrorsParseSizesContract(t *testing.T) {
 	if !strings.Contains(page, "sizesInput.setAttribute('aria-invalid', 'true')") {
 		t.Error("invalid sizes are not marked aria-invalid; the failure would rely on colour alone")
 	}
-	if idxValidation := strings.Index(page, "sizesValidation(sizesRaw)"); idxValidation >= 0 {
+	if idxValidation := strings.Index(page, "const sizes = parseSizesInput(sizesRaw)"); idxValidation >= 0 {
 		if idxFetch := strings.Index(page, "fetch(`/api/corridor?${q}&live=1`)"); idxFetch >= 0 && idxValidation > idxFetch {
 			t.Error("sizes are validated after the request is built; an invalid input could still be sent")
 		}
