@@ -1,4 +1,3 @@
-// Package route ranks the ways money can travel a corridor, and says plainly
 // when none of them are worth taking.
 //
 // # Why a verdict, and not just a ranking
@@ -381,6 +380,18 @@ type Engine struct {
 
 	// ProbeAmount sizes the slippage probe. Defaults to 10 send units.
 	ProbeAmount decimal.Decimal
+
+	// Ledgers reports the chain head, so a ladder can record the ledger range
+	// its rungs were priced across. It is deliberately not part of
+	// Pathfinder: it is never a pricing input. Nil leaves every rung's ledger
+	// unknown and the ladder's range absent.
+	Ledgers LedgerSource
+}
+
+// LedgerSource reports the ledger sequence the network has reached.
+// *dex.Client satisfies it through its Horizon-root ChainHead lookup.
+type LedgerSource interface {
+	ChainHead(ctx context.Context) (int64, error)
 }
 
 // Quote prices every available route for the request and ranks them.
@@ -403,6 +414,19 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	return e.quoteWith(ctx, req, ref, e.parallelAgainst(ctx, ref))
+}
+
+// quoteWith prices one request against a reference snapshot already fetched
+// by its caller. Ladder uses this seam so every rung and its summary share the
+// same official and parallel observations.
+func (e *Engine) quoteWith(ctx context.Context, req Request, ref refrate.Rate, parallel *refrate.Parallel) (*Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if req.SendAmount.IsZero() || req.SendAmount.IsNegative() {
+		return nil, fmt.Errorf("route: send amount must be positive, got %s", req.SendAmount)
+	}
 
 	// A benchmark the providers cannot agree on is not a benchmark. Scoring
 	// against either mid would produce a loss figure whose value depends on
@@ -410,7 +434,7 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 	// so the corridor is reported with no verdict and the reason attached,
 	// rather than with a number that looks like a measurement.
 	if !ref.Scorable() {
-		return e.unscored(ctx, req, ref)
+		return e.unscored(ctx, req, ref, parallel)
 	}
 
 	res := &Result{
@@ -420,10 +444,7 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 		ReferenceAsOf:   ref.AsOf,
 		Reference:       ref,
 	}
-	if e.Parallel != nil {
-		p := refrate.ParallelAgainst(ctx, e.Parallel, ref)
-		res.Parallel = &p
-	}
+	res.Parallel = parallel
 
 	if e.DEX != nil {
 		d, err := e.quoteDEX(ctx, req, ref)
@@ -488,13 +509,24 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 	return res, nil
 }
 
+// parallelAgainst fetches the optional parallel reference exactly once for a
+// quote or ladder. A failed parallel provider is represented in the result,
+// never promoted into a failure of the official measurement.
+func (e *Engine) parallelAgainst(ctx context.Context, ref refrate.Rate) *refrate.Parallel {
+	if e.Parallel == nil {
+		return nil
+	}
+	p := refrate.ParallelAgainst(ctx, e.Parallel, ref)
+	return &p
+}
+
 // unscored reports a corridor whose benchmark could not be trusted.
 //
 // The routes are still discovered and their structure still classified — that
 // part does not depend on the reference rate, and integrity is exactly the
 // thing worth reporting when pricing cannot be. What is withheld is every
 // verdict, the loss figures, and any recommendation.
-func (e *Engine) unscored(ctx context.Context, req Request, ref refrate.Rate) (*Result, error) {
+func (e *Engine) unscored(ctx context.Context, req Request, ref refrate.Rate, parallel *refrate.Parallel) (*Result, error) {
 	res := &Result{
 		Request:         req,
 		ReferenceMid:    ref.Mid,
@@ -502,10 +534,7 @@ func (e *Engine) unscored(ctx context.Context, req Request, ref refrate.Rate) (*
 		ReferenceAsOf:   ref.AsOf,
 		Reference:       ref,
 	}
-	if e.Parallel != nil {
-		p := refrate.ParallelAgainst(ctx, e.Parallel, ref)
-		res.Parallel = &p
-	}
+	res.Parallel = parallel
 
 	if e.DEX != nil {
 		if d, err := e.quoteDEX(ctx, req, ref); err == nil {
