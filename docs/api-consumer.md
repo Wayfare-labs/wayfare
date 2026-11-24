@@ -236,8 +236,8 @@ version of this section.
   because `If-None-Match` is not a safelisted request header. A page that sends
   it triggers a preflight, and the preflight must be allowed to name it.
 - **The `ETag` is readable only because it is exposed.** A cross-origin fetch
-  hides every response header the server has not named in
-  `Access-Control-Expose-Headers`. The API names `ETag` and nothing else. If
+  hides every non-safelisted response header the server has not named in
+  `Access-Control-Expose-Headers`, and `ETag` is not safelisted. The API names `ETag` and nothing else. If
   that header were removed, `response.headers.get("ETag")` in a browser would
   return `null` while a `curl` would still show the tag — the page would
   quietly stop revalidating, and every read would download the body again.

@@ -135,8 +135,10 @@ function render(body, note) {
       rung.send_amount,
       rung.priced ? rung.quote.receive_amount : "not priced",
       rung.priced ? rung.quote.effective_rate : "—",
-      rung.priced && rung.quote.loss_pct !== undefined ? rung.quote.loss_pct : "—",
-      rung.priced ? rung.quote.verdict : "—",
+      // An unscored corridor has no trustworthy benchmark, so neither its loss
+      // nor its verdict is shown.
+      body.scored !== true ? "unscored" : rung.priced && rung.quote.loss_pct !== undefined ? rung.quote.loss_pct : "—",
+      body.scored !== true ? "unscored" : rung.priced ? rung.quote.verdict : "—",
     ];
     for (const value of cells) {
       const td = document.createElement("td");
@@ -158,6 +160,8 @@ async function readCorridor() {
   const status = $("status");
   status.className = "";
   status.textContent = "Reading " + url + " …";
+  // A failed read must not leave the previous figures on screen.
+  $("out").hidden = true;
 
   let response;
   try {
@@ -180,7 +184,7 @@ async function readCorridor() {
   if (!response.ok) {
     // An error body is not a measurement: no figure is rendered from it.
     let detail = "";
-    try { detail = JSON.stringify(await response.json()); } catch (_) { detail = await response.text(); }
+    try { detail = await response.text(); } catch (err) { detail = "unreadable body: " + err; }
     status.className = "bad";
     status.textContent = "HTTP " + response.status + " — " + detail;
     return;

@@ -89,6 +89,10 @@ func actualImportGraph(t *testing.T) map[string][]string {
 			if uerr != nil {
 				return uerr
 			}
+			if imported == modulePath {
+				graph[pkg] = append(graph[pkg], ".")
+				continue
+			}
 			if !strings.HasPrefix(imported, modulePath+"/") {
 				continue
 			}
@@ -205,6 +209,12 @@ func TestPackageImportGraph(t *testing.T) {
 		}
 		if _, ok := allowed[pkg]; !ok {
 			t.Errorf("package %q is not in the dependency graph in %s; add a row for it there, and to nothing else", pkg, adr005)
+		}
+	}
+
+	for pkg := range allowed {
+		if _, ok := actual[pkg]; !ok {
+			t.Errorf("%s declares package %q, which does not exist; remove its row", adr005, pkg)
 		}
 	}
 
