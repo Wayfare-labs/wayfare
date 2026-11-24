@@ -14,6 +14,8 @@
 //
 //	go run ./cmd/ladder -record testdata/snapshots   # also keep the bytes
 //
+//	go run ./cmd/ladder -version                     # which build produced this
+//
 // Recording is opt-in and writes the verbatim upstream responses to a new
 // directory under the given parent, named by the convention in
 // docs/snapshot-format.md.
@@ -35,6 +37,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/buildinfo"
 	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
@@ -81,15 +84,31 @@ func main() {
 		jsonOut = flag.Bool("json", false, "emit JSON on stdout instead of the text table")
 		record  = flag.String("record", "",
 			"record upstream responses as a snapshot in a new directory under this parent")
-		refName    = flag.String("ref", defaultRefProvider, refHelp())
+		refName   = flag.String("ref", defaultRefProvider, refHelp())
+		refMaxAge = flag.Duration("ref-max-age", refrate.DefaultMaxAge,
+			"maximum allowed age of a reference rate (default: 72h)")
 		allowDirty = flag.Bool("allow-dirty", false,
 			"record even though the working tree is modified, marking the manifest dirty")
 		checksFlag = flag.Bool("checks", true,
 			"run counterparty checks (anchor toml, SEP-10/SEP-24, issuer flags) and "+
 				"attach the findings; set false to skip them (the JSON document then "+
 				"carries no findings block)")
+		version = flag.Bool("version", false,
+			"print the build provenance (code commit, embedded data commit, Go version) and exit")
 	)
 	flag.Parse()
+
+	// Version answers with no upstream call and no run store, so it works on a
+	// machine with no network and in a checkout with no data/ — the two places
+	// an operator most needs to know which binary they are holding.
+	if *version {
+		printVersion(os.Stdout, progName)
+		return
+	}
+	if *refMaxAge <= 0 {
+		fmt.Fprintln(os.Stderr, "-ref-max-age must be positive")
+		os.Exit(2)
+	}
 
 	run, err := resolveDirection(*from, *to)
 	if err != nil {
@@ -148,7 +167,7 @@ func main() {
 
 	eng := &route.Engine{
 		DEX:     dexClient,
-		RefRate: &refrate.Checked{Inner: refProvider},
+		RefRate: checkedReferenceProvider(refProvider, *refMaxAge),
 		// Records the ledger range the ladder's rungs were priced across.
 		Ledgers: dexClient,
 	}
@@ -237,6 +256,10 @@ func main() {
 	if !result.Viable() {
 		os.Exit(1)
 	}
+}
+
+func checkedReferenceProvider(provider refrate.Provider, maxAge time.Duration) refrate.Provider {
+	return &refrate.Checked{Inner: provider, MaxAge: maxAge}
 }
 
 // corridorCodes returns the destination asset codes of all registered corridors
@@ -397,6 +420,17 @@ func sizeStrings(sizes []decimal.Decimal) []string {
 		out[i] = s.String()
 	}
 	return out
+}
+
+// progName labels the -version line with the binary that printed it. It is a
+// constant rather than os.Args[0] because a renamed or vendored copy should not
+// print a name a reader cannot match to a release.
+const progName = "ladder"
+
+// printVersion writes the one-line build provenance (issue #707). It takes the
+// writer so the line is checkable without running main.
+func printVersion(w io.Writer, prog string) {
+	fmt.Fprintln(w, buildinfo.Get().Line(prog))
 }
 
 // gitRevision records which build captured a snapshot, so a fixture that

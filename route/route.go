@@ -407,12 +407,25 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 		return nil, fmt.Errorf("route: send amount must be positive, got %s", req.SendAmount)
 	}
 
-	ref, err := e.reference(ctx, req)
+	ref, err := e.reference(ctx, req.ReferenceBase, req.ReferenceQuote)
 	if err != nil {
 		return nil, fmt.Errorf("route: reference rate unavailable: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	return e.quoteWith(ctx, req, ref, e.parallelAgainst(ctx, ref))
+}
+
+// quoteWith prices one request against a reference snapshot already fetched
+// by its caller. Ladder uses this seam so every rung and its summary share the
+// same official and parallel observations.
+func (e *Engine) quoteWith(ctx context.Context, req Request, ref refrate.Rate, parallel *refrate.Parallel) (*Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if req.SendAmount.IsZero() || req.SendAmount.IsNegative() {
+		return nil, fmt.Errorf("route: send amount must be positive, got %s", req.SendAmount)
 	}
 
 	// A benchmark the providers cannot agree on is not a benchmark. Scoring
@@ -421,7 +434,7 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 	// so the corridor is reported with no verdict and the reason attached,
 	// rather than with a number that looks like a measurement.
 	if !ref.Scorable() {
-		return e.unscored(ctx, req, ref)
+		return e.unscored(ctx, req, ref, parallel)
 	}
 
 	res := &Result{
@@ -431,12 +444,7 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 		ReferenceAsOf:   ref.AsOf,
 		Reference:       ref,
 	}
-	// A parallel market for a currency against itself does not exist, so the
-	// dimension is left off rather than reported as a failed lookup.
-	if e.Parallel != nil && !ref.Definitional() {
-		p := refrate.ParallelAgainst(ctx, e.Parallel, ref)
-		res.Parallel = &p
-	}
+	res.Parallel = parallel
 
 	if e.DEX != nil {
 		d, err := e.quoteDEX(ctx, req, ref)
@@ -510,11 +518,24 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 // such a corridor is therefore deviation from par. Every other pair goes to
 // the configured provider exactly as before. The decision and the rejected
 // alternatives are recorded in docs/adr-same-peg-corridors.md.
-func (e *Engine) reference(ctx context.Context, req Request) (refrate.Rate, error) {
-	if refrate.SamePeg(req.ReferenceBase, req.ReferenceQuote) {
-		return refrate.Identity(req.ReferenceBase, req.ReferenceQuote)
+func (e *Engine) reference(ctx context.Context, base, quote string) (refrate.Rate, error) {
+	if refrate.SamePeg(base, quote) {
+		return refrate.Identity(base, quote)
 	}
-	return e.RefRate.Rate(ctx, req.ReferenceBase, req.ReferenceQuote)
+	return e.RefRate.Rate(ctx, base, quote)
+}
+
+// parallelAgainst fetches the optional parallel reference exactly once for a
+// quote or ladder. A failed parallel provider is represented in the result,
+// never promoted into a failure of the official measurement.
+func (e *Engine) parallelAgainst(ctx context.Context, ref refrate.Rate) *refrate.Parallel {
+	// A parallel market for a currency against itself does not exist, so the
+	// dimension is left off rather than reported as a failed lookup.
+	if e.Parallel == nil || ref.Definitional() {
+		return nil
+	}
+	p := refrate.ParallelAgainst(ctx, e.Parallel, ref)
+	return &p
 }
 
 // unscored reports a corridor whose benchmark could not be trusted.
@@ -523,7 +544,7 @@ func (e *Engine) reference(ctx context.Context, req Request) (refrate.Rate, erro
 // part does not depend on the reference rate, and integrity is exactly the
 // thing worth reporting when pricing cannot be. What is withheld is every
 // verdict, the loss figures, and any recommendation.
-func (e *Engine) unscored(ctx context.Context, req Request, ref refrate.Rate) (*Result, error) {
+func (e *Engine) unscored(ctx context.Context, req Request, ref refrate.Rate, parallel *refrate.Parallel) (*Result, error) {
 	res := &Result{
 		Request:         req,
 		ReferenceMid:    ref.Mid,
@@ -531,10 +552,7 @@ func (e *Engine) unscored(ctx context.Context, req Request, ref refrate.Rate) (*
 		ReferenceAsOf:   ref.AsOf,
 		Reference:       ref,
 	}
-	if e.Parallel != nil {
-		p := refrate.ParallelAgainst(ctx, e.Parallel, ref)
-		res.Parallel = &p
-	}
+	res.Parallel = parallel
 
 	if e.DEX != nil {
 		if d, err := e.quoteDEX(ctx, req, ref); err == nil {

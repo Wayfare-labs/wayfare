@@ -3,7 +3,7 @@
 **Status:** implemented API contracts, including `GET /api/chain-heads` added
 2026-09-26. This document does not describe roadmap capabilities.
 
-All endpoints are read-only. The service does not hold funds, issue tokens, sign transactions, or execute payments.
+All endpoints are read-only. The service does not hold funds, issue tokens, sign transactions, or execute payments. The machine-readable OpenAPI 3.0 contract is defined in [`openapi.yaml`](../openapi.yaml).
 
 ## Endpoints
 
@@ -16,6 +16,7 @@ All endpoints are read-only. The service does not hold funds, issue tokens, sign
 | `GET` | `/api/market-structure` | Identify shared issuer dependencies across corridors |
 | `GET` | `/api/thresholds` | Publish verdict and divergence band thresholds from code constants |
 | `GET` | `/healthz` | Return service health |
+| `GET` | `/metrics` | Serve this process's operational counters |
 | `GET` | `/readyz` | Return whether traffic should be routed to this process |
 | `GET` | `/` | Serve the embedded single-file UI |
 
@@ -366,6 +367,14 @@ The trend endpoint's own derived statistics are the exception, and they are all 
 | `divergence_stats.stddev_pct` | exactly 4 | half away from zero |
 | `divergence_stats.trend_magnitude_pct` | exactly 4 | half away from zero |
 
+`divergence_stats.trend_magnitude_pct` is percentage points per day. Its
+signed counterpart is not returned by this endpoint; `trend_direction` names
+whether divergence is improving, stable, or worsening. The statistics also
+include `first_at` and `last_at` when at least one divergence-bearing run was
+recorded; these RFC 3339 timestamps define the covered span. The trend is an
+OLS regression on elapsed time from `first_at`, not on observation index, so
+gaps between recorded runs affect the slope according to their actual length.
+
 ## `GET /api/corridor/trend`
 
 Query parameters:
@@ -631,7 +640,13 @@ empty string. Together they answer "is the deploy stale or the pipeline
 dead?": if `data_commit` stops advancing while `code_commit` keeps moving, the
 measurement pipeline is not landing new history.
 
+The same pair is on the command line: `wayfared -version` and `ladder -version`
+print it, each value labelled with the source that supplied it, because a
+reader reproducing a published figure often has the binary and not the deploy.
+An unstamped build says `unknown (unstamped)` there rather than falling back to
+the checkout's revision for `data_commit`, which the toolchain cannot know.
 This endpoint checks that the HTTP service is responding. It does not perform a live corridor measurement or validate upstream availability, and it does not report whether the history being served was verified: a process serving a chain that failed verification at startup still answers `200` here, because the process is up. That is what [`GET /readyz`](#get-readyz) is for.
+This endpoint checks that the HTTP service is responding. It does not perform a live corridor measurement or validate upstream availability.
 
 ### Freshness fields
 
@@ -651,6 +666,235 @@ while `chain_head` is still reported. A `200` with nulls means the check could
 not be made, not that data is absent. The freshness block does not change the
 endpoint's health verdict: it remains `200` as long as the HTTP service is
 answering.
+
+## `GET /metrics`
+
+Prometheus text exposition (format 0.0.4) of what the process did while nobody
+was reading its log: how each corridor sweep ended, how each upstream exchange
+failed, how long a live measurement took, and how many requests the rate limiter
+refused. The log answers "what happened at 04:12?"; these series answer "how
+often in the last hour?", and the second question is the one an alert has to be
+built from. Nothing here is a second source of truth about a corridor — no
+verdict, no price, no health claim — so a deployment probe still uses
+[`GET /healthz`](#get-healthz).
+
+The exposition is written by hand rather than through a client library: the
+project runs two direct dependencies (`deps_test.go` enforces it) and the format
+is line-oriented plain text. Families are emitted in name order and each
+family's label sets are sorted, so two scrapes of a process that observed nothing
+new are byte-identical.
+
+**cURL:**
+```bash
+curl -s https://wayfare-cdb9.onrender.com/metrics
+```
+
+**Example Response (200 OK):**
+
+```text
+# HELP wayfare_live_request_duration_seconds Duration of a request that asked for a live corridor measurement, by the outcome it got. Requests served from history are not live and never appear.
+# TYPE wayfare_live_request_duration_seconds histogram
+wayfare_live_request_duration_seconds_bucket{le="0.25",outcome="measured"} 0
+wayfare_live_request_duration_seconds_bucket{le="0.5",outcome="measured"} 0
+wayfare_live_request_duration_seconds_bucket{le="1",outcome="measured"} 0
+wayfare_live_request_duration_seconds_bucket{le="2.5",outcome="measured"} 1
+wayfare_live_request_duration_seconds_bucket{le="5",outcome="measured"} 1
+wayfare_live_request_duration_seconds_bucket{le="10",outcome="measured"} 1
+wayfare_live_request_duration_seconds_bucket{le="20",outcome="measured"} 1
+wayfare_live_request_duration_seconds_bucket{le="40",outcome="measured"} 1
+wayfare_live_request_duration_seconds_bucket{le="60",outcome="measured"} 1
+wayfare_live_request_duration_seconds_bucket{le="90",outcome="measured"} 1
+wayfare_live_request_duration_seconds_bucket{le="+Inf",outcome="measured"} 1
+wayfare_live_request_duration_seconds_sum{outcome="measured"} 1.8
+wayfare_live_request_duration_seconds_count{outcome="measured"} 1
+# HELP wayfare_rate_limit_rejections_total Requests refused with HTTP 429 by this process's per-client rate limiter.
+# TYPE wayfare_rate_limit_rejections_total counter
+wayfare_rate_limit_rejections_total 2
+# HELP wayfare_sweep_outcomes_total Corridor measurements completed by the scheduler, by corridor and outcome. The three outcomes are mutually exclusive.
+# TYPE wayfare_sweep_outcomes_total counter
+wayfare_sweep_outcomes_total{corridor="USDC-KESC",outcome="failed"} 1
+wayfare_sweep_outcomes_total{corridor="USDC-NGNC",outcome="ok"} 1
+# HELP wayfare_upstream_errors_total Failed HTTP exchanges with an upstream, by upstream and how it failed. One per HTTP exchange, so a redirect chain counts once per hop.
+# TYPE wayfare_upstream_errors_total counter
+wayfare_upstream_errors_total{kind="server_error",upstream="horizon"} 1
+wayfare_upstream_errors_total{kind="timeout",upstream="horizon"} 1
+# HELP wayfare_upstream_request_duration_seconds Duration of one HTTP exchange with an upstream, including failures and every redirect hop. The _count sample is the number of exchanges.
+# TYPE wayfare_upstream_request_duration_seconds histogram
+wayfare_upstream_request_duration_seconds_bucket{le="0.05",upstream="horizon"} 0
+wayfare_upstream_request_duration_seconds_bucket{le="0.1",upstream="horizon"} 1
+wayfare_upstream_request_duration_seconds_bucket{le="0.25",upstream="horizon"} 1
+wayfare_upstream_request_duration_seconds_bucket{le="0.5",upstream="horizon"} 2
+wayfare_upstream_request_duration_seconds_bucket{le="1",upstream="horizon"} 2
+wayfare_upstream_request_duration_seconds_bucket{le="2.5",upstream="horizon"} 2
+wayfare_upstream_request_duration_seconds_bucket{le="5",upstream="horizon"} 2
+wayfare_upstream_request_duration_seconds_bucket{le="10",upstream="horizon"} 2
+wayfare_upstream_request_duration_seconds_bucket{le="20",upstream="horizon"} 3
+wayfare_upstream_request_duration_seconds_bucket{le="+Inf",upstream="horizon"} 3
+wayfare_upstream_request_duration_seconds_sum{upstream="horizon"} 20.505
+wayfare_upstream_request_duration_seconds_count{upstream="horizon"} 3
+```
+
+That example is a capture, not a transcription. They are the bytes the collector
+writes for a process that recorded one swept corridor stored successfully, one
+swept corridor that was not, three Horizon exchanges (410ms ending in a 5xx, 95ms
+successful, and one cut off at the client's 20-second timeout), one live
+measurement of 1.8s, and two refused requests. A test in `metrics` re-renders it
+from the fixture and fails if the document and the code stop agreeing.
+
+### Response shape
+
+| Header | Value | Why |
+|---|---|---|
+| `Content-Type` | `text/plain; version=0.0.4; charset=utf-8` | the version parameter is part of the format: a scraper that cannot parse the body must know which grammar it was served |
+| `X-Content-Type-Options` | `nosniff` | as on every other success path |
+| `Cache-Control` | `no-store` | counters are monotonic within a process, so a cached body is not merely stale but wrong: a scraper would read a plateau as "nothing is happening" on exactly the instance that stopped being scraped |
+
+`GET` and `HEAD` are the only accepted methods; any other method returns `405`
+with `code: "method_not_allowed"`. `HEAD` answers with the same status and headers
+and no body, so a monitor can check the endpoint is there without spending a
+measurement. A body larger than 512 bytes is gzipped when the client offers
+`Accept-Encoding`, and a gzipped response is chunked with `Content-Length`
+removed, which means `HEAD` and `GET` report different lengths for the same
+document unless compression is declined on both.
+
+A server built without a collector answers with all five families declared and
+nothing observed, rather than an error: a `404` would say the endpoint is absent,
+and the truthful answer here is that this process has recorded nothing.
+
+### Series
+
+| Series | Type | Labels | One observation is |
+|---|---|---|---|
+| `wayfare_sweep_outcomes_total` | counter | `corridor`, `outcome` | one corridor the scheduler finished, in one sweep |
+| `wayfare_upstream_errors_total` | counter | `upstream`, `kind` | one HTTP exchange with an upstream that failed |
+| `wayfare_upstream_request_duration_seconds` | histogram | `upstream` | one HTTP exchange with an upstream, successful or not |
+| `wayfare_live_request_duration_seconds` | histogram | `outcome` | one request that asked the engine for a live measurement |
+| `wayfare_rate_limit_rejections_total` | counter | none | one request this process refused with `429` |
+
+The rejection counter carries no label deliberately. The number an operator
+alerts on is "is the limit set too tight", which is a property of the service,
+and per-client counts would put request volume by identity into a document
+fetched without authentication.
+
+### Label values
+
+Every label value comes from code, never from a request: corridors from the
+binary's asset registry, upstreams from the clients wired in `cmd/wayfared`, and
+the vocabularies below from constants in package `metrics`. That is what bounds
+the exposition — no combination of query parameters can add a series, and an
+operator's `-horizon` override cannot publish an arbitrary host as a label.
+
+`outcome` on `wayfare_sweep_outcomes_total`. The three are mutually exclusive, so
+their sum is the number of corridor measurements attempted:
+
+| Value | Meaning |
+|---|---|
+| `outcome="ok"` | Measured and appended to the run store. An upstream that answered 5xx can still land here: the engine records what it could build and marks the integrity unknown, so a degraded run is still a run. That upstream shows in `wayfare_upstream_errors_total` instead. |
+| `outcome="failed"` | The measurement did not happen, so there was nothing to record. This is the upstream-or-engine failure an operator alerts on. |
+| `outcome="unrecorded"` | The measurement succeeded and the store refused the record. The history has a hole the corridor did not cause, which is why it is not folded into `outcome="failed"`: the remedy is disk and permissions, not upstream availability. |
+
+`corridor` — the swept pair spelled send-asset then receive-asset, as everywhere
+else in the API: `corridor="USDC-NGNC"`, `corridor="USDC-KESC"`, and so on for
+each corridor in `monitor.DefaultCorridors`. A corridor this process never swept
+is absent.
+
+`upstream` — which client made the exchange:
+
+| Value | Client |
+|---|---|
+| `upstream="horizon"` | the Stellar Horizon path and account queries, the one a measurement cannot happen without |
+| `upstream="refrate.exchangerate-api"` | the primary reference-rate feed |
+| `upstream="refrate.currency-api"` | the secondary feed that the divergence verdict is drawn against |
+| `upstream="refrate.floatrates"` | the third feed, fetched only to attribute a `DISAGREE`, so its series is absent from a process that never disagreed |
+| `upstream="checks"` | the counterparty-check client, which reaches Horizon and the anchor's own servers (stellar.toml, SEP-1/6/10/24/31 endpoints); no finer label because one client serves both and a check's findings already name what it probed |
+
+The first four are the pricing path. `checks` is the audit of the counterparty, so
+a rise in `kind="transport"` under `upstream="checks"` usually means an anchor's
+domain moved or went down rather than that the DEX did.
+
+`kind` on `wayfare_upstream_errors_total` — the HTTP-level shape of the failure:
+
+| Value | Meaning |
+|---|---|
+| `kind="rate_limited"` | HTTP 429: the request was well-formed and the quota was not. Transient, and the only kind whose remedy is to wait. |
+| `kind="client_error"` | any other 4xx. The upstream answered and refused this request specifically, which usually means the URL or the asset is wrong rather than the upstream being ill. |
+| `kind="server_error"` | any 5xx. The upstream is unhealthy and no client change fixes it. |
+| `kind="transport"` | no HTTP response at all: DNS failure, connection refused, TCP reset. |
+| `kind="timeout"` | the exchange was cut off by a deadline, either the client's own timeout or the request context's measurement budget. |
+
+`outcome` on `wayfare_live_request_duration_seconds` — how one request that asked
+for a measurement ended. It labels the histogram rather than sitting in a separate
+counter so that a 40s timeout and a 0.4s success do not share a bucket:
+
+| Value | Status | Meaning |
+|---|---|---|
+| `outcome="measured"` | `200` | the ladder priced and the body is that measurement. The duration includes the counterparty checks, because the reader waited through both. |
+| `outcome="stale"` | `200` | the measurement failed and the response is the most recent stored run inside a `stale` envelope. The reader got a number; it is not current. |
+| `outcome="timeout"` | `504` | the attempt ran out of the budget its rung count was given (10s plus 6s per rung, capped at `-timeout`) with no history to fall back on. |
+| `outcome="error"` | `502` | the measurement failed for another reason with no history behind it, so the body is an error envelope. A reader that hangs up mid-request lands here too: the client's cancellation is not an upstream timeout, and on a public endpoint the two have entirely different remedies. |
+
+A request answered before it reaches the engine is not a live request. A
+history-first read served from the store, a rejected query parameter and a
+refused request never appear in this histogram. On an instance started without
+`-history-first`, every `GET /api/corridor` is a live one.
+
+### Histogram boundaries
+
+`wayfare_upstream_request_duration_seconds` covers one HTTP exchange, so its top
+bucket sits at the longest timeout a client is given (20s for Horizon, 10s for a
+reference feed): `0.05`, `0.1`, `0.25`, `0.5`, `1`, `2.5`, `5`, `10`, `20`, then
+`+Inf`. A Horizon path search that takes 8s is normal; one that regularly takes
+18s is the story these buckets exist to tell.
+
+`wayfare_live_request_duration_seconds` covers a whole measurement — twelve rungs
+at the default sizes, up to the twenty-four `sizes=` accepts, plus the
+reference-rate fetch and the checks, all inside the request budget. Its top
+bucket is the 90s `-timeout` default, and the sub-second buckets exist because a
+corridor served over a warm connection is that fast: `0.25`, `0.5`, `1`, `2.5`,
+`5`, `10`, `20`, `40`, `60`, `90`, then `+Inf`.
+
+Both are cumulative, as the format requires, and `le="+Inf"` always equals
+`_count`. Durations are in seconds and `_sum` keeps the fraction the example needs:
+three Horizon exchanges of 410ms, 95ms and 20s sum to `20.505`.
+
+### What these numbers do not say
+
+- **They reset.** A counter is this process's total since it started, not the
+  deployment's. Alert on `rate()` over a window; the raw value makes every
+  restart look like a fall to zero.
+- **Absence is not zero.** A labelled series that has never been observed is
+  missing from the body, which is the same line this project draws between
+  unknown and nil. The one exception is `wayfare_rate_limit_rejections_total`,
+  which always prints, because an absent line there would be indistinguishable
+  from an endpoint that stopped working.
+- **A response that arrives and cannot be parsed is invisible here.** Counting
+  happens at the HTTP transport, the one layer where every exchange is visible
+  with its status and duration intact without touching the pricing path. A body
+  that decodes badly fails one layer up and reads as a clean `200` at the
+  transport, so it surfaces as `outcome="error"` on a live request whose rungs
+  never priced and as `outcome="failed"` in a sweep, and in the log — never as an
+  upstream error.
+- **Each redirect hop is its own exchange.** The histogram counts HTTP exchanges,
+  so a provider that answers 301 and then 200 contributes two observations, and a
+  failing hop contributes one `wayfare_upstream_errors_total`.
+- **The sweep series need a scheduler.** `-schedule=0` serves HTTP without
+  sweeping, and `-once` exits after its sweep without starting a listener, so
+  `wayfare_sweep_outcomes_total` only exists in the process that runs the monitor.
+- **A scrape costs a request.** `/metrics` passes through the same per-client
+  limiter as every other route (see [Rate limiting](#rate-limiting)), so a
+  scraper hitting a 4-request/second, burst-10 endpoint from one address will
+  eventually be refused, and the refusal is counted in
+  `wayfare_rate_limit_rejections_total`. Scrape no faster than the sweep
+  interval. With `-rate-limit=0` the limiter is still mounted and the counter
+  still prints, but nothing is refused, so a constant `0` there means the limit
+  is off rather than that it is never reached.
+
+### Not this endpoint
+
+`docs/metrics.md` and `docs/adding-a-metric.md` describe corridor metrics —
+spread, depth, price impact, concentration — which are measurements of a market
+and live in the API response and the run store. This endpoint is the operator's
+view of the process. They share a word and nothing else.
 
 ## `GET /readyz`
 

@@ -120,6 +120,14 @@ Validation Cloud's Stellar Horizon API, which documents
   lands, not *what* the code does.
 - **Verdict:** a stopgap, not a destination. Useful as redundancy; it does
   not answer the question "what happens when Horizon itself is gone".
+- **Built, as the stopgap it is** (#701): `-horizon-secondary` names a second
+  Horizon, used only when the first is unreachable or answers a 5xx, and held to
+  one host per ladder so a price curve never mixes two providers' books. The host
+  that answered is recorded in the snapshot
+  ([snapshot-format.md](snapshot-format.md#which-horizon-a-snapshot-came-from)).
+  The flag takes a bare origin and no key, so a per-request provider is reachable
+  only through whatever it serves without credentials. That keeps this deployment
+  secret-free, which is worth more here than the vendor list above.
 
 ### Option C — Third-party indexers (Stellar Expert, Hubble, etc.)
 

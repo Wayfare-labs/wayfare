@@ -41,6 +41,29 @@ corridor that was merely throttled must not read as one that is broken.
 When Horizon sends no usable `Retry-After`, the reported interval is zero:
 unknown, not guessed.
 
+## When a second Horizon is configured
+
+`-horizon-secondary` ([deployment.md](deployment.md#configuration)) re-issues a
+ladder's pathfinding on another Horizon, and only for the two shapes a different
+provider can fix: no HTTP response at all, or a 5xx. A 4xx is the upstream
+answering this request specifically, so it comes back unchanged and a 429 still
+surfaces as `dex.ErrRateLimited` with whatever interval it asked for; failing
+over on either would be a way of ignoring a quota, and doubles load on somebody
+else's service. A ladder whose own budget expired is not re-issued either,
+because there is no time left to spend on a second try.
+
+Three shapes stay outside it on purpose:
+
+- **One host per ladder.** A price curve is a comparison across sizes, so a rung
+  priced by the other provider would report the two hosts' differences as well
+  as the corridor's. Rungs still fail individually: failover is a host choice,
+  not a retry budget.
+- **The counterparty checks and the reference rates** describe an anchor rather
+  than a curve, and each has the contracts documented above.
+- **Both hosts down** is the same UNKNOWN as one host down. Nothing here makes a
+  corridor measurable that no Horizon can price; the log line at `error` and the
+  failover note in the snapshot are what tell an operator the stopgap was tried.
+
 ## Reference providers
 
 The reference rate has its own contracts, documented at the definitions:
