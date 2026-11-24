@@ -81,6 +81,7 @@ exactly once; the grouping reflects who is most likely to need it first.
 | [adr/007-why-the-committed-chain-is-a-rolling-window.md](adr/007-why-the-committed-chain-is-a-rolling-window.md) | ADR 007: the committed chain is a rolling window |
 | [adr/008-why-measurements-stay-on-main.md](adr/008-why-measurements-stay-on-main.md) | ADR 008: measurements stay on main |
 | [adr/009-why-the-health-score-stays-off-the-wire.md](adr/009-why-the-health-score-stays-off-the-wire.md) | ADR 009: the health score stays off the wire |
+| [adr/010-why-pathfinder-defers-horizon-replacement.md](adr/010-why-pathfinder-defers-horizon-replacement.md) | ADR 010: Horizon stays behind a Pathfinder seam until a trigger appears |
 
 ---
 
@@ -116,6 +117,8 @@ exactly once; the grouping reflects who is most likely to need it first.
 | [research-GHS.md](research-GHS.md) | Research: USDC → GHS (Ghanaian Cedi) — UNUSABLE |
 | [research-tzs.md](research-tzs.md) | Research: USDC → TZS (Tanzanian Shilling) — NO-MARKET |
 | [research-egp.md](research-egp.md) | Research: USDC → EGP (Egyptian Pound) — NO-MARKET |
+| [corridor-research-ugx.md](corridor-research-ugx.md) | Research: USDC → UGX (Ugandan Shilling) |
+| [corridor-research-xof-xaf.md](corridor-research-xof-xaf.md) | Research: USDC → XOF / XAF (CFA Franc) |
 | [reverse-corridor-research.md](reverse-corridor-research.md) | Reverse corridors: the exit leg as a first-class measurement |
 
 ### Market and issuer research
@@ -137,6 +140,7 @@ exactly once; the grouping reflects who is most likely to need it first.
 | [account-level-concentration-research.md](account-level-concentration-research.md) | Can account-level concentration be measured at all? |
 | [ecosystem-mapping.md](ecosystem-mapping.md) | Mapping the Stellar ecosystem projects Wayfare could inform |
 | [research-measurement-noise.md](research-measurement-noise.md) | How much does a rung move between back-to-back measurements? |
+| [research-quoted-vs-realised.md](research-quoted-vs-realised.md) | Research: quoted versus realised path payments |
 
 ### Spikes
 
@@ -198,6 +202,7 @@ exactly once; the grouping reflects who is most likely to need it first.
 | [qa/artifacts/286-token-contrast.md](qa/artifacts/286-token-contrast.md) | QA artifact #286: token contrast |
 | [qa/artifacts/293-error-preservation.md](qa/artifacts/293-error-preservation.md) | QA artifact #293: error preservation |
 | [qa/artifacts/304-state-legibility.md](qa/artifacts/304-state-legibility.md) | QA artifact #304: state legibility |
+| [qa/artifacts/closed-issue-audit.md](qa/artifacts/closed-issue-audit.md) | Closed issue audit — 2026-11-23 |
 | [qa/artifacts/751-scheduled-wcag-audit.md](qa/artifacts/751-scheduled-wcag-audit.md) | QA artifact #751: scheduled WCAG audit |
 
 ### Schemas

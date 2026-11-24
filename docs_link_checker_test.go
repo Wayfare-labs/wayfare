@@ -237,7 +237,7 @@ func headingToAnchor(text string) string {
 			b.WriteRune('-')
 		case unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_':
 			b.WriteRune(r)
-		// all other punctuation is dropped
+			// all other punctuation is dropped
 		}
 	}
 	return b.String()
