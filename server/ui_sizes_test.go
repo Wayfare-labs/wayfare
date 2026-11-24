@@ -46,17 +46,17 @@ func TestUISizesControlExists(t *testing.T) {
 func TestUIMeasureSendsSizes(t *testing.T) {
 	page := uiHTML(t)
 
-	if !strings.Contains(page, "q.set('sizes', sizesRaw)") {
-		t.Error("measure() never sets sizes on the request; the ladder stays fixed at the default")
+	if !strings.Contains(page, "function corridorQuery(to, sizes, live = false)") {
+		t.Error("corridorQuery() is missing; measurement requests need one shared URL builder")
 	}
-	if !strings.Contains(page, "if (sizesRaw !== '') q.set('sizes', sizesRaw);") {
-		t.Error("empty input must send no sizes parameter, not an empty one")
+	if !strings.Contains(page, "if (sizes && sizes.ok && sizes.norm !== DEFAULT_SIZES_STR)") ||
+		!strings.Contains(page, "if (sizes.norm) q.set('sizes', sizes.norm);") {
+		t.Error("the query builder must omit empty and default sizes while forwarding custom sizes")
 	}
-	// The fetch itself must go through the params object, so the sizes value
-	// cannot drift out of the URL the server actually receives.
-	if !strings.Contains(page, "const q = new URLSearchParams({ to })") ||
-		!strings.Contains(page, "fetch(`/api/corridor?${q}&live=1`)") {
-		t.Error("measure() does not build its query from URLSearchParams; sizes would not reach /api/corridor")
+	// The live measurement must use the shared URL builder, so custom sizes
+	// are included in the request that reaches /api/corridor.
+	if !strings.Contains(page, "fetch(corridorQuery(to, sizes, true))") {
+		t.Error("measure() does not use corridorQuery(); sizes would not reach /api/corridor")
 	}
 }
 
@@ -88,8 +88,8 @@ func TestUIMirrorsParseSizesContract(t *testing.T) {
 	if !strings.Contains(page, "sizesInput.setAttribute('aria-invalid', 'true')") {
 		t.Error("invalid sizes are not marked aria-invalid; the failure would rely on colour alone")
 	}
-	if idxValidation := strings.Index(page, "sizesValidation(sizesRaw)"); idxValidation >= 0 {
-		if idxFetch := strings.Index(page, "fetch(`/api/corridor?${q}&live=1`)"); idxFetch >= 0 && idxValidation > idxFetch {
+	if idxValidation := strings.Index(page, "const sizes = parseSizesInput(sizesRaw)"); idxValidation >= 0 {
+		if idxFetch := strings.Index(page, "fetch(corridorQuery(to, sizes, true))"); idxFetch >= 0 && idxValidation > idxFetch {
 			t.Error("sizes are validated after the request is built; an invalid input could still be sent")
 		}
 	}

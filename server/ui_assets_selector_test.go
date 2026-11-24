@@ -104,10 +104,10 @@ func TestUIBootHasNoHardcodedDefaultCorridor(t *testing.T) {
 		t.Error("boot() falls back to a hardcoded corridor; a failed /api/assets call must leave its own state on screen")
 	}
 	for _, want := range []string{
-		"await loadAssets()",          // the list first
-		"const ready =",               // the outcome is checked, not ignored
-		"if (!ready) return;",         // and a failure stops the boot, not into a default
-		"await navigateTo();",         // URL state is applied before the selected corridor loads
+		"await loadAssets()",  // the list first
+		"const ready =",       // the outcome is checked, not ignored
+		"if (!ready) return;", // and a failure stops the boot, not into a default
+		"await navigateTo();", // URL state is applied before the selected corridor loads
 	} {
 		if !strings.Contains(boot, want) {
 			t.Errorf("boot() missing %q", want)
