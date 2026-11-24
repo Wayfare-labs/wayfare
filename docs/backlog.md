@@ -1,5 +1,16 @@
 # Wayfare — contributor backlog
 
+> **Dated snapshot — not the live backlog.** This document describes the tree at
+> commit `93f5cda` and the live deployment as observed on 2026-08-24. It has not
+> been kept in step with the code since: many entries have been done (some only
+> partly — for example [#91](https://github.com/Wayfare-labs/wayfare/issues/91)
+> is closed while the metrics are still unreachable), and section A's
+> architecture snapshot no longer matches the tree. Read it as history and as
+> evidence of how each gap was found, not as the current state. The live source
+> of open work is the
+> [issue tracker](https://github.com/Wayfare-labs/wayfare/issues); check the
+> linked issue — and the code — before acting on any entry here.
+
 A repository-grounded backlog. Every issue below references a file, function or
 observed response that was verified against the tree at commit `93f5cda` and
 against the live deployment on 2026-08-24. Nothing here describes a component
@@ -1018,6 +1029,14 @@ to when it declines to publish a trend.
 Today a figure is either measured or unknown. A third category — measured with
 an interval — needs a wire representation before it needs a calculation.
 `V4+` `area:research` `difficulty:hard` `research`
+
+> **Finding written:** [docs/spike-measured-intervals.md](spike-measured-intervals.md)
+> (2026-10-26). The current wire contract publishes point corridor figures
+> and point reference observations, not source-supported bounds. Historical
+> spread and provider disagreement are not intervals around one measurement;
+> no bounds should be synthesized. A future wire contract must distinguish
+> point, source-reported interval, and undetermined states; no implementation
+> or record-layout change is proposed.
 
 ### E2 — Predictive intelligence (V5)
 

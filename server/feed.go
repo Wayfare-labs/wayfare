@@ -1,4 +1,3 @@
-// Package server serves the Atom feed of integrity transitions.
 package server
 
 import (

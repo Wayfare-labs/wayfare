@@ -1,7 +1,3 @@
-// Package runstore keeps a tamper-evident history of corridor measurements.
-//
-// This file implements the static snapshot generation for publishing a
-// corridors.json file on every sweep (issue #691).
 package runstore
 
 import (

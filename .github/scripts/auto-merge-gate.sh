@@ -25,7 +25,13 @@ fi
 PR="${EVENT_PR:-}"
 
 # issue_comment fires for issues as well as pull requests, and only
-# the latter can be merged.
+# the latter can be merged. A plain issue carries no
+# issue.pull_request.url, so stop here: the pulls endpoint below would
+# 404 on it and fail the run for every comment on every issue.
+if [ -n "${ISSUE_PR:-}" ] && [ -z "${IS_PR:-}" ]; then
+  echo "comment on issue #${ISSUE_PR}, not a pull request; nothing to gate"
+  exit 0
+fi
 if { [ -z "$PR" ] || [ "$PR" = "null" ]; } && [ -n "${ISSUE_PR:-}" ]; then
   PR="${ISSUE_PR}"
 fi
@@ -310,8 +316,21 @@ if [ -z "$actionable" ] && grep -qi 'no actionable comments' <<<"$rabbit_body"; 
   actionable=0
 fi
 
+# CodeRabbit declines to review some repositories outright (this one has
+# fewer than 10 stars) and says so in a comment. That is a standing fact
+# about the repository, not a verdict on the PR: it will never post one, so
+# holding on it would hold every PR forever. It is treated as "no review
+# happened", reported as such, and never claimed as a pass; CI, the scope
+# check and the malware scan carry the decision instead.
+rabbit_skipped=no
+if [ -z "$actionable" ] && grep -qiE 'skip review by coderabbit|does not receive automatic reviews|review skipped' <<<"$rabbit_body"; then
+  rabbit_skipped=yes
+fi
+
 if [ -z "$rabbit_body" ]; then
   :  # nothing to parse; already recorded as waiting
+elif [ "$rabbit_skipped" = yes ]; then
+  echo "coderabbit: skipped for this repository; no review to count"
 elif [ -z "$actionable" ]; then
   # Format changed, or the review is of a shape we do not recognise.
   # Hold rather than guess: merging on an unparsed review would be
@@ -383,8 +402,17 @@ else
     | sed 's:/*$::' | sort -u || true)
 
   if [ -z "$named" ]; then
-    hold "issue #$issue_num names no files or packages, so scope cannot be verified mechanically" \
-         "Nothing for you to fix. The issue does not list the files or package it covers, so a maintainer will confirm the scope by hand."
+    # The issue lists no paths, so there is nothing to compare against. A
+    # change confined to documentation and tests cannot alter behaviour or a
+    # published figure, so that alone is safe to accept; anything touching
+    # code needs a human to confirm it matches what the issue meant.
+    nondoc=$(echo "$files" | grep -vE '(^docs/|\.md$|_test\.go$|^testdata/)' || true)
+    if [ -z "$nondoc" ]; then
+      scope_note="issue #$issue_num names no paths, but every changed file is documentation or tests, which cannot change behaviour"
+    else
+      hold "issue #$issue_num names no files or packages, so scope cannot be verified mechanically" \
+           "Nothing for you to fix. The issue does not list the files or package it covers, so a maintainer will confirm the scope by hand. (Changes limited to docs and tests are accepted without a file list.)"
+    fi
   else
     echo "issue #$issue_num names:"; echo "$named" | sed 's/^/    /'
     outside=""
@@ -469,7 +497,7 @@ if [ ${#reasons[@]} -eq 0 ]; then
   testfiles=$(echo "$files" | grep -cE '_test\.go$' || true)
 
   {
-    echo "**Approved. All CI checks and CodeRabbit review passed.**"
+    echo "**Approved. All CI checks passed and the malware scan is clean.**"
     echo
     echo "### What this changed"
     echo
@@ -484,7 +512,11 @@ if [ ${#reasons[@]} -eq 0 ]; then
     echo "### What was verified"
     echo
     echo "- Every check green: $(awk -F'\t' '{print $1}' <<<"$runs" | paste -sd '|' - | sed 's/|/, /g')"
-    echo "- CodeRabbit reviewed it and raised no actionable comments"
+    if [ "$rabbit_skipped" = yes ]; then
+      echo "- CodeRabbit did not review this PR (it is skipped for this repository), so no automated review is claimed"
+    else
+      echo "- CodeRabbit reviewed it and raised no actionable comments"
+    fi
     [ -n "$scope_note" ] && echo "- Scope: $scope_note"
     echo "- No maintainer-owned path touched — nothing here can alter a published figure"
     echo "- No dependency change"

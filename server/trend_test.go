@@ -728,6 +728,12 @@ func TestTrendDivergenceStatsSkipsRunsWithNoDivergence(t *testing.T) {
 	if stats["mean_pct"] != "2.0000" {
 		t.Errorf("mean_pct = %v, want 2.0000 (every divergence-bearing run reported 2.00)", stats["mean_pct"])
 	}
+	if stats["first_at"] != "2026-08-01T00:00:00Z" {
+		t.Errorf("first_at = %v, want first divergence timestamp", stats["first_at"])
+	}
+	if stats["last_at"] != "2026-08-08T06:00:00Z" {
+		t.Errorf("last_at = %v, want last divergence timestamp", stats["last_at"])
+	}
 }
 
 // TestTrendDivergenceStatsMalformedValueIsAnError pins the "nothing is ever

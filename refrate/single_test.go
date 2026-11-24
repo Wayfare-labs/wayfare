@@ -537,6 +537,94 @@ func TestStalenessIsNotInferredFromASingleObservation(t *testing.T) {
 	}
 }
 
+type unstampedProvider struct{}
+
+func (unstampedProvider) Name() string { return "unstamped" }
+
+func (unstampedProvider) Rate(_ context.Context, base, quote string) (Rate, error) {
+	return Rate{
+		Base: base, Quote: quote, Mid: decimal.NewFromInt(1350), Source: "unstamped",
+	}, nil
+}
+
+func TestCheckedRejectsOldAndUnknownAsOf(t *testing.T) {
+	maxAge := 72 * time.Hour
+	t.Run("old stamped rate", func(t *testing.T) {
+		provider := NewStatic(map[string]decimal.Decimal{"USD/NGN": decimal.NewFromInt(1350)})
+		provider.Stamp = time.Now().Add(-maxAge - time.Hour)
+		_, err := (&Checked{Inner: provider, MaxAge: maxAge}).Rate(context.Background(), "USD", "NGN")
+		var stale *ErrStaleRate
+		if !errors.As(err, &stale) || stale.UnknownAge || stale.Source != "static" {
+			t.Fatalf("error = %v, want typed stale-rate error for static provider", err)
+		}
+	})
+
+	t.Run("zero as-of", func(t *testing.T) {
+		_, err := (&Checked{Inner: unstampedProvider{}, MaxAge: maxAge}).Rate(context.Background(), "USD", "NGN")
+		var stale *ErrStaleRate
+		if !errors.As(err, &stale) || !stale.UnknownAge {
+			t.Fatalf("error = %v, want typed unknown-age error", err)
+		}
+		if !strings.Contains(err.Error(), "unknown age") {
+			t.Errorf("error = %v, want it to explain the missing timestamp", err)
+		}
+	})
+}
+
+func TestCrossDegradesForOneStaleProviderAndTypesTwoStaleErrors(t *testing.T) {
+	maxAge := 72 * time.Hour
+	oldStatic := func() *Static {
+		provider := NewStatic(map[string]decimal.Decimal{"USD/NGN": decimal.NewFromInt(1350)})
+		provider.Stamp = time.Now().Add(-maxAge - time.Hour)
+		return provider
+	}
+
+	t.Run("one stale source", func(t *testing.T) {
+		fresh := NewStatic(map[string]decimal.Decimal{"USD/NGN": decimal.NewFromInt(1351)})
+		cross := &Cross{
+			Primary:   &Checked{Inner: oldStatic(), MaxAge: maxAge},
+			Secondary: &Checked{Inner: fresh, MaxAge: maxAge},
+		}
+		rate := rateOf(t, cross)
+		if rate.Agreement != AgreementSingle {
+			t.Fatalf("Agreement = %s, want SINGLE", rate.Agreement)
+		}
+		if !strings.Contains(rate.Note, "static was stale or has unknown age") {
+			t.Errorf("Note = %q, want it to identify the stale provider", rate.Note)
+		}
+	})
+
+	t.Run("unknown age is not fresh", func(t *testing.T) {
+		fresh := NewStatic(map[string]decimal.Decimal{"USD/NGN": decimal.NewFromInt(1351)})
+		cross := &Cross{
+			Primary:   &Checked{Inner: unstampedProvider{}, MaxAge: maxAge},
+			Secondary: &Checked{Inner: fresh, MaxAge: maxAge},
+		}
+		rate := rateOf(t, cross)
+		if rate.Agreement != AgreementSingle {
+			t.Fatalf("Agreement = %s, want SINGLE", rate.Agreement)
+		}
+		if !strings.Contains(rate.Note, "unstamped was stale or has unknown age") {
+			t.Errorf("Note = %q, want it to disclose the missing as-of timestamp", rate.Note)
+		}
+	})
+
+	t.Run("both stale sources", func(t *testing.T) {
+		cross := &Cross{
+			Primary:   &Checked{Inner: oldStatic(), MaxAge: maxAge},
+			Secondary: &Checked{Inner: oldStatic(), MaxAge: maxAge},
+		}
+		_, err := cross.Rate(context.Background(), "USD", "NGN")
+		var stale *ErrStaleRate
+		if !errors.As(err, &stale) {
+			t.Fatalf("error = %v, want a typed stale-rate cause from Cross", err)
+		}
+		if !strings.Contains(err.Error(), "no reference rate") {
+			t.Errorf("error = %v, want the combined reference failure", err)
+		}
+	})
+}
+
 // TestSingleIsDistinguishableFromAnExactAgreement holds apart the two states
 // that both report a zero divergence.
 //

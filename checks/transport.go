@@ -86,6 +86,10 @@ func guardedControl(_ string, address string, _ syscall.RawConn) error {
 // guard, and the chain is bounded so a redirect loop cannot hold a connection
 // open indefinitely.
 func GuardedClient(timeout time.Duration) *http.Client {
+	return guardedClient(timeout, nil)
+}
+
+func guardedClient(timeout time.Duration, resolver *net.Resolver) *http.Client {
 	if timeout <= 0 {
 		timeout = 15 * time.Second
 	}
@@ -93,6 +97,7 @@ func GuardedClient(timeout time.Duration) *http.Client {
 		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second,
 		Control:   guardedControl,
+		Resolver:  resolver,
 	}
 	return &http.Client{
 		Timeout: timeout,

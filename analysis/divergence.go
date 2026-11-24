@@ -32,7 +32,21 @@ import (
 // observation. Accepting it would let a single corrupt record quietly pull
 // the reported mean down, which is a worse failure than refusing to answer.
 func DivergencePctSeries(recs []*runstore.Record) ([]decimal.Decimal, error) {
-	out := make([]decimal.Decimal, 0, len(recs))
+	points, err := DivergencePointSeries(recs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]decimal.Decimal, 0, len(points))
+	for _, point := range points {
+		out = append(out, point.Value)
+	}
+	return out, nil
+}
+
+// DivergencePointSeries extracts timestamped reference cross-check
+// divergences, omitting runs where only one provider supplied a mid.
+func DivergencePointSeries(recs []*runstore.Record) ([]Point, error) {
+	out := make([]Point, 0, len(recs))
 	for _, r := range recs {
 		raw := r.Reference.DivergencePct
 		if raw == "" {
@@ -50,7 +64,7 @@ func DivergencePctSeries(recs []*runstore.Record) ([]decimal.Decimal, error) {
 					"divergence is a magnitude and cannot be signed",
 				r.Corridor, r.Seq, raw)
 		}
-		out = append(out, v)
+		out = append(out, Point{At: r.RecordedAt, Value: v})
 	}
 	return out, nil
 }
@@ -70,9 +84,9 @@ func DivergencePctSeries(recs []*runstore.Record) ([]decimal.Decimal, error) {
 // reference-provider divergence, and applying it here would misclassify a
 // benchmark on thresholds nobody chose for that purpose.
 func DivergenceHistory(recs []*runstore.Record) (*MetricStats, error) {
-	values, err := DivergencePctSeries(recs)
+	points, err := DivergencePointSeries(recs)
 	if err != nil {
 		return nil, err
 	}
-	return AnalyzeDecimal(values, nil), nil
+	return AnalyzeSeries(points, nil), nil
 }

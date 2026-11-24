@@ -86,19 +86,20 @@ func TestUIThemeToggle(t *testing.T) {
 	}
 }
 
-// TestUIEvidenceDrawer guards issue #294: evidence is progressively
-// disclosed rather than dumped, and provenance is stated next to the
-// headline.
+// TestUIEvidenceDrawer guards issues #294 and #647: evidence is
+// progressively disclosed rather than dumped, provenance is stated next to
+// the headline, and every check says where its evidence came from and how old
+// the observation is.
 //
-// The original implementation built a headline <details> drawer from fields
-// the server did not yet publish (reference_fetched_at, reference_as_of).
-// Main's headline publishes provenance inline instead — pair, mid, provider
-// source and measurement time — which satisfies the issue without inventing
-// fields, and adds dual-provider provenance (reference_secondary_*). This
-// test pins main's headline provenance plus the per-check disclosure, and
-// requires every evidence line to carry source AND observation time.
+// The original #294 implementation built a headline <details> drawer from
+// fields the server did not yet publish (reference_fetched_at,
+// reference_as_of). Main's headline publishes provenance inline instead —
+// pair, mid, provider source and measurement time — which satisfies the issue
+// without inventing fields, and adds dual-provider provenance
+// (reference_secondary_*). This test pins that headline provenance plus the
+// per-check disclosure #647 added: each evidence line links its source when
+// it is a URL (opening with rel=noopener) and carries the observation's age.
 func TestUIEvidenceDrawer(t *testing.T) {
-	t.Skip("pins UI markup that server/index.html on main does not contain; fails on main independently of the server/CLI changes in this PR")
 	raw, err := uiFS.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
@@ -115,13 +116,22 @@ func TestUIEvidenceDrawer(t *testing.T) {
 		"d.reference_secondary_mid",
 		// Per-check evidence behind its own disclosure.
 		`<details class="f-ev">`,
-		// Each check evidence line carries source AND timestamp. This exact
-		// arrow form belongs to the checks renderer; metrics uses entities
-		// and already had timestamps.
-		"→ ${esc(e.observed)} · ${esc(e.observed_at)}",
+		// Each check evidence line carries its source (linked when it is a
+		// URL) AND the age of the observation; the check itself says when it
+		// ran. This exact arrow form belongs to the checks renderer.
+		"${evidenceSource(e.source)} → ${esc(e.observed)} · observed ${observationAge(e.observed_at)}",
+		"checked ${observationAge(c.observed_at)}",
+		// The age is relative, with the exact time kept machine-readable and
+		// on hover; a zero or missing time is never shown as fresh.
+		`<time class="f-age" datetime="${esc(iso)}"`,
+		"formatRelativeAge(iso)",
+		"time not recorded",
+		// Links open with rel=noopener, and only http(s) sources become links.
+		`target="_blank" rel="noopener noreferrer"`,
+		"url.protocol !== 'https:' && url.protocol !== 'http:'",
 	} {
 		if !strings.Contains(page, want) {
-			t.Errorf("UI missing %q; evidence would not be disclosed progressively", want)
+			t.Errorf("UI missing %q; check evidence would not show its source and age", want)
 		}
 	}
 }
