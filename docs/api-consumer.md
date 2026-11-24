@@ -244,6 +244,13 @@ representation to revalidate, so there is nothing to answer `304` about.
 
 ## Related
 
+- [Runnable route example](../route/example_test.go) — decode a recorded
+  corridor response and read its live, scored, and recommendation fields
+- [Runnable asset example](../asset/example_test.go) — look up a registered
+  asset and its fiat peg
+- [Runnable snapshot example](../snapshot/example_test.go) — replay the
+  recorded response layer used by package consumers
+
 - [docs/api.md](api.md) — the endpoint reference, with example responses
 - [examples/api-consumer](../examples/api-consumer) — the program itself, and
   its offline tests

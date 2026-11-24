@@ -98,6 +98,18 @@ caught by its hash.
 
 `dirty` appears only when true — see rule 9.
 
+### Which Horizon a snapshot came from
+
+`sources.horizon.base_url` and each interaction's `url` name the host whose
+bytes are in `responses/`, not the address the process was configured with.
+Normally they are the same. They differ when `-horizon-secondary` is set and the
+configured host was down: the failover transport sits under the recorder, so
+what gets archived is the second provider's answer and the primary's refusal is
+discarded rather than recorded as ground truth (docs/deployment.md#configuration).
+
+A run answered by the failover host carries a `notes` line naming it, so the
+provenance is readable without comparing URLs one by one.
+
 ---
 
 ## The nine rules

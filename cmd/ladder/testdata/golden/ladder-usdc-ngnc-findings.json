@@ -1,0 +1,1114 @@
+{
+  "send_asset": {
+    "code": "USDC",
+    "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    "asset": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+  },
+  "receive_asset": {
+    "code": "NGNC",
+    "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+    "peg": "NGN",
+    "asset": "stellar:NGNC:GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+  },
+  "integrity": "DIRECT",
+  "depends_on": [],
+  "reference_mid": "1350.25682585",
+  "reference_source": "currency-api",
+  "reference_pair": "USD/NGN",
+  "reference_agreement": "SINGLE",
+  "scored": true,
+  "reference_as_of": "2026-08-21T00:00:00Z",
+  "floor_loss_pct": "28.21",
+  "floor_size": "0.1",
+  "worst_loss_pct": "97.50",
+  "worst_size": "5000",
+  "recommended": null,
+  "live": true,
+  "findings": {
+    "checks": [
+      {
+        "id": "issuer.auth-flags",
+        "scope": "asset",
+        "subject": "NGNC (GASB…)",
+        "severity": "critical",
+        "determined": true,
+        "passed": false,
+        "summary": "issuer can revoke trustlines",
+        "evidence": [
+          {
+            "source": "https://horizon.stellar.org/accounts/GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+            "observed": "auth_revocable=true",
+            "observed_at": "2026-09-01T11:58:30Z"
+          }
+        ],
+        "observed_at": "2026-09-01T11:58:30Z"
+      },
+      {
+        "id": "sep10.endpoint-responds",
+        "scope": "anchor",
+        "subject": "NGNC (GASB…)",
+        "severity": "warning",
+        "determined": false,
+        "passed": false,
+        "reason": "WEB_AUTH_ENDPOINT did not answer",
+        "summary": "could not determine: WEB_AUTH_ENDPOINT did not answer",
+        "evidence": [],
+        "observed_at": "2026-09-01T11:58:30Z"
+      },
+      {
+        "id": "toml.anchor-asset-iso4217",
+        "scope": "asset",
+        "subject": "NGNC (GASB…)",
+        "severity": "notice",
+        "determined": true,
+        "passed": true,
+        "summary": "anchor_asset names the naira",
+        "evidence": [
+          {
+            "source": "https://ngnc.online/.well-known/stellar.toml",
+            "observed": "NGN",
+            "observed_at": "2026-09-01T11:58:30Z"
+          }
+        ],
+        "observed_at": "2026-09-01T11:58:30Z"
+      }
+    ],
+    "passed": 1,
+    "failed": 1,
+    "undetermined": 1,
+    "worst_severity": "critical",
+    "metrics": [
+      {
+        "id": "spread.bid-ask",
+        "scope": "asset",
+        "subject": "NGNC",
+        "determined": true,
+        "value": "0.0004",
+        "unit": "ratio",
+        "summary": "bid-ask spread on the USDC/NGNC book",
+        "evidence": [
+          {
+            "source": "https://horizon.stellar.org/order_book",
+            "observed": "0.0004",
+            "observed_at": "2026-09-01T11:58:30Z"
+          }
+        ],
+        "observed_at": "2026-09-01T11:58:30Z"
+      }
+    ]
+  },
+  "finding": "No usable size. Loss against the currency-api mid is 28.21% at 0.1 USDC — where price impact is negligible, so that is the corridor's structural floor, not a depth effect — rising to 97.50% at 5000 USDC. Every size tested is graded Unusable, so nothing is recommended.",
+  "curve": {
+    "points": [
+      {
+        "size": "0.1",
+        "rate": "969.351231",
+        "priced": true,
+        "reason": "Unregistered hop asset(s) AQUA(GBNZ…), Cleanshave(GCTZ…) appeared in pathfinding and are not in the asset registry. An unrecognised hop is currently treated as having an independent market; see asset/known.go for the bounded false-negative.; No viable route. The best of 1 priced route(s) still loses 28.2% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      },
+      {
+        "size": "1",
+        "rate": "960.3979995",
+        "priced": true,
+        "reason": "Unregistered hop asset(s) AQUA(GBNZ…), yUSDC(GDGT…) appeared in pathfinding and are not in the asset registry. An unrecognised hop is currently treated as having an independent market; see asset/known.go for the bounded false-negative.; No viable route. The best of 1 priced route(s) still loses 28.9% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      },
+      {
+        "size": "5",
+        "rate": "937.23315582",
+        "priced": true,
+        "reason": "No viable route. The best of 1 priced route(s) still loses 30.6% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      },
+      {
+        "size": "10",
+        "rate": "912.70335014",
+        "priced": true,
+        "reason": "Unregistered hop asset(s) BTC(GDPJ…) appeared in pathfinding and are not in the asset registry. An unrecognised hop is currently treated as having an independent market; see asset/known.go for the bounded false-negative.; No viable route. The best of 1 priced route(s) still loses 32.4% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      },
+      {
+        "size": "25",
+        "rate": "845.697956292",
+        "priced": true,
+        "reason": "No viable route. The best of 1 priced route(s) still loses 37.4% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      },
+      {
+        "size": "50",
+        "rate": "754.302657744",
+        "priced": true,
+        "reason": "No viable route. The best of 1 priced route(s) still loses 44.1% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      },
+      {
+        "size": "100",
+        "rate": "620.317858118",
+        "priced": true,
+        "reason": "No viable route. The best of 1 priced route(s) still loses 54.1% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      },
+      {
+        "size": "250",
+        "rate": "404.6902663096",
+        "priced": true,
+        "reason": "No viable route. The best of 1 priced route(s) still loses 70.0% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      },
+      {
+        "size": "500",
+        "rate": "256.2282439268",
+        "priced": true,
+        "reason": "No viable route. The best of 1 priced route(s) still loses 81.0% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      },
+      {
+        "size": "1000",
+        "rate": "147.7874695164",
+        "priced": true,
+        "reason": "No viable route. The best of 1 priced route(s) still loses 89.1% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      },
+      {
+        "size": "2500",
+        "rate": "65.1180349908",
+        "priced": true,
+        "reason": "No viable route. The best of 1 priced route(s) still loses 95.2% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      },
+      {
+        "size": "5000",
+        "rate": "33.69862437886",
+        "priced": true,
+        "reason": "No viable route. The best of 1 priced route(s) still loses 97.5% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      }
+    ],
+    "priced_count": 12,
+    "observation_count": 12,
+    "non_monotonic": false
+  },
+  "rungs": [
+    {
+      "send_amount": "0.1",
+      "priced": true,
+      "integrity": "DIRECT",
+      "path_count": 2,
+      "quote": {
+        "kind": "dex",
+        "description": "USDC -\u003e Cleanshave -\u003e AQUA -\u003e NGNC",
+        "hops": [
+          {
+            "code": "USDC",
+            "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+            "asset": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+          },
+          {
+            "code": "Cleanshave",
+            "issuer": "GCTZJCIPAJQ5OTNL5MJGA6ETMG7A3GOKYYZUO6JJPWUZCJSSUYNVAISG",
+            "asset": "stellar:Cleanshave:GCTZJCIPAJQ5OTNL5MJGA6ETMG7A3GOKYYZUO6JJPWUZCJSSUYNVAISG"
+          },
+          {
+            "code": "AQUA",
+            "issuer": "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+            "asset": "stellar:AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+          },
+          {
+            "code": "NGNC",
+            "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+            "peg": "NGN",
+            "asset": "stellar:NGNC:GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+          }
+        ],
+        "source": "stellar-dex",
+        "receive_amount": "96.9351231",
+        "effective_rate": "969.351231",
+        "loss_pct": "28.20986256523578",
+        "loss_amount": "38.09",
+        "verdict": "UNUSABLE",
+        "path_count": 2,
+        "warnings": [
+          "delivers NGNC tokens, not NGN in a bank account; redeeming to fiat is a separate step with its own cost"
+        ]
+      },
+      "cost": {
+        "parts": [
+          {
+            "component": "fx_loss",
+            "amount": "38.090559485",
+            "pct": "28.20986256523578",
+            "determined": true
+          },
+          {
+            "component": "network_fees",
+            "determined": false,
+            "reason": "network fee not measured; determining it requires the path's operation count and the current Stellar base fee"
+          },
+          {
+            "component": "anchor_fee",
+            "determined": false,
+            "reason": "anchor fee not available; the anchor does not publish an ANCHOR_QUOTE_SERVER, so its fee cannot be obtained programmatically"
+          },
+          {
+            "component": "slippage",
+            "determined": false,
+            "reason": "single quote available; slippage requires a comparison across sizes"
+          },
+          {
+            "component": "expected_failure",
+            "determined": false,
+            "reason": "no failure history exists yet; runstore is collecting but has not accumulated enough observations"
+          }
+        ],
+        "total_loss_pct": "28.20986256523578"
+      },
+      "notes": [
+        "Unregistered hop asset(s) AQUA(GBNZ…), Cleanshave(GCTZ…) appeared in pathfinding and are not in the asset registry. An unrecognised hop is currently treated as having an independent market; see asset/known.go for the bounded false-negative.",
+        "No viable route. The best of 1 priced route(s) still loses 28.2% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      ]
+    },
+    {
+      "send_amount": "1",
+      "marginal_cost": "351.768266865",
+      "marginal_from": "0.1",
+      "marginal_to": "1",
+      "priced": true,
+      "integrity": "DIRECT",
+      "path_count": 4,
+      "quote": {
+        "kind": "dex",
+        "description": "USDC -\u003e yUSDC -\u003e AQUA -\u003e NGNC",
+        "hops": [
+          {
+            "code": "USDC",
+            "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+            "asset": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+          },
+          {
+            "code": "yUSDC",
+            "issuer": "GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF",
+            "asset": "stellar:yUSDC:GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF"
+          },
+          {
+            "code": "AQUA",
+            "issuer": "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+            "asset": "stellar:AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+          },
+          {
+            "code": "NGNC",
+            "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+            "peg": "NGN",
+            "asset": "stellar:NGNC:GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+          }
+        ],
+        "source": "stellar-dex",
+        "receive_amount": "960.3979995",
+        "effective_rate": "960.3979995",
+        "loss_pct": "28.87293875404629",
+        "loss_amount": "389.86",
+        "verdict": "UNUSABLE",
+        "path_count": 4,
+        "warnings": [
+          "delivers NGNC tokens, not NGN in a bank account; redeeming to fiat is a separate step with its own cost"
+        ]
+      },
+      "cost": {
+        "parts": [
+          {
+            "component": "fx_loss",
+            "amount": "389.85882635",
+            "pct": "28.87293875404629",
+            "determined": true
+          },
+          {
+            "component": "network_fees",
+            "determined": false,
+            "reason": "network fee not measured; determining it requires the path's operation count and the current Stellar base fee"
+          },
+          {
+            "component": "anchor_fee",
+            "determined": false,
+            "reason": "anchor fee not available; the anchor does not publish an ANCHOR_QUOTE_SERVER, so its fee cannot be obtained programmatically"
+          },
+          {
+            "component": "slippage",
+            "determined": false,
+            "reason": "single quote available; slippage requires a comparison across sizes"
+          },
+          {
+            "component": "expected_failure",
+            "determined": false,
+            "reason": "no failure history exists yet; runstore is collecting but has not accumulated enough observations"
+          }
+        ],
+        "total_loss_pct": "28.87293875404629"
+      },
+      "notes": [
+        "Unregistered hop asset(s) AQUA(GBNZ…), yUSDC(GDGT…) appeared in pathfinding and are not in the asset registry. An unrecognised hop is currently treated as having an independent market; see asset/known.go for the bounded false-negative.",
+        "No viable route. The best of 1 priced route(s) still loses 28.9% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      ]
+    },
+    {
+      "send_amount": "5",
+      "marginal_cost": "1675.2595238",
+      "marginal_from": "1",
+      "marginal_to": "5",
+      "priced": true,
+      "integrity": "DIRECT",
+      "path_count": 3,
+      "quote": {
+        "kind": "dex",
+        "description": "USDC -\u003e USDZ -\u003e XLM -\u003e NGNC",
+        "hops": [
+          {
+            "code": "USDC",
+            "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+            "asset": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+          },
+          {
+            "code": "USDZ",
+            "issuer": "GAKTLPC4ZV37SSCITQ5IS5AQ4WPF4CF4VZJQPPAROSGXMYOATF5U6XPR",
+            "peg": "USD",
+            "asset": "stellar:USDZ:GAKTLPC4ZV37SSCITQ5IS5AQ4WPF4CF4VZJQPPAROSGXMYOATF5U6XPR"
+          },
+          {
+            "code": "XLM",
+            "asset": "stellar:native"
+          },
+          {
+            "code": "NGNC",
+            "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+            "peg": "NGN",
+            "asset": "stellar:NGNC:GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+          }
+        ],
+        "source": "stellar-dex",
+        "receive_amount": "4686.1657791",
+        "effective_rate": "937.23315582",
+        "loss_pct": "30.58852672490639",
+        "loss_amount": "2065.12",
+        "verdict": "UNUSABLE",
+        "path_count": 3,
+        "warnings": [
+          "delivers NGNC tokens, not NGN in a bank account; redeeming to fiat is a separate step with its own cost"
+        ]
+      },
+      "cost": {
+        "parts": [
+          {
+            "component": "fx_loss",
+            "amount": "2065.11835015",
+            "pct": "30.58852672490639",
+            "determined": true
+          },
+          {
+            "component": "network_fees",
+            "determined": false,
+            "reason": "network fee not measured; determining it requires the path's operation count and the current Stellar base fee"
+          },
+          {
+            "component": "anchor_fee",
+            "determined": false,
+            "reason": "anchor fee not available; the anchor does not publish an ANCHOR_QUOTE_SERVER, so its fee cannot be obtained programmatically"
+          },
+          {
+            "component": "slippage",
+            "determined": false,
+            "reason": "single quote available; slippage requires a comparison across sizes"
+          },
+          {
+            "component": "expected_failure",
+            "determined": false,
+            "reason": "no failure history exists yet; runstore is collecting but has not accumulated enough observations"
+          }
+        ],
+        "total_loss_pct": "30.58852672490639"
+      },
+      "notes": [
+        "No viable route. The best of 1 priced route(s) still loses 30.6% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      ]
+    },
+    {
+      "send_amount": "10",
+      "marginal_cost": "2310.41640695",
+      "marginal_from": "5",
+      "marginal_to": "10",
+      "priced": true,
+      "integrity": "DIRECT",
+      "path_count": 3,
+      "quote": {
+        "kind": "dex",
+        "description": "USDC -\u003e BTC -\u003e XLM -\u003e NGNC",
+        "hops": [
+          {
+            "code": "USDC",
+            "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+            "asset": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+          },
+          {
+            "code": "BTC",
+            "issuer": "GDPJALI4AZKUU2W426U5WKMAT6CN3AJRPIIRYR2YM54TL2GDWO5O2MZM",
+            "asset": "stellar:BTC:GDPJALI4AZKUU2W426U5WKMAT6CN3AJRPIIRYR2YM54TL2GDWO5O2MZM"
+          },
+          {
+            "code": "XLM",
+            "asset": "stellar:native"
+          },
+          {
+            "code": "NGNC",
+            "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+            "peg": "NGN",
+            "asset": "stellar:NGNC:GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+          }
+        ],
+        "source": "stellar-dex",
+        "receive_amount": "9127.0335014",
+        "effective_rate": "912.70335014",
+        "loss_pct": "32.40520376074054",
+        "loss_amount": "4375.53",
+        "verdict": "UNUSABLE",
+        "path_count": 3,
+        "warnings": [
+          "delivers NGNC tokens, not NGN in a bank account; redeeming to fiat is a separate step with its own cost"
+        ]
+      },
+      "cost": {
+        "parts": [
+          {
+            "component": "fx_loss",
+            "amount": "4375.5347571",
+            "pct": "32.40520376074054",
+            "determined": true
+          },
+          {
+            "component": "network_fees",
+            "determined": false,
+            "reason": "network fee not measured; determining it requires the path's operation count and the current Stellar base fee"
+          },
+          {
+            "component": "anchor_fee",
+            "determined": false,
+            "reason": "anchor fee not available; the anchor does not publish an ANCHOR_QUOTE_SERVER, so its fee cannot be obtained programmatically"
+          },
+          {
+            "component": "slippage",
+            "determined": false,
+            "reason": "single quote available; slippage requires a comparison across sizes"
+          },
+          {
+            "component": "expected_failure",
+            "determined": false,
+            "reason": "no failure history exists yet; runstore is collecting but has not accumulated enough observations"
+          }
+        ],
+        "total_loss_pct": "32.40520376074054"
+      },
+      "notes": [
+        "Unregistered hop asset(s) BTC(GDPJ…) appeared in pathfinding and are not in the asset registry. An unrecognised hop is currently treated as having an independent market; see asset/known.go for the bounded false-negative.",
+        "No viable route. The best of 1 priced route(s) still loses 32.4% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      ]
+    },
+    {
+      "send_amount": "25",
+      "marginal_cost": "8238.43698185",
+      "marginal_from": "10",
+      "marginal_to": "25",
+      "priced": true,
+      "integrity": "DIRECT",
+      "path_count": 2,
+      "quote": {
+        "kind": "dex",
+        "description": "USDC -\u003e XLM -\u003e NGNC",
+        "hops": [
+          {
+            "code": "USDC",
+            "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+            "asset": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+          },
+          {
+            "code": "XLM",
+            "asset": "stellar:native"
+          },
+          {
+            "code": "NGNC",
+            "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+            "peg": "NGN",
+            "asset": "stellar:NGNC:GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+          }
+        ],
+        "source": "stellar-dex",
+        "receive_amount": "21142.4489073",
+        "effective_rate": "845.697956292",
+        "loss_pct": "37.36762221071352",
+        "loss_amount": "12613.97",
+        "verdict": "UNUSABLE",
+        "path_count": 2,
+        "warnings": [
+          "delivers NGNC tokens, not NGN in a bank account; redeeming to fiat is a separate step with its own cost",
+          "thin liquidity: this size gets 7.3% worse pricing than a 10 USDC trade"
+        ]
+      },
+      "cost": {
+        "parts": [
+          {
+            "component": "fx_loss",
+            "amount": "12613.97173895",
+            "pct": "37.36762221071352",
+            "determined": true
+          },
+          {
+            "component": "network_fees",
+            "determined": false,
+            "reason": "network fee not measured; determining it requires the path's operation count and the current Stellar base fee"
+          },
+          {
+            "component": "anchor_fee",
+            "determined": false,
+            "reason": "anchor fee not available; the anchor does not publish an ANCHOR_QUOTE_SERVER, so its fee cannot be obtained programmatically"
+          },
+          {
+            "component": "slippage",
+            "determined": false,
+            "reason": "single quote available; slippage requires a comparison across sizes"
+          },
+          {
+            "component": "expected_failure",
+            "determined": false,
+            "reason": "no failure history exists yet; runstore is collecting but has not accumulated enough observations"
+          }
+        ],
+        "total_loss_pct": "37.36762221071352"
+      },
+      "notes": [
+        "No viable route. The best of 1 priced route(s) still loses 37.4% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      ]
+    },
+    {
+      "send_amount": "50",
+      "marginal_cost": "17183.73666635",
+      "marginal_from": "25",
+      "marginal_to": "50",
+      "priced": true,
+      "integrity": "DIRECT",
+      "path_count": 3,
+      "quote": {
+        "kind": "dex",
+        "description": "USDC -\u003e PYUSD -\u003e XLM -\u003e NGNC",
+        "hops": [
+          {
+            "code": "USDC",
+            "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+            "asset": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+          },
+          {
+            "code": "PYUSD",
+            "issuer": "GDQE7IXJ4HUHV6RQHIUPRJSEZE4DRS5WY577O2FY6YQ5LVWZ7JZTU2V5",
+            "peg": "USD",
+            "asset": "stellar:PYUSD:GDQE7IXJ4HUHV6RQHIUPRJSEZE4DRS5WY577O2FY6YQ5LVWZ7JZTU2V5"
+          },
+          {
+            "code": "XLM",
+            "asset": "stellar:native"
+          },
+          {
+            "code": "NGNC",
+            "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+            "peg": "NGN",
+            "asset": "stellar:NGNC:GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+          }
+        ],
+        "source": "stellar-dex",
+        "receive_amount": "37715.1328872",
+        "effective_rate": "754.302657744",
+        "loss_pct": "44.1363566320682",
+        "loss_amount": "29797.71",
+        "verdict": "UNUSABLE",
+        "path_count": 3,
+        "warnings": [
+          "delivers NGNC tokens, not NGN in a bank account; redeeming to fiat is a separate step with its own cost",
+          "thin liquidity: this size gets 17.4% worse pricing than a 10 USDC trade"
+        ]
+      },
+      "cost": {
+        "parts": [
+          {
+            "component": "fx_loss",
+            "amount": "29797.7084053",
+            "pct": "44.1363566320682",
+            "determined": true
+          },
+          {
+            "component": "network_fees",
+            "determined": false,
+            "reason": "network fee not measured; determining it requires the path's operation count and the current Stellar base fee"
+          },
+          {
+            "component": "anchor_fee",
+            "determined": false,
+            "reason": "anchor fee not available; the anchor does not publish an ANCHOR_QUOTE_SERVER, so its fee cannot be obtained programmatically"
+          },
+          {
+            "component": "slippage",
+            "determined": false,
+            "reason": "single quote available; slippage requires a comparison across sizes"
+          },
+          {
+            "component": "expected_failure",
+            "determined": false,
+            "reason": "no failure history exists yet; runstore is collecting but has not accumulated enough observations"
+          }
+        ],
+        "total_loss_pct": "44.1363566320682"
+      },
+      "notes": [
+        "No viable route. The best of 1 priced route(s) still loses 44.1% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      ]
+    },
+    {
+      "send_amount": "100",
+      "marginal_cost": "43196.1883679",
+      "marginal_from": "50",
+      "marginal_to": "100",
+      "priced": true,
+      "integrity": "DIRECT",
+      "path_count": 3,
+      "quote": {
+        "kind": "dex",
+        "description": "USDC -\u003e PYUSD -\u003e XLM -\u003e NGNC",
+        "hops": [
+          {
+            "code": "USDC",
+            "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+            "asset": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+          },
+          {
+            "code": "PYUSD",
+            "issuer": "GDQE7IXJ4HUHV6RQHIUPRJSEZE4DRS5WY577O2FY6YQ5LVWZ7JZTU2V5",
+            "peg": "USD",
+            "asset": "stellar:PYUSD:GDQE7IXJ4HUHV6RQHIUPRJSEZE4DRS5WY577O2FY6YQ5LVWZ7JZTU2V5"
+          },
+          {
+            "code": "XLM",
+            "asset": "stellar:native"
+          },
+          {
+            "code": "NGNC",
+            "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+            "peg": "NGN",
+            "asset": "stellar:NGNC:GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+          }
+        ],
+        "source": "stellar-dex",
+        "receive_amount": "62031.7858118",
+        "effective_rate": "620.317858118",
+        "loss_pct": "54.05926885594496",
+        "loss_amount": "72993.90",
+        "verdict": "UNUSABLE",
+        "path_count": 3,
+        "warnings": [
+          "delivers NGNC tokens, not NGN in a bank account; redeeming to fiat is a separate step with its own cost",
+          "thin liquidity: this size gets 32.0% worse pricing than a 10 USDC trade"
+        ]
+      },
+      "cost": {
+        "parts": [
+          {
+            "component": "fx_loss",
+            "amount": "72993.8967732",
+            "pct": "54.05926885594496",
+            "determined": true
+          },
+          {
+            "component": "network_fees",
+            "determined": false,
+            "reason": "network fee not measured; determining it requires the path's operation count and the current Stellar base fee"
+          },
+          {
+            "component": "anchor_fee",
+            "determined": false,
+            "reason": "anchor fee not available; the anchor does not publish an ANCHOR_QUOTE_SERVER, so its fee cannot be obtained programmatically"
+          },
+          {
+            "component": "slippage",
+            "determined": false,
+            "reason": "single quote available; slippage requires a comparison across sizes"
+          },
+          {
+            "component": "expected_failure",
+            "determined": false,
+            "reason": "no failure history exists yet; runstore is collecting but has not accumulated enough observations"
+          }
+        ],
+        "total_loss_pct": "54.05926885594496"
+      },
+      "notes": [
+        "No viable route. The best of 1 priced route(s) still loses 54.1% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      ]
+    },
+    {
+      "send_amount": "250",
+      "marginal_cost": "163397.7431119",
+      "marginal_from": "100",
+      "marginal_to": "250",
+      "priced": true,
+      "integrity": "DIRECT",
+      "path_count": 2,
+      "quote": {
+        "kind": "dex",
+        "description": "USDC -\u003e XLM -\u003e NGNC",
+        "hops": [
+          {
+            "code": "USDC",
+            "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+            "asset": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+          },
+          {
+            "code": "XLM",
+            "asset": "stellar:native"
+          },
+          {
+            "code": "NGNC",
+            "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+            "peg": "NGN",
+            "asset": "stellar:NGNC:GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+          }
+        ],
+        "source": "stellar-dex",
+        "receive_amount": "101172.5665774",
+        "effective_rate": "404.6902663096",
+        "loss_pct": "70.02864502796766",
+        "loss_amount": "236391.64",
+        "verdict": "UNUSABLE",
+        "path_count": 2,
+        "warnings": [
+          "delivers NGNC tokens, not NGN in a bank account; redeeming to fiat is a separate step with its own cost",
+          "thin liquidity: this size gets 55.7% worse pricing than a 10 USDC trade"
+        ]
+      },
+      "cost": {
+        "parts": [
+          {
+            "component": "fx_loss",
+            "amount": "236391.6398851",
+            "pct": "70.02864502796766",
+            "determined": true
+          },
+          {
+            "component": "network_fees",
+            "determined": false,
+            "reason": "network fee not measured; determining it requires the path's operation count and the current Stellar base fee"
+          },
+          {
+            "component": "anchor_fee",
+            "determined": false,
+            "reason": "anchor fee not available; the anchor does not publish an ANCHOR_QUOTE_SERVER, so its fee cannot be obtained programmatically"
+          },
+          {
+            "component": "slippage",
+            "determined": false,
+            "reason": "single quote available; slippage requires a comparison across sizes"
+          },
+          {
+            "component": "expected_failure",
+            "determined": false,
+            "reason": "no failure history exists yet; runstore is collecting but has not accumulated enough observations"
+          }
+        ],
+        "total_loss_pct": "70.02864502796766"
+      },
+      "notes": [
+        "No viable route. The best of 1 priced route(s) still loses 70.0% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      ]
+    },
+    {
+      "send_amount": "500",
+      "marginal_cost": "310622.6510765",
+      "marginal_from": "250",
+      "marginal_to": "500",
+      "priced": true,
+      "integrity": "DIRECT",
+      "path_count": 2,
+      "quote": {
+        "kind": "dex",
+        "description": "USDC -\u003e XLM -\u003e NGNC",
+        "hops": [
+          {
+            "code": "USDC",
+            "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+            "asset": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+          },
+          {
+            "code": "XLM",
+            "asset": "stellar:native"
+          },
+          {
+            "code": "NGNC",
+            "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+            "peg": "NGN",
+            "asset": "stellar:NGNC:GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+          }
+        ],
+        "source": "stellar-dex",
+        "receive_amount": "128114.1219634",
+        "effective_rate": "256.2282439268",
+        "loss_pct": "81.02374014917482",
+        "loss_amount": "547014.29",
+        "verdict": "UNUSABLE",
+        "path_count": 2,
+        "warnings": [
+          "delivers NGNC tokens, not NGN in a bank account; redeeming to fiat is a separate step with its own cost",
+          "thin liquidity: this size gets 71.9% worse pricing than a 10 USDC trade"
+        ]
+      },
+      "cost": {
+        "parts": [
+          {
+            "component": "fx_loss",
+            "amount": "547014.2909616",
+            "pct": "81.02374014917482",
+            "determined": true
+          },
+          {
+            "component": "network_fees",
+            "determined": false,
+            "reason": "network fee not measured; determining it requires the path's operation count and the current Stellar base fee"
+          },
+          {
+            "component": "anchor_fee",
+            "determined": false,
+            "reason": "anchor fee not available; the anchor does not publish an ANCHOR_QUOTE_SERVER, so its fee cannot be obtained programmatically"
+          },
+          {
+            "component": "slippage",
+            "determined": false,
+            "reason": "single quote available; slippage requires a comparison across sizes"
+          },
+          {
+            "component": "expected_failure",
+            "determined": false,
+            "reason": "no failure history exists yet; runstore is collecting but has not accumulated enough observations"
+          }
+        ],
+        "total_loss_pct": "81.02374014917482"
+      },
+      "notes": [
+        "No viable route. The best of 1 priced route(s) still loses 81.0% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      ]
+    },
+    {
+      "send_amount": "1000",
+      "marginal_cost": "655455.065372",
+      "marginal_from": "500",
+      "marginal_to": "1000",
+      "priced": true,
+      "integrity": "DIRECT",
+      "path_count": 2,
+      "quote": {
+        "kind": "dex",
+        "description": "USDC -\u003e XLM -\u003e NGNC",
+        "hops": [
+          {
+            "code": "USDC",
+            "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+            "asset": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+          },
+          {
+            "code": "XLM",
+            "asset": "stellar:native"
+          },
+          {
+            "code": "NGNC",
+            "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+            "peg": "NGN",
+            "asset": "stellar:NGNC:GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+          }
+        ],
+        "source": "stellar-dex",
+        "receive_amount": "147787.4695164",
+        "effective_rate": "147.7874695164",
+        "loss_pct": "89.05486225382595",
+        "loss_amount": "1202469.36",
+        "verdict": "UNUSABLE",
+        "path_count": 2,
+        "warnings": [
+          "delivers NGNC tokens, not NGN in a bank account; redeeming to fiat is a separate step with its own cost",
+          "thin liquidity: this size gets 83.8% worse pricing than a 10 USDC trade"
+        ]
+      },
+      "cost": {
+        "parts": [
+          {
+            "component": "fx_loss",
+            "amount": "1202469.3563336",
+            "pct": "89.05486225382595",
+            "determined": true
+          },
+          {
+            "component": "network_fees",
+            "determined": false,
+            "reason": "network fee not measured; determining it requires the path's operation count and the current Stellar base fee"
+          },
+          {
+            "component": "anchor_fee",
+            "determined": false,
+            "reason": "anchor fee not available; the anchor does not publish an ANCHOR_QUOTE_SERVER, so its fee cannot be obtained programmatically"
+          },
+          {
+            "component": "slippage",
+            "determined": false,
+            "reason": "single quote available; slippage requires a comparison across sizes"
+          },
+          {
+            "component": "expected_failure",
+            "determined": false,
+            "reason": "no failure history exists yet; runstore is collecting but has not accumulated enough observations"
+          }
+        ],
+        "total_loss_pct": "89.05486225382595"
+      },
+      "notes": [
+        "No viable route. The best of 1 priced route(s) still loses 89.1% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      ]
+    },
+    {
+      "send_amount": "2500",
+      "marginal_cost": "2010377.6208144",
+      "marginal_from": "1000",
+      "marginal_to": "2500",
+      "priced": true,
+      "integrity": "DIRECT",
+      "path_count": 2,
+      "quote": {
+        "kind": "dex",
+        "description": "USDC -\u003e XLM -\u003e NGNC",
+        "hops": [
+          {
+            "code": "USDC",
+            "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+            "asset": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+          },
+          {
+            "code": "XLM",
+            "asset": "stellar:native"
+          },
+          {
+            "code": "NGNC",
+            "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+            "peg": "NGN",
+            "asset": "stellar:NGNC:GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+          }
+        ],
+        "source": "stellar-dex",
+        "receive_amount": "162795.087477",
+        "effective_rate": "65.1180349908",
+        "loss_pct": "95.17735931830542",
+        "loss_amount": "3212846.98",
+        "verdict": "UNUSABLE",
+        "path_count": 2,
+        "warnings": [
+          "delivers NGNC tokens, not NGN in a bank account; redeeming to fiat is a separate step with its own cost",
+          "thin liquidity: this size gets 92.9% worse pricing than a 10 USDC trade"
+        ]
+      },
+      "cost": {
+        "parts": [
+          {
+            "component": "fx_loss",
+            "amount": "3212846.977148",
+            "pct": "95.17735931830542",
+            "determined": true
+          },
+          {
+            "component": "network_fees",
+            "determined": false,
+            "reason": "network fee not measured; determining it requires the path's operation count and the current Stellar base fee"
+          },
+          {
+            "component": "anchor_fee",
+            "determined": false,
+            "reason": "anchor fee not available; the anchor does not publish an ANCHOR_QUOTE_SERVER, so its fee cannot be obtained programmatically"
+          },
+          {
+            "component": "slippage",
+            "determined": false,
+            "reason": "single quote available; slippage requires a comparison across sizes"
+          },
+          {
+            "component": "expected_failure",
+            "determined": false,
+            "reason": "no failure history exists yet; runstore is collecting but has not accumulated enough observations"
+          }
+        ],
+        "total_loss_pct": "95.17735931830542"
+      },
+      "notes": [
+        "No viable route. The best of 1 priced route(s) still loses 95.2% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      ]
+    },
+    {
+      "send_amount": "5000",
+      "marginal_cost": "3369944.0302077",
+      "marginal_from": "2500",
+      "marginal_to": "5000",
+      "priced": true,
+      "integrity": "DIRECT",
+      "path_count": 2,
+      "quote": {
+        "kind": "dex",
+        "description": "USDC -\u003e XLM -\u003e NGNC",
+        "hops": [
+          {
+            "code": "USDC",
+            "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+            "asset": "stellar:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+          },
+          {
+            "code": "XLM",
+            "asset": "stellar:native"
+          },
+          {
+            "code": "NGNC",
+            "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6",
+            "peg": "NGN",
+            "asset": "stellar:NGNC:GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"
+          }
+        ],
+        "source": "stellar-dex",
+        "receive_amount": "168493.1218943",
+        "effective_rate": "33.69862437886",
+        "loss_pct": "97.50428039068446",
+        "loss_amount": "6582791.01",
+        "verdict": "UNUSABLE",
+        "path_count": 2,
+        "warnings": [
+          "delivers NGNC tokens, not NGN in a bank account; redeeming to fiat is a separate step with its own cost",
+          "thin liquidity: this size gets 96.3% worse pricing than a 10 USDC trade"
+        ]
+      },
+      "cost": {
+        "parts": [
+          {
+            "component": "fx_loss",
+            "amount": "6582791.0073557",
+            "pct": "97.50428039068446",
+            "determined": true
+          },
+          {
+            "component": "network_fees",
+            "determined": false,
+            "reason": "network fee not measured; determining it requires the path's operation count and the current Stellar base fee"
+          },
+          {
+            "component": "anchor_fee",
+            "determined": false,
+            "reason": "anchor fee not available; the anchor does not publish an ANCHOR_QUOTE_SERVER, so its fee cannot be obtained programmatically"
+          },
+          {
+            "component": "slippage",
+            "determined": false,
+            "reason": "single quote available; slippage requires a comparison across sizes"
+          },
+          {
+            "component": "expected_failure",
+            "determined": false,
+            "reason": "no failure history exists yet; runstore is collecting but has not accumulated enough observations"
+          }
+        ],
+        "total_loss_pct": "97.50428039068446"
+      },
+      "notes": [
+        "No viable route. The best of 1 priced route(s) still loses 97.5% against the currency-api mid-market rate. Sending through this corridor at this size is not recommended."
+      ]
+    }
+  ],
+  "measured_at": "2026-09-01T12:00:00Z"
+}

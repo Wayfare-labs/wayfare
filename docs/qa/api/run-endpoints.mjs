@@ -29,6 +29,10 @@ const CASES = [
     note: "docs/api.md: GET / serves the embedded single-file UI." },
   { group: "documented", name: "healthz", method: "GET", path: "/healthz", expect: { status: 200 },
     note: "docs/api.md documents the body as {\"status\":\"ok\"} only." },
+  { group: "documented", name: "readyz", method: "GET", path: "/readyz", expect: { status: 200 },
+    note: "docs/api.md: readiness is 200 only when the embedded chain verified at startup and the " +
+      "store answers a read; 503 otherwise, same body either way (#704). A 404 here means the " +
+      "deployment predates the endpoint, which is a finding about the deploy, not the code." },
   { group: "documented", name: "assets", method: "GET", path: "/api/assets", expect: { status: 200 },
     note: "docs/api.md: assets[] with can_be_destination." },
   { group: "documented", name: "chain-heads", method: "GET", path: "/api/chain-heads", expect: { status: 200 },
@@ -81,6 +85,9 @@ const CASES = [
     note: "docs/api.md: unsupported methods return 405." },
   { group: "method", name: "put-healthz", method: "PUT", path: "/healthz", expect: UNSUPPORTED_METHOD,
     note: "docs/api.md: unsupported methods return 405." },
+  { group: "method", name: "post-readyz", method: "POST", path: "/readyz", expect: { status: 405, code: "method_not_allowed" },
+    note: "Readiness is a probe, not a switch: the same cause carries the same code as on every " +
+      "other endpoint (#704). A 404 here means the deployment predates the endpoint." },
 
   // --- Error paths -------------------------------------------------------
   { group: "error", name: "corridor-unknown-to", method: "GET", path: "/api/corridor?to=NOPE", expect: { status: 400, code: "unknown_receive_asset" },
@@ -113,6 +120,8 @@ const CASES = [
     note: "/api/chain-heads accepts no parameters other than pretty." },
   { group: "error", name: "healthz-unknown-param", method: "GET", path: "/healthz?foo=1", expect: { status: 400, code: "invalid_query" },
     note: "/healthz accepts no parameters." },
+  { group: "error", name: "readyz-unknown-param", method: "GET", path: "/readyz?foo=1", expect: { status: 400, code: "invalid_query" },
+    note: "/readyz accepts pretty and nothing else." },
 ];
 
 async function main() {
