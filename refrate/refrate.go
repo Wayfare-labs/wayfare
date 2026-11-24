@@ -20,6 +20,11 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// DefaultMaxAge is the absolute freshness bound for production reference
+// rates. The providers publish daily; allowing 72 hours tolerates a missed
+// daily update while refusing a rate that has survived multiple refreshes.
+const DefaultMaxAge = 72 * time.Hour
+
 // Rate is a mid-market rate for a currency pair at a point in time.
 //
 // Mid-market means no spread: the midpoint between what buyers pay and
@@ -167,6 +172,25 @@ func (e *ErrRateLimited) Error() string {
 	return msg
 }
 
+// ErrStaleRate reports a reference rate that cannot be proven fresh enough.
+// UnknownAge is true when the provider supplied no AsOf timestamp.
+type ErrStaleRate struct {
+	Source     string
+	Pair       string
+	AsOf       time.Time
+	Age        time.Duration
+	MaxAge     time.Duration
+	UnknownAge bool
+}
+
+func (e *ErrStaleRate) Error() string {
+	if e.UnknownAge {
+		return fmt.Sprintf("refrate: %s rate for %s has unknown age (provider supplied no as-of timestamp)", e.Source, e.Pair)
+	}
+	return fmt.Sprintf("refrate: %s rate for %s is %s old, exceeds max age %s",
+		e.Source, e.Pair, e.Age.Round(time.Second), e.MaxAge)
+}
+
 // Static is a Provider backed by hardcoded rates.
 //
 // Its purpose is tests and offline operation, and it is deliberately awkward
@@ -218,14 +242,21 @@ func (c *Checked) Name() string { return c.Inner.Name() }
 
 // Rate implements Provider, rejecting stale results.
 func (c *Checked) Rate(ctx context.Context, base, quote string) (Rate, error) {
+	if c.Inner == nil {
+		return Rate{}, fmt.Errorf("refrate: Checked requires an inner provider")
+	}
 	r, err := c.Inner.Rate(ctx, base, quote)
 	if err != nil {
 		return Rate{}, err
 	}
-	if c.MaxAge > 0 && r.Age() > c.MaxAge {
-		return Rate{}, fmt.Errorf(
-			"refrate: %s rate for %s is %s old, exceeds max age %s",
-			r.Source, r.Pair(), r.Age().Round(time.Second), c.MaxAge)
+	if c.MaxAge > 0 {
+		if r.AsOf.IsZero() {
+			return Rate{}, &ErrStaleRate{Source: r.Source, Pair: r.Pair(), MaxAge: c.MaxAge, UnknownAge: true}
+		}
+		age := time.Since(r.AsOf)
+		if age > c.MaxAge {
+			return Rate{}, &ErrStaleRate{Source: r.Source, Pair: r.Pair(), AsOf: r.AsOf, Age: age, MaxAge: c.MaxAge}
+		}
 	}
 	return r, nil
 }
