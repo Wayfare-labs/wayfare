@@ -12,6 +12,7 @@ var allowedHeaderPrefixes = []string{
 	"cache-control",
 	"etag",
 	"stellar-",
+	"x-ratelimit-",
 }
 
 // allowedExactHeaders defines exact header names that are permitted in recorded snapshots.
