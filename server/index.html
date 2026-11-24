@@ -1221,6 +1221,7 @@ async function loadAssets() {
 
 function buildSelector(data) {
   const sel = $('to');
+  const compareSel = $('compare-to');
   const all = data.assets || [];
   const assets = all.filter(a => a.can_be_destination);
   // The send side of every label is the settlement asset: the one entry the
@@ -1247,7 +1248,7 @@ function buildSelector(data) {
     return a.code.localeCompare(b.code);
   });
 
-  sel.innerHTML = assets.map((a, i) => {
+  const options = assets.map((a, i) => {
     // Destination from the entry's own code, the peg it reports beside it,
     // and the settlement asset found above: `USDC \u2192 NGNC (NGN)` built
     // entirely from the response. The optional bracketed note is the stored
@@ -1275,7 +1276,8 @@ function buildSelector(data) {
     // URL-first (issue #292): a corridor change is a navigation. The sizes
     // the reader typed carry over — they describe how to measure, not which
     // corridor — and the URL bar is updated through the shared path.
-    loadCorridor(sel.value);
+    navigationLive = false;
+    navigateTo();
   });
 }
 
@@ -1496,10 +1498,55 @@ function evidenceSource(source) {
 }
 
 let corridorRequest = 0;
+let navigationLive = false;
 
-// readSizes returns the trimmed input, or '' when it is empty. Validation is
-// deliberately server-side only: parseSizes is the contract, and the UI
-// showing the API's own error beats a second validator drifting from it.
+const DEFAULT_SIZES_STR = '0.1,1,5,10,25,50,100,250,500,1000,2500,5000';
+
+// corridorQuery is the one builder for measurement requests. The default
+// ladder is the API default, so spelling it out would only make shared URLs
+// longer and risk drifting from the server's canonical sizes.
+function corridorQuery(to, sizes, live = false) {
+  const q = new URLSearchParams({ to });
+  if (sizes && sizes.ok && sizes.norm !== DEFAULT_SIZES_STR) {
+    if (sizes.norm) q.set('sizes', sizes.norm);
+  }
+  if (live) q.set('live', '1');
+  return `/api/corridor?${q}`;
+}
+
+// readURLState restores only a corridor the loaded asset list actually offers.
+// A stale or hand-edited ?to= never silently selects an unverified asset.
+function readURLState() {
+  const params = new URLSearchParams(location.search);
+  const to = params.get('to');
+  const available = Array.from($('to').options).some(option => option.value === to && to);
+  if (!available) return null;
+  const sizes = params.get('sizes') || '';
+  $('to').value = to;
+  $('sizes').value = sizes;
+  navigationLive = params.get('live') === '1';
+  return { to, sizes, live: navigationLive };
+}
+
+// writeURLState keeps measurement state shareable without adding browser
+// history entries for every selector or size change.
+function writeURLState({ to, sizes = '', live = false }) {
+  const url = new URL(location.href);
+  const q = url.searchParams;
+  q.delete('to');
+  q.delete('sizes');
+  q.delete('live');
+  if (to) q.set('to', to);
+  if (sizes && sizes !== DEFAULT_SIZES_STR) q.set('sizes', sizes);
+  if (live) q.set('live', '1');
+  navigationLive = live;
+  const query = q.toString();
+  history.replaceState(null, '', `${url.pathname}${query ? `?${query}` : ''}${url.hash}`);
+}
+
+// readSizes returns the trimmed input, or '' when it is empty. The UI mirrors
+// the server's validation for immediate feedback; the server remains the
+// authoritative boundary for every request.
 function readSizes() {
   return $('sizes').value.trim();
 }
@@ -1555,14 +1602,12 @@ async function measure() {
     return;
   }
   sizesInput.removeAttribute('aria-invalid');
-  lastRequestedSizes = sizes.norm;
+  lastRequestedSizes = sizes.norm === DEFAULT_SIZES_STR ? '' : sizes.norm;
   const requestId = ++corridorRequest;
   $('run').disabled = true;
   $('status').textContent = 'measuring live — each size is its own round trip to Horizon, so more sizes take longer…';
   try {
-    const q = new URLSearchParams({ to });
-    if (sizes.norm !== '') q.set('sizes', sizes.norm);
-    const r = await fetch(`/api/corridor?${q}&live=1`);
+    const r = await fetch(corridorQuery(to, sizes, true));
     const data = await r.json();
     if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code });
     if (!validCorridorReading(data, to)) throw new Error('The corridor response was incomplete or invalid.');
@@ -2074,7 +2119,7 @@ async function compareCorridors() {
   $('compare-out').innerHTML = '';
   try {
     const responses = await Promise.all([first, second].map(async code => {
-      const r = await fetch(`/api/corridor?to=${encodeURIComponent(code)}`);
+      const r = await fetch(corridorQuery(code, parseSizesInput('')));
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       return data;
@@ -3136,7 +3181,26 @@ if ($('market-structure')) {
   $('market-structure').addEventListener('click', loadMarketStructure);
 }
 
+async function navigateTo({ write = true } = {}) {
+  const to = $('to').value;
+  const sizes = parseSizesInput(readSizes());
+  if (!sizes.ok) {
+    $('sizes').setAttribute('aria-invalid', 'true');
+    $('status').textContent = sizes.error;
+    return;
+  }
+  $('sizes').removeAttribute('aria-invalid');
+  $('status').textContent = '';
+  if (write) writeURLState({ to, sizes: sizes.norm, live: navigationLive });
+  if (navigationLive) {
+    await measure();
+    return;
+  }
+  await loadCorridor(to);
+}
+
 async function loadCorridor(to) {
+  const sizes = parseSizesInput(readSizes());
   const requestId = ++corridorRequest;
   if (!to) {
     setOut(`<div class="panel">${emptyState({
@@ -3146,7 +3210,7 @@ async function loadCorridor(to) {
     return;
   }
   try {
-    const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}`);
+    const r = await fetch(corridorQuery(to, sizes));
     const data = await r.json();
     if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code });
     if (!validCorridorReading(data, to)) throw new Error('The corridor response was incomplete or invalid.');
@@ -3187,6 +3251,16 @@ async function loadCorridor(to) {
   }
 }
 
+window.addEventListener('popstate', () => {
+  const url = readURLState();
+  if (!url) {
+    navigationLive = false;
+    $('sizes').value = '';
+    $('to').selectedIndex = 0;
+  }
+  navigateTo({ write: false });
+});
+
 // On page load, populate the corridor selector from /api/assets first, then
 // fetch the corridor it selected from recorded history (no &live=1) so the
 // loading state disappears as soon as the server responds, whether this is a
@@ -3202,6 +3276,11 @@ async function loadCorridor(to) {
   fetchChainHeads();
   const ready = await loadAssets();
   if (!ready) return;
+  const url = readURLState();
+  if (url) {
+    await navigateTo();
+    return;
+  }
   await loadCorridor($('to').value);
 })();
 </script>
