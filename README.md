@@ -163,7 +163,7 @@ LAYER 2 — DETERMINISTIC CALCULATION                               [live]
   packages: route, refrate, checks
 
   spread, depth, price impact, concentration
-                                             [implemented, not yet reachable]
+                                             [reachable through corridor sweeps]
   cost decomposition                         [implemented, on the wire]
 
   Market-structure vocabulary and current limits:
@@ -476,7 +476,16 @@ go run ./cmd/wayfared                       # serve + measure every 6h
 go run ./cmd/wayfared -serve=false          # scheduler only, no HTTP
 go run ./cmd/wayfared -verify-store -data ./data
 go run ./cmd/wayfared -export USDC-NGNC -format csv -data ./data > corridor.csv
+
+make build-stamped && ./bin/wayfared -version   # which build produced this
 ```
+
+`-version` names the code commit, the `data/` commit embedded at build time and
+the Go toolchain, each labelled with the source that supplied it, because a
+published figure can only be reproduced against a known build. A value no source
+recorded prints as `unknown` rather than as a guess, which is why the stamp comes
+from `make build-stamped`: `go run` records neither the release stamp nor VCS
+settings, so under `go run` both commits read `unknown (unstamped)`.
 
 `-export` verifies the corridor's hash chain first and refuses to write a CSV
 from a chain that does not reconcile; see
@@ -549,6 +558,16 @@ one place: `chain_head` (the ledger Horizon is on right now),
 `newest_record_at` and `record_count` over the whole run store. Each is
 `null` when it cannot be known — Horizon unreachable, store unreadable or
 empty — never a zero that would read as "very old" or "ledger 0".
+
+`budget` reports the outbound Horizon quota: `capacity`, `refill_per_second`,
+`available`, the waiters on each queue and the grants and refusals since start.
+Every Horizon call — the scheduled sweep and each live request — spends from
+one token bucket (`-horizon-rate-limit`, default 12/s; `-horizon-rate-burst`,
+default 24), because Horizon's public limit is per IP and counts them together.
+A sweep may borrow against future tokens so a run always completes; a live
+request that cannot get one answers with a typed budget error instead of
+waiting until the caller gives up, and `refused_live` counts those. `budget` is
+`null` when the budget is disabled with `-horizon-rate-limit=0`.
 
 Bodies are compact by default; append `&pretty=1` (or `?pretty` on an
 endpoint with no other parameters) to any of the JSON endpoints to get an
@@ -681,8 +700,12 @@ Issues are labelled by area and by difficulty, and assigned to a roadmap
 milestone so you can see which part of the project your work moves. Start with
 [`good first issue`](https://github.com/Wayfare-labs/wayfare/labels/good%20first%20issue).
 
-The full contributor backlog — every gap found in the current tree, with the
-file or response that evidences it — is **[docs/backlog.md](docs/backlog.md)**.
+The live source of open work is the
+**[issue tracker](https://github.com/Wayfare-labs/wayfare/issues)**.
+[docs/backlog.md](docs/backlog.md) is a dated snapshot of the gaps found in the
+tree at commit `93f5cda` (2026-08-24), each with the file or response that
+evidenced it; much of it has since been done, so check the linked issue before
+relying on an entry.
 The dated review of the open `good first issue` label set is
 **[docs/good-first-issue-audit.md](docs/good-first-issue-audit.md)**.
 

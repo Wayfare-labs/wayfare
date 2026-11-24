@@ -1,0 +1,786 @@
+openapi: 3.0.3
+info:
+  title: Wayfare HTTP API
+  description: Public HTTP API reference contracts for Wayfare corridor measurements and monitoring.
+  version: 1.0.0
+paths:
+  /api/corridor:
+    get:
+      summary: Measure or retrieve one corridor
+      description: Returns the latest live measurement or stored history for a corridor.
+      parameters:
+        - name: from
+          in: query
+          description: Send asset code (defaults to USDC)
+          required: false
+          schema:
+            type: string
+        - name: to
+          in: query
+          description: Receive asset code (defaults to NGNC)
+          required: false
+          schema:
+            type: string
+        - name: sizes
+          in: query
+          description: Comma-separated list of positive send amounts (max 24)
+          required: false
+          schema:
+            type: string
+        - name: live
+          in: query
+          description: When 1, bypasses stored history and measures live
+          required: false
+          schema:
+            type: string
+        - name: pretty
+          in: query
+          description: When 1, returns indented JSON
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful corridor measurement or stored reading
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Corridor'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No stored measurement on a history-first instance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '405':
+          description: Method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Upstream measurement failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '504':
+          description: Upstream measurement timed out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    options:
+      summary: CORS preflight
+      responses:
+        '204':
+          description: No Content
+  /api/corridor/trend:
+    get:
+      summary: Read stored measurements for a corridor
+      description: Returns chronological recorded runs for a corridor.
+      parameters:
+        - name: from
+          in: query
+          description: Send asset code (defaults to USDC)
+          required: false
+          schema:
+            type: string
+        - name: to
+          in: query
+          description: Receive asset code (defaults to NGNC)
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Number of runs to return (default 100, capped at 500)
+          required: false
+          schema:
+            type: integer
+        - name: before
+          in: query
+          description: Sequence cursor for pagination
+          required: false
+          schema:
+            type: integer
+        - name: pretty
+          in: query
+          description: When 1, returns indented JSON
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful corridor trend response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trend'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '405':
+          description: Method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/chain-heads:
+    get:
+      summary: Publish the current hash-chain tip for each stored corridor
+      description: Returns the hash-chain tip sequence, timestamp and hash for every corridor.
+      parameters:
+        - name: pretty
+          in: query
+          description: When 1, returns indented JSON
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Stored chain tips
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChainHeads'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '405':
+          description: Method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/assets:
+    get:
+      summary: List verified assets configured in the binary
+      description: Returns verified assets sorted alphabetically by code.
+      parameters:
+        - name: pretty
+          in: query
+          description: When 1, returns indented JSON
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Supported assets list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Assets'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '405':
+          description: Method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/market-structure:
+    get:
+      summary: Identify shared issuer dependencies across corridors
+      description: Analyzes issuer concentrations across destination tokens.
+      parameters:
+        - name: pretty
+          in: query
+          description: When 1, returns indented JSON
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Market structure concentration report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketStructure'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '405':
+          description: Method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/thresholds:
+    get:
+      summary: Publish verdict and divergence band thresholds from code constants
+      description: Exposes the internal constants defining scoring boundaries.
+      parameters:
+        - name: pretty
+          in: query
+          description: When 1, returns indented JSON
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Threshold constants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Thresholds'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '405':
+          description: Method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /healthz:
+    get:
+      summary: Return service health
+      description: Reports operational status, embedded data freshness, and outbound budget.
+      parameters:
+        - name: pretty
+          in: query
+          description: When 1, returns indented JSON
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service health report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /readyz:
+    get:
+      summary: Return service traffic readiness
+      description: Reports whether the instance has verified history and is ready to accept traffic.
+      parameters:
+        - name: pretty
+          in: query
+          description: When 1, returns indented JSON
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Instance is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ready'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '405':
+          description: Method not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Instance is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ready'
+components:
+  schemas:
+    Decimal:
+      type: string
+      pattern: '^-?[0-9]+(\.[0-9]+)?$'
+      description: Exact decimal number represented as a quoted string to avoid floating-point inaccuracies
+    Error:
+      type: object
+      required:
+        - error
+        - code
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+        code:
+          type: string
+          description: Machine-readable lower snake_case error code
+        budget:
+          type: string
+        rungs_requested:
+          type: integer
+        rungs_completed:
+          type: array
+          items:
+            type: string
+        request_id:
+          type: string
+    Asset:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          description: Asset code (e.g. USDC, NGNC)
+        issuer:
+          type: string
+          description: Stellar account ID of the issuing anchor
+        peg:
+          type: string
+          description: Verified fiat peg currency
+        asset:
+          type: string
+          description: SEP-38 / Canonical asset identification string
+    Corridor:
+      type: object
+      required:
+        - send_asset
+        - receive_asset
+        - integrity
+        - reference_mid
+        - reference_source
+        - reference_pair
+        - reference_agreement
+        - scored
+        - floor_loss_pct
+        - floor_size
+        - worst_loss_pct
+        - worst_size
+        - live
+        - rungs
+        - measured_at
+      properties:
+        send_asset:
+          $ref: '#/components/schemas/Asset'
+        receive_asset:
+          $ref: '#/components/schemas/Asset'
+        integrity:
+          type: string
+          enum: [DIRECT, DERIVATIVE, NO-MARKET, UNKNOWN]
+        depends_on:
+          type: array
+          items:
+            $ref: '#/components/schemas/Asset'
+        dependency_chain:
+          type: object
+        reference_mid:
+          $ref: '#/components/schemas/Decimal'
+        reference_source:
+          type: string
+        reference_pair:
+          type: string
+        reference_agreement:
+          type: string
+          enum: [AGREE, DISAGREE, STALE, MALFUNCTION, SINGLE]
+        reference_secondary_mid:
+          $ref: '#/components/schemas/Decimal'
+        reference_secondary_source:
+          type: string
+        reference_divergence_pct:
+          $ref: '#/components/schemas/Decimal'
+        reference_note:
+          type: string
+        reference_as_of:
+          type: string
+        reference_secondary_as_of:
+          type: string
+        reference_fetched_at:
+          type: string
+        reference_diagnostic:
+          type: object
+        scored:
+          type: boolean
+        parallel_status:
+          type: string
+        parallel_mid:
+          $ref: '#/components/schemas/Decimal'
+        parallel_source:
+          type: string
+        parallel_gap_pct:
+          $ref: '#/components/schemas/Decimal'
+        parallel_reason:
+          type: string
+        floor_loss_pct:
+          $ref: '#/components/schemas/Decimal'
+        floor_size:
+          $ref: '#/components/schemas/Decimal'
+        worst_loss_pct:
+          $ref: '#/components/schemas/Decimal'
+        worst_size:
+          $ref: '#/components/schemas/Decimal'
+        recommended:
+          $ref: '#/components/schemas/Quote'
+          nullable: true
+        recommended_size:
+          $ref: '#/components/schemas/Decimal'
+        live:
+          type: boolean
+        stale:
+          $ref: '#/components/schemas/Stale'
+        correction:
+          type: object
+        findings:
+          type: object
+        finding:
+          type: string
+        curve:
+          type: object
+          nullable: true
+        rungs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rung'
+        measured_at:
+          type: string
+        ledger_range:
+          type: object
+    Rung:
+      type: object
+      required:
+        - send_amount
+        - priced
+        - integrity
+      properties:
+        send_amount:
+          $ref: '#/components/schemas/Decimal'
+        priced:
+          type: boolean
+        integrity:
+          type: string
+        quote:
+          $ref: '#/components/schemas/Quote'
+          nullable: true
+        notes:
+          type: array
+          items:
+            type: string
+        marginal_cost:
+          $ref: '#/components/schemas/Decimal'
+        marginal_from:
+          $ref: '#/components/schemas/Decimal'
+        marginal_to:
+          $ref: '#/components/schemas/Decimal'
+        ledger:
+          type: integer
+        cost:
+          type: object
+    Quote:
+      type: object
+      properties:
+        kind:
+          type: string
+        description:
+          type: string
+        source:
+          type: string
+        receive_amount:
+          $ref: '#/components/schemas/Decimal'
+        effective_rate:
+          $ref: '#/components/schemas/Decimal'
+        loss_pct:
+          $ref: '#/components/schemas/Decimal'
+        verdict:
+          type: string
+          enum: [GOOD, FAIR, POOR, UNUSABLE, UNKNOWN]
+        warnings:
+          type: array
+          items:
+            type: string
+        fee:
+          type: object
+    Stale:
+      type: object
+      required:
+        - recorded_at
+        - age_seconds
+        - age_human
+      properties:
+        recorded_at:
+          type: string
+        age_seconds:
+          type: integer
+        age_human:
+          type: string
+    Trend:
+      type: object
+      required:
+        - corridor
+        - send_asset
+        - receive_asset
+        - reference_pair
+        - count
+        - runs
+      properties:
+        corridor:
+          type: string
+        send_asset:
+          $ref: '#/components/schemas/Asset'
+        receive_asset:
+          $ref: '#/components/schemas/Asset'
+        reference_pair:
+          type: string
+        count:
+          type: integer
+        next:
+          type: integer
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendRun'
+        integrity_transitions:
+          type: array
+          items:
+            type: object
+        latest_transition:
+          type: object
+          nullable: true
+        movements:
+          type: array
+          items:
+            type: object
+        divergence_stats:
+          type: object
+    TrendRun:
+      type: object
+      required:
+        - seq
+        - recorded_at
+        - integrity
+      properties:
+        seq:
+          type: integer
+        recorded_at:
+          type: string
+        integrity:
+          type: string
+        depends_on:
+          type: array
+          items:
+            $ref: '#/components/schemas/Asset'
+        reference:
+          type: object
+        floor_loss_pct:
+          $ref: '#/components/schemas/Decimal'
+        floor_size:
+          $ref: '#/components/schemas/Decimal'
+        worst_loss_pct:
+          $ref: '#/components/schemas/Decimal'
+        worst_size:
+          $ref: '#/components/schemas/Decimal'
+        finding:
+          type: string
+        rungs:
+          type: array
+          items:
+            type: object
+    Assets:
+      type: object
+      required:
+        - assets
+      properties:
+        assets:
+          type: array
+          items:
+            $ref: '#/components/schemas/AssetEntry'
+    AssetEntry:
+      type: object
+      required:
+        - code
+        - can_be_destination
+      properties:
+        code:
+          type: string
+        issuer:
+          type: string
+        peg:
+          type: string
+        asset:
+          type: string
+        can_be_destination:
+          type: boolean
+        state:
+          type: object
+          properties:
+            has_history:
+              type: boolean
+            last_integrity:
+              type: string
+            last_measured:
+              type: string
+    ChainHeads:
+      type: object
+      required:
+        - heads
+      properties:
+        heads:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChainHead'
+    ChainHead:
+      type: object
+      required:
+        - corridor
+        - seq
+        - recorded_at
+        - hash
+      properties:
+        corridor:
+          type: string
+        seq:
+          type: integer
+        recorded_at:
+          type: string
+        hash:
+          type: string
+    MarketStructure:
+      type: object
+      required:
+        - issuer_concentrations
+        - corridor_count
+        - concentrated_corridor_count
+        - generated_at
+      properties:
+        issuer_concentrations:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        corridor_count:
+          type: integer
+        concentrated_corridor_count:
+          type: integer
+        generated_at:
+          type: string
+    Thresholds:
+      type: object
+      required:
+        - verdict_thresholds
+        - divergence_thresholds
+      properties:
+        verdict_thresholds:
+          type: object
+          required:
+            - good
+            - fair
+            - poor
+          properties:
+            good:
+              $ref: '#/components/schemas/Decimal'
+            fair:
+              $ref: '#/components/schemas/Decimal'
+            poor:
+              $ref: '#/components/schemas/Decimal'
+        divergence_thresholds:
+          type: object
+          required:
+            - agree
+            - malfunction
+          properties:
+            agree:
+              $ref: '#/components/schemas/Decimal'
+            malfunction:
+              $ref: '#/components/schemas/Decimal'
+    Health:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+        code_commit:
+          type: string
+        data_commit:
+          type: string
+        data:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/HealthCorridorData'
+        freshness:
+          type: object
+        budget:
+          type: object
+    HealthCorridorData:
+      type: object
+      required:
+        - recorded_at
+        - age_seconds
+        - age_human
+      properties:
+        recorded_at:
+          type: string
+        age_seconds:
+          type: integer
+        age_human:
+          type: string
+    Ready:
+      type: object
+      required:
+        - status
+        - checks
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        code_commit:
+          type: string
+        data_commit:
+          type: string
+        checks:
+          $ref: '#/components/schemas/ReadyChecks'
+    ReadyChecks:
+      type: object
+      required:
+        - verification
+        - store
+      properties:
+        verification:
+          type: object
+          required:
+            - state
+          properties:
+            state:
+              type: string
+            note:
+              type: string
+        store:
+          type: object
+          required:
+            - state
+          properties:
+            state:
+              type: string
+            corridors:
+              type: integer
+              nullable: true
+            error:
+              type: string

@@ -52,6 +52,11 @@ or changing the Render plan would be future work. None is described as built
 here. This note does not change verdict thresholds, integrity semantics, check
 composition, or the run-record layout.
 
+`/readyz` (issue #704) is not the endpoint this boundary excludes. It reports
+the verdict recorded on the embedded chain at startup and whether the run
+store answers a read now, and it makes no upstream call by design — so it says
+nothing about Horizon being slow, which is what a cold start is.
+
 ## Related
 
 - [`deployment.md`](deployment.md) — deployment choices and failure fallback
