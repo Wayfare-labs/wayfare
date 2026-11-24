@@ -32,10 +32,11 @@ cause produces the same code on every endpoint. `TestErrorCodeContract` in
 
 | Code | HTTP | Cause | Endpoints |
 |:---|:---|:---|:---|
-| `method_not_allowed` | 405 | A method other than `GET` was used. | `/api/corridor`, `/api/corridor/trend`, `/api/chain-heads`, `/api/market-structure`, `/api/thresholds` |
+| `method_not_allowed` | 405 | A method other than `GET` was used. | `/api/corridor`, `/api/corridor/trend`, `/api/corridor/image`, `/api/chain-heads`, `/api/market-structure`, `/api/thresholds`, `/og/corridor.svg` |
 | `invalid_query` | 400 | An unsupported query parameter was supplied. Parameter handling is strict: a typo like `?tp=NGNC` is an error, not a silent fall-back to the default corridor. | all |
-| `unknown_send_asset` | 400 | The `from` asset code is not in the verified registry. | `/api/corridor`, `/api/corridor/trend` |
-| `unknown_receive_asset` | 400 | The `to` asset code is not in the verified registry. | `/api/corridor`, `/api/corridor/trend` |
+| `unknown_send_asset` | 400 | The `from` asset code is not in the verified registry. | `/api/corridor`, `/api/corridor/trend`, `/api/corridor/image` |
+| `unknown_receive_asset` | 400 | The `to` asset code is not in the verified registry. | `/api/corridor`, `/api/corridor/trend`, `/api/corridor/image` |
+| `no_corridor_data` | 404 | No recorded measurement exists for the requested corridor. | `/api/corridor/image` |
 | `no_fiat_peg` | 400 | The destination asset has no verified fiat peg, so there is no independent rate to score the corridor against. | `/api/corridor`, `/api/corridor/trend` |
 | `invalid_sizes` | 400 | The `sizes` parameter is not a comma-separated list of positive decimals, or names more than 24 sizes. | `/api/corridor` |
 | `invalid_limit` | 400 | The `limit` parameter is not a positive whole number. | `/api/corridor/trend` |
