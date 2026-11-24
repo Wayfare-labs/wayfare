@@ -1799,7 +1799,7 @@ function renderChainHeadBlock(d) {
   return `<div class="chain-head-block" aria-label="Chain head verification">
     <span>Chain head:</span>
     <code class="chain-head-hash" title="${esc(fullHash)}">${esc(shortHash)}</code>
-    <button type="button" class="btn-copy" onclick="copyText('${esc(fullHash)}', this)">Copy hash</button>
+    <button type="button" class="btn-copy" data-action="copy-hash" data-hash="${esc(fullHash)}">Copy hash</button>
     <a href="docs/verify-store.md" target="_blank" rel="noopener">How to verify</a>
   </div>`;
 }
@@ -1933,8 +1933,8 @@ function render(d, options = {}) {
   }
 
   const downloadBar = `<div class="panel-actions">
-    <button id="download-csv" type="button" class="btn-download" onclick="downloadLadderCSV()">Download CSV</button>
-    <button id="download-json" type="button" class="btn-download" onclick="downloadLadderJSON()">Download JSON</button>
+    <button id="download-csv" type="button" class="btn-download" data-action="download-csv">Download CSV</button>
+    <button id="download-json" type="button" class="btn-download" data-action="download-json">Download JSON</button>
   </div>`;
 
   parts.push(`<div class="panel"><h2 id="measurements">Measurements</h2>${downloadBar}<div class="scroll">${table(d.rungs, d.scored)}</div></div>`);
@@ -3180,6 +3180,18 @@ $('compare').addEventListener('click', compareCorridors);
 if ($('market-structure')) {
   $('market-structure').addEventListener('click', loadMarketStructure);
 }
+$('out').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn || !$('out').contains(btn)) return;
+  const action = btn.dataset.action;
+  if (action === 'copy-hash') {
+    copyText(btn.dataset.hash || '', btn);
+  } else if (action === 'download-csv') {
+    downloadLadderCSV();
+  } else if (action === 'download-json') {
+    downloadLadderJSON();
+  }
+});
 
 async function navigateTo({ write = true } = {}) {
   const to = $('to').value;

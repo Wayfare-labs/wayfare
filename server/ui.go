@@ -153,6 +153,21 @@ func uiCSP() string {
 			return
 		}
 		hashes := computeScriptHashes(body)
+		var rendered bytes.Buffer
+		if err := uiTemplate.Execute(&rendered, uiPageData{}); err == nil {
+			for _, rh := range computeScriptHashes(rendered.Bytes()) {
+				found := false
+				for _, eh := range hashes {
+					if eh == rh {
+						found = true
+						break
+					}
+				}
+				if !found {
+					hashes = append(hashes, rh)
+				}
+			}
+		}
 		scriptSrc := "'self'"
 		if len(hashes) > 0 {
 			scriptSrc += " " + strings.Join(hashes, " ")
