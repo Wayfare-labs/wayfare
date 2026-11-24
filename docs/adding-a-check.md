@@ -101,6 +101,21 @@ says what is being observed. The ID is the stable handle a reader correlates
 findings by across runs, so it must not encode a result: `issuer.auth-flags`,
 not `issuer.no-clawback`.
 
+**Start from the scaffold.** From the repository root:
+
+```bash
+go run ./internal/tools/newcheck -id toml.your-fact -name YourFact
+```
+
+writes `checks/toml_your_fact.go` — the descriptor, the injectable `HTTPClient`
+with a `GuardedClient` default, and a `Run` that is undetermined until you fill
+it in — plus `checks/toml_your_fact_test.go`, an offline test with undetermined,
+pass and fail cases. It then prints the `Runner.Default()` line Step 6 asks for.
+It refuses to overwrite an existing file and rejects an ID that does not match
+the form above. The generated test fails until its TODOs are answered, so an
+unimplemented scaffold cannot be merged. `-dry-run` prints both files without
+writing them. Registration stays manual: Step 6 is a decision, not boilerplate.
+
 **Choose `Cost` honestly.** `CostFree` means derivable from data already
 fetched (that is what `Subject.Profile` is for); `CostOneRequest` is a single
 round trip; `CostExpensive` is several. The descriptor exists so a scheduler can
