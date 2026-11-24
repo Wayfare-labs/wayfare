@@ -70,16 +70,15 @@ func TestUISerialisedURLOmitsDefaultSizes(t *testing.T) {
 }
 
 func TestUISizesInputValidatedBeforeRequest(t *testing.T) {
-	t.Skip("pins UI markup that server/index.html on main does not contain; fails on main independently of the server/CLI changes in this PR")
 	page := uiSource(t)
 	// The UI mirrors the server's sizes= validation (decimal, positive, at
 	// most 24) so an invalid value is refused before a request is spent. The
 	// server still validates — the UI check is affordance, not the boundary.
 	for _, want := range []string{
 		"function parseSizesInput",
-		"parts.length > 24",       // mirrors maxSizes in api.go
-		"is not a decimal number", // a person-readable reason, in text
-		"aria-invalid",            // the field, not just the banner, carries the failure
+		"parts.length > MAX_SIZES", // mirrors maxSizes in api.go
+		"is not a decimal number",  // a person-readable reason, in text
+		"aria-invalid",             // the field, not just the banner, carries the failure
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("UI missing %q; an invalid sizes value would not be explained before the request", want)

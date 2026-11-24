@@ -1,6 +1,7 @@
 package server
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -27,6 +28,12 @@ func TestUISizesControlExists(t *testing.T) {
 
 	if !strings.Contains(page, `input id="sizes"`) {
 		t.Error(`no <input id="sizes">; the reader cannot choose a transfer size`)
+	}
+	if got := strings.Count(page, `id="sizes"`); got != 1 {
+		t.Errorf(`id="sizes" occurs %d times, want exactly once`, got)
+	}
+	if got := strings.Count(page, `id="sizes-help"`); got != 1 {
+		t.Errorf(`id="sizes-help" occurs %d times, want exactly once`, got)
 	}
 	if !strings.Contains(page, `<label for="sizes">`) {
 		t.Error(`no <label for="sizes">; the control must be labelled, not colour- or placeholder-only`)
@@ -60,6 +67,20 @@ func TestUIMeasureSendsSizes(t *testing.T) {
 	}
 }
 
+func TestUIUniqueIDAttributes(t *testing.T) {
+	page := uiHTML(t)
+	markup := regexp.MustCompile(`(?s)<script\b[^>]*>.*?</script>`).ReplaceAllString(page, "")
+	ids := regexp.MustCompile(`\bid="([^"]+)"`).FindAllStringSubmatch(markup, -1)
+	seen := make(map[string]bool, len(ids))
+	for _, match := range ids {
+		id := match[1]
+		if seen[id] {
+			t.Errorf("static markup repeats id=%q", id)
+		}
+		seen[id] = true
+	}
+}
+
 // TestUIMirrorsParseSizesContract pins the client-side validation to the
 // server's contract in parseSizes (server/api.go): positive decimal amounts,
 // at most maxSizes of them. MAX_SIZES is asserted against the real constant
@@ -75,7 +96,7 @@ func TestUIMirrorsParseSizesContract(t *testing.T) {
 	}
 	for _, want := range []string{
 		"function sizesValidation",              // the one validator
-		"is not a number",                       // non-numeric parts are named, not swallowed
+		"is not a decimal number",               // non-decimal parts are named, not swallowed
 		"Every size must be a positive amount.", // zero and negatives are refused
 		"At most ${MAX_SIZES} sizes can be measured in one request.",
 	} {

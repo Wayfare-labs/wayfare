@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Wayfare-labs/wayfare/metrics"
+	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/runstore"
 )
 
@@ -337,7 +338,7 @@ func TestNewSchedulerRejectsAnUnusableFailoverHost(t *testing.T) {
 		"ftp://horizon.example.org",
 	}
 	for _, secondary := range tests {
-		sched, err := newScheduler(nil, nil, t.TempDir(), "", secondary, nil, quietLogger(), metrics.New())
+		sched, err := newScheduler(nil, nil, t.TempDir(), "", secondary, refrate.DefaultMaxAge, nil, quietLogger(), metrics.New())
 		if err == nil {
 			t.Errorf("-horizon-secondary=%q was accepted", secondary)
 		}
@@ -355,7 +356,7 @@ func TestNewSchedulerRejectsAnUnusableFailoverHost(t *testing.T) {
 func TestNewSchedulerAcceptsAFailoverHostAndRecordsIt(t *testing.T) {
 	dataDir := t.TempDir()
 	sched, err := newScheduler(nil, nil, dataDir, "https://horizon.example.org",
-		"https://backup.example.org", nil, quietLogger(), metrics.New())
+		"https://backup.example.org", refrate.DefaultMaxAge, nil, quietLogger(), metrics.New())
 	if err != nil {
 		t.Fatalf("newScheduler with a configured failover host: %v", err)
 	}
@@ -374,7 +375,7 @@ func TestNewSchedulerWithNoFailoverHostStillStarts(t *testing.T) {
 	// The flag is optional and empty is its default, so "not configured" must
 	// not read as a bad value: refusing to start here would take the service
 	// down for the absence of a stopgap.
-	sched, err := newScheduler(nil, nil, t.TempDir(), "", "", nil, quietLogger(), metrics.New())
+	sched, err := newScheduler(nil, nil, t.TempDir(), "", "", refrate.DefaultMaxAge, nil, quietLogger(), metrics.New())
 	if err != nil {
 		t.Fatalf("newScheduler without -horizon-secondary: %v", err)
 	}

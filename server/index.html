@@ -286,11 +286,17 @@
     button:hover:not(:disabled), select:hover:not(:disabled), input:hover:not(:disabled) {
       border-color: var(--accent); background: var(--panel-alt);
     }
+    .sizes-input:hover:not(:disabled) {
+      border-color: var(--accent); background: var(--panel-alt);
+    }
   }
   button:active:not(:disabled) {
     background: var(--panel-alt); box-shadow: var(--press-shadow);
   }
   button:focus-visible, select:focus-visible, input:focus-visible {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring);
+  }
+  .sizes-input:focus-visible {
     outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring);
   }
   /* Every focusable thing in the page carries the same indicator (issue
@@ -816,7 +822,7 @@
     <label for="sizes">Send sizes (USDC, comma-separated)</label>
     <input id="sizes" name="sizes" class="sizes-input" inputmode="decimal" autocomplete="off"
       placeholder="Default: 0.1 to 5000"
-      aria-describedby="sizes-help" spellcheck="false">
+      aria-describedby="sizes-help" aria-errormessage="status" spellcheck="false">
     <span id="sizes-help" class="cs-info" title="The engine sorts the chosen sizes ascending before pricing, and an unpriced size is reported as such — never as a zero.">Leave empty for the default ladder:
     0.1, 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500 and 5000. Why these sizes:
     the bottom rung isolates the corridor's spread, the top rung exposes exhaustion.</span>
@@ -1545,31 +1551,33 @@ function readSizes() {
   return $('sizes').value.trim();
 }
 
-// sizesValidation reports why the current input cannot be sent, or '' when it
-// can. Colour alone never carries this (the message text is the signal); the
-// invalid state is also mirrored onto the input via aria-invalid so screen
-// readers get it without a repaint.
-function sizesValidation(raw) {
-  if (raw === '') return '';
+// parseSizesInput mirrors the server's positive-decimal and 24-size limits.
+// Invalid values are explained before any request is sent.
+function parseSizesInput(raw) {
+  if (raw === '') return { ok: true, norm: '' };
   const parts = raw.split(',');
-  if (parts.length > MAX_SIZES)
-    return `At most ${MAX_SIZES} sizes can be measured in one request.`;
-  for (const p of parts) {
-    const t = p.trim();
-    if (t === '') continue;
-    if (!/^[+]?\d*\.?\d+([eE][+-]?\d+)?$/.test(t))
-      return `“${t}” is not a number the engine can measure.`;
-    if (!isDecimal(t) || compareDecimalStrings(t, '0') <= 0)
-      return 'Every size must be a positive amount.';
+  if (parts.length > MAX_SIZES) {
+    return { ok: false, norm: '', error: `At most ${MAX_SIZES} sizes can be measured in one request.` };
   }
-  return '';
+  for (const part of parts) {
+    const size = part.trim();
+    if (size === '') continue;
+    if (!isDecimal(size)) {
+      return { ok: false, norm: '', error: `“${size}” is not a decimal number.` };
+    }
+    if (compareDecimalStrings(size, '0') <= 0) {
+      return { ok: false, norm: '', error: 'Every size must be a positive amount.' };
+    }
+  }
+  const norm = parts.map(part => part.trim()).filter(Boolean).join(',');
+  return { ok: true, norm };
 }
 
-function parseSizesInput(raw) {
-  const problem = sizesValidation(raw);
-  if (problem) return { ok: false, norm: '', error: problem };
-  const norm = raw.split(',').map(part => part.trim()).filter(Boolean).join(',');
-  return { ok: true, norm };
+// sizesValidation reports why the current input cannot be sent, or '' when it
+// can. Kept as a small adapter for existing validation consumers.
+function sizesValidation(raw) {
+  const parsed = parseSizesInput(raw);
+  return parsed.ok ? '' : parsed.error;
 }
 
 // --- Measurement -------------------------------------------------------------
@@ -1607,7 +1615,9 @@ async function measure() {
     if (requestId !== corridorRequest || $('to').value !== to) return;
     render(data);
     // Reflect the exact request that produced this reading.
-    writeURLState({ to, sizes: sizes.norm, live: true });
+    if (typeof writeURLState === 'function') {
+      writeURLState({ to, sizes: sizes.norm, live: true });
+    }
     $('status').textContent = '';
   } catch (e) {
     if (requestId !== corridorRequest || $('to').value !== to) return;
