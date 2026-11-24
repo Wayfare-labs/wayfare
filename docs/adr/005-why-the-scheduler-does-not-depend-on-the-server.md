@@ -24,19 +24,23 @@ The dependency graph is:
 
 ```
 .         →
-asset     →
 analysis  → runstore
 anchor    → asset
+api       →
+asset     →
 automerge →
+buildinfo →
 checks    → anchor, asset, dex, refrate
 dex       → asset, transport
+failover  → transport
 measure   →
-monitor   → asset, checks, route, runstore, snapshot
+metrics   →
+monitor   → asset, checks, failover, metrics, route, runstore, snapshot
 refrate   → transport
 route     → asset, checks, dex, refrate, sep38
-runstore  → checks, route, snapshot
+runstore  → asset, checks, route, snapshot
 sep38     → asset
-server    → analysis, asset, checks, refrate, route, runstore
+server    → analysis, asset, buildinfo, checks, failover, metrics, refrate, route, runstore, transport
 snapshot  →
 transport →
 ```
@@ -59,8 +63,8 @@ through the hash-chained history on disk.
 ## Enforcement
 
 The graph above is not documentation that happens to be true. It is the
-allow-list `TestPackageImportGraph` in `importgraph_test.go` reads at build
-time: an import that is not a row here fails the test, and a row here that the
+allow-list `TestPackageImportGraph` in `importgraph_test.go` reads when the
+tests run: an import that is not a row here fails the test, and a row here that the
 code does not use fails it too. Adding an edge is a change to this ADR and to
 the code in the same commit, which is the point — the rule is enforced, not
 remembered.
