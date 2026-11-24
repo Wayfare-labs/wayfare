@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -233,7 +234,7 @@ func moduleRoot(t *testing.T) string {
 // goIn runs the go command in dir with workspaces disabled, so the module copy
 // is tested as its own module rather than through the contributor's GOWORK.
 func goIn(dir string, args ...string) (string, error) {
-	cmd := exec.Command("go", args...)
+	cmd := exec.CommandContext(context.Background(), "go", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 	out, err := cmd.CombinedOutput()
