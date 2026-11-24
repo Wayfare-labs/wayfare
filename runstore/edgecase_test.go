@@ -808,7 +808,12 @@ func TestLargeChain_HundredRecords(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		r := fixedRecord()
 		r.FloorLossPct = fmt.Sprintf("25.%03d", i%1000)
-		r.RecordedAt = time.Date(2026, 8, 21, 22, i%24, i%60, 0, time.UTC)
+		// Spaced, not derived from i%%24 and i%%60: those wrap, so record 24
+		// would be timed before record 23 and Append refuses an out-of-order
+		// record (#703). The timestamps are incidental to what this test
+		// asserts, but they have to be legal input.
+		r.RecordedAt = time.Date(2026, 8, 21, 22, 0, 0, 0, time.UTC).
+			Add(time.Duration(i) * time.Minute)
 		if err := s.Append(ctx(), r); err != nil {
 			t.Fatalf("Append %d: %v", i, err)
 		}

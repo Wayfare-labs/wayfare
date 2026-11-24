@@ -1,0 +1,68 @@
+name: Corridor Proposal
+description: Propose a new fiat or stablecoin corridor for Wayfare to measure.
+title: "Corridor: "
+labels: ["area:corridor", "area:research"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Adding a new corridor is the most useful contribution you can make.
+        Per [`docs/adding-a-corridor.md`](https://github.com/Wayfare-labs/wayfare/blob/main/docs/adding-a-corridor.md),
+        an asset code identifies nothing — the issuer account is the identity.
+        Please structure your proposal to mirror the first section of `docs/corridor-research-template.md`.
+
+  - type: input
+    id: target_currency
+    attributes:
+      label: Target currency / Asset code
+      description: The ISO-4217 fiat currency or asset code (e.g. XOF, UGX, BRL, EURC).
+      placeholder: "e.g. XOF"
+    validations:
+      required: true
+
+  - type: textarea
+    id: why_it_matters
+    attributes:
+      label: Why this corridor matters
+      description: Explain the remittance or economic importance of this corridor and what hypothesis is being tested.
+      placeholder: "e.g. Remittance flows between ... and ..., active trade corridor, benchmark pegged asset, etc."
+    validations:
+      required: true
+
+  - type: textarea
+    id: candidate_issuers
+    attributes:
+      label: Candidate issuers & identity verification
+      description: Enumerate candidate issuer Stellar accounts and their declared home domains (read from Horizon /accounts/<issuer>).
+      placeholder: |
+        - Issuer account: `G...`
+        - Declared home domain: `example.com`
+        - Account auth flags: auth_required / auth_revocable / auth_immutable / auth_clawback_enabled
+    validations:
+      required: true
+
+  - type: textarea
+    id: toml_urls
+    attributes:
+      label: SEP-1 stellar.toml URL(s)
+      description: Direct link(s) to the published `stellar.toml` file(s) and currency declarations.
+      placeholder: |
+        - URL: `https://example.com/.well-known/stellar.toml`
+        - Status declared: `live` / `pending`
+        - Anchor asset: ...
+        - ANCHOR_QUOTE_SERVER declared: yes / no
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: verification_checks
+    attributes:
+      label: Verification checklist
+      description: Check each box to confirm repository measurement constraints.
+      options:
+        - label: "I verified the issuer account live from the issuer's own published `stellar.toml` (not copied from a block explorer or asset list)"
+          required: true
+        - label: "Every claim cited carries its source and the date it was checked"
+          required: true
+        - label: "I understand that a negative or inconclusive finding (e.g. NO-MARKET) is a valid result and will be reported as such"
+          required: true
