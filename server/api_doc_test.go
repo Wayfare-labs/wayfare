@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// TestAPIDocRoutesParity asserts that all nine routes registered by the server
+// TestAPIDocRoutesParity asserts that all eleven routes registered by the server
 // have an exact matching "## `GET <path>`" section in docs/api.md, and vice versa.
 func TestAPIDocRoutesParity(t *testing.T) {
 	expectedRoutes := []string{
@@ -22,7 +22,9 @@ func TestAPIDocRoutesParity(t *testing.T) {
 		"/api/market-structure",
 		"/api/thresholds",
 		"/healthz",
+		"/metrics",
 		"/og/corridor.svg",
+		"/readyz",
 	}
 	sort.Strings(expectedRoutes)
 
@@ -74,7 +76,7 @@ func TestAPIDocRoutesParity(t *testing.T) {
 		}
 	}
 
-	// Verify that Server.Handler() serves all nine routes
+	// Verify that Server.Handler() serves all eleven routes
 	srv := testServer(t, liveNGNCPaths, "1580.00")
 
 	for _, path := range expectedRoutes {
