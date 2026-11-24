@@ -23,33 +23,36 @@ the history would have gaps exactly where nobody was looking.
 The dependency graph is:
 
 ```
-.         →
-analysis  → runstore
-anchor    → asset
-api       →
-asset     →
-automerge →
-buildinfo →
-checks    → anchor, asset, dex, refrate
-dex       → asset, transport
-failover  → transport
-measure   →
-metrics   →
-monitor   → asset, checks, failover, metrics, route, runstore, snapshot
-refrate   → transport
-route     → asset, checks, dex, refrate, sep38
-runstore  → asset, checks, route, snapshot
-sep38     → asset
-server    → analysis, asset, buildinfo, checks, failover, metrics, refrate, route, runstore, transport
-snapshot  →
-transport →
+.                       →
+analysis                → runstore
+anchor                  → asset
+api                     →
+asset                   →
+automerge               →
+buildinfo               →
+checks                  → anchor, asset, dex, refrate
+dex                     → asset, transport
+failover                → transport
+internal/tools/newcheck →
+measure                 →
+metrics                 →
+monitor                 → asset, checks, failover, metrics, route, runstore, snapshot
+refrate                 → transport
+route                   → asset, checks, dex, refrate, sep38
+runstore                → asset, checks, route, snapshot
+sep38                   → asset
+server                  → analysis, asset, buildinfo, checks, failover, metrics, refrate, route, runstore, transport
+snapshot                →
+transport               →
 ```
 
 `.` is the repository root package. `cmd/*` and `examples/*` are leaves: they
 may import from the graph above, and nothing in it may import them.
 
-Neither `monitor` nor `server` imports the other. They communicate only
-through the hash-chained history on disk.
+Neither `monitor` nor `server` imports the other. Measurements pass between
+them only through the hash-chained history on disk. When both run in one
+process they also share a `*metrics.Collector`: the scheduler writes sweep
+counters into it and the server serves them at `/metrics`.
 
 ## Consequences
 
