@@ -520,7 +520,7 @@ Deployment, cost and backup: **[docs/deployment.md](docs/deployment.md)**
 ### HTTP API
 
 - [GET /healthz](docs/api.md#get-healthz)
-- [GET /api/assets](docs/api.md#get-api-assets)
+- [GET /api/assets](docs/api.md#get-apiassets)
 - [GET /api/corridor](docs/api.md#get-apicorridor)
 - [GET /api/corridor/trend](docs/api.md#get-apicorridortrend)
 - [GET /api/chain-heads](docs/api.md#get-apichain-heads) — pin the current stored chain tips
