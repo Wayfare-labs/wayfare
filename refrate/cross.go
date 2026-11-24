@@ -250,16 +250,10 @@ func (c *Cross) Rate(ctx context.Context, base, quote string) (Rate, error) {
 
 	switch {
 	case primaryErr != nil && secondaryErr != nil:
-		// %v, not %w, deliberately. Each provider has its own client timeout,
-		// so wrapping would let two provider timeouts satisfy
-		// errors.Is(err, context.DeadlineExceeded) in server/api.go and be
-		// reported as the request budget elapsing (504 upstream_timeout) when
-		// the budget had not. The request's own deadline is returned unwrapped
-		// above via ctx.Err().
 		return Rate{}, fmt.Errorf(
 			"refrate: no reference rate for %s/%s: %s was %s (%w); %s was %s (%w)",
 			base, quote,
-			c.Primary.Name(), errorDescription(primaryErr), primaryErr, //nolint:errorlint // see above
+			c.Primary.Name(), errorDescription(primaryErr), primaryErr,
 			c.Secondary.Name(), errorDescription(secondaryErr), secondaryErr)
 
 	case primaryErr != nil:
