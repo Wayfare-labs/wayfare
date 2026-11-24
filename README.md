@@ -100,6 +100,11 @@ Why Stellar-native and what the code uses: **[docs/why-stellar-native.md](docs/w
 Full figures, with timestamps and raw output:
 **[docs/corridor-measurements.md](docs/corridor-measurements.md)**
 
+Off-chain context:
+
+- [Remittance benchmark versus World Bank RPW](docs/research-remittance-benchmark.md)
+- [MoneyGram Stellar cash-out observability](docs/research-moneygram-cashout-observability.md)
+
 Measured live on 2026-08-08 against Horizon pathfinding, three corridors from
 one issuer, all within a 60-second window:
 
