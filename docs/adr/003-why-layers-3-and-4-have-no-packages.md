@@ -45,7 +45,22 @@ just empty."
 - When layer 3 or 4 work begins, it starts from a clean design rather than
   from constraints imposed by a premature interface.
 
+## Enforcement
+
+The absence is checked rather than trusted: `TestLayersThreeAndFourHaveNoPackages`
+in `importgraph_test.go` fails if a package with one of the names below
+exists. The list names the concepts layers 3 and 4 would arrive under; an empty
+package by any of them is exactly the stub this ADR forbids.
+
+```
+forbidden: probability, predict, intelligence, anomaly, statistics, attestation, attest, verifiable
+```
+
+When layer 3 or 4 does begin, this ADR is superseded by the one that designs
+it, and the list shrinks with that decision.
+
 ## Evidence
 
 - `README.md` — Architecture section
 - `docs/backlog.md` — "What does not exist" section
+- `importgraph_test.go` — the test that enforces this absence
