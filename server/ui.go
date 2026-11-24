@@ -132,7 +132,11 @@ func computeScriptHashes(html []byte) []string {
 		}
 		content := html[bodyStart : bodyStart+bodyEnd]
 		if len(bytes.TrimSpace(content)) > 0 {
-			h := sha256.Sum256(content)
+			// HTML5 preprocessing normalizes CRLF and CR to LF before hashing
+			// inline <script> text, so normalize before SHA-256 (#831).
+			normalized := bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
+			normalized = bytes.ReplaceAll(normalized, []byte("\r"), []byte("\n"))
+			h := sha256.Sum256(normalized)
 			hashes = append(hashes, fmt.Sprintf("'sha256-%s'", base64.StdEncoding.EncodeToString(h[:])))
 		}
 		idx = bodyStart + bodyEnd + len(closeTag)
