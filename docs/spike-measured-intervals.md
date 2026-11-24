@@ -85,6 +85,10 @@ substituted for one another:
    a parameter or future outcome, usually with a stated confidence/credible
    level and assumptions. That is an inference, not a measurement interval,
    and requires a defensible method and validation before publication.
+   Definition source: NIST/SEMATECH e-Handbook of Statistical Methods,
+   [7.1.4 What are confidence intervals?](https://www.itl.nist.gov/div898/handbook/prc/section1/prc14.htm)
+   (checked 2026-11-24), which defines the interval as a range likely to
+   contain a population parameter, constructed at a user-selected level.
 
 The existing [measurement/inference boundary](measurement-inference-boundary.md)
 rejects adding a confidence interval to a measured loss when no such
