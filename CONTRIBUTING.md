@@ -204,6 +204,23 @@ study. Open an issue with:
 - raw `cmd/ladder` output, with its timestamp
 - the issuer's `stellar.toml` status for the asset
 
+## Required status checks and branch protection
+
+The `main` branch is protected by an active GitHub ruleset (`protecting my wayfare main`) that enforces branch integrity and quality gates:
+
+- **Branch protections:**
+  - Direct pushes to `main` are disabled; all changes must arrive through pull requests.
+  - Branch deletion and force-pushes (`non_fast_forward`) are prohibited.
+  - Linear git history is required (no merge bubbles; squash or rebase).
+  - Strict policy: branches must be up to date with `main` before merging.
+
+- **Required status checks:**
+  1. `build and test`: compiles all packages and binaries, checks formatting with `gofmt`, runs `go vet`, and runs `go test -race` with coverage across multiple timezone configurations to prevent platform or calendar drift.
+  2. `golangci-lint`: executes the static analysis suite enforcing Go idioms, style consistency, and catching common bugs.
+  3. `tests run with no network`: executes the entire test suite in an isolated network blackout environment to guarantee tests rely strictly on committed snapshots and never depend on live external networks.
+  4. `container image builds`: verifies the production Dockerfile compiles successfully, runs binary smoke tests inside the container, performs vulnerability scanning (Trivy/Grype), and generates an SBOM.
+  5. `Malware scan`: analyzes dependencies and action steps for security threats and supply-chain tampering.
+
 ## License
 
 By contributing, you agree that your contributions are licensed under the
