@@ -171,6 +171,15 @@ func FuzzQueryParams(f *testing.F) {
 		},
 		Store:        st,
 		HistoryFirst: false, // ensures live measurements through DEX are exercised
+		// /readyz is fuzzed in its ready configuration. Left at the zero
+		// value it answers 503 for a verdict nobody recorded, which is
+		// correct behaviour the probes below are not allowed to see: this
+		// file's invariant is "never a 5xx", and a readiness refusal is a
+		// deliberate 5xx. The states that produce one are pinned in
+		// ready_test.go instead; what is worth fuzzing here is that no
+		// query string can make the endpoint panic, mis-shape its 400, or
+		// talk to the network.
+		Verification: &Verification{ChainVerified: true, Note: "fuzz seeded store verified at open"},
 	}
 
 	// Build mux directly without rate limiter wrapping it to avoid any 429s
@@ -181,6 +190,7 @@ func FuzzQueryParams(f *testing.F) {
 	mux.HandleFunc("/api/assets", srv.handleAssets)
 	mux.HandleFunc("/api/market-structure", srv.handleMarketStructure)
 	mux.HandleFunc("/healthz", srv.handleHealth)
+	mux.HandleFunc("/readyz", srv.handleReady)
 
 	// Endpoints to test
 	endpoints := []struct {
@@ -196,6 +206,7 @@ func FuzzQueryParams(f *testing.F) {
 		{"/api/assets", false, false, false, false},
 		{"/api/market-structure", false, false, false, false},
 		{"/healthz", false, false, false, false},
+		{"/readyz", false, false, false, false},
 	}
 
 	// 3. Fuzz execution

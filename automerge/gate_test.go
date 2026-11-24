@@ -653,16 +653,26 @@ func TestAutoMergeGate(t *testing.T) {
 			labeled: true, commented: true,
 		},
 		{
-			// GATE 6 — the behaviour this exercise actually found. The
-			// recorded CodeRabbit comment carries neither of the two verdict
-			// phrases the gate parses, because this repository's reviews are
-			// the "not configured" summary rather than a verdict. The gate
-			// holds rather than guessing, which is the safe direction, and it
-			// is why no pull request has ever been auto-merged.
+			// GATE 6 — what the recorded CodeRabbit comment actually is: a
+			// notice that it does not review this repository. That is not a
+			// verdict and never will be, so it does not hold the PR, and the
+			// merge comment must not claim a review happened.
+			name: "coderabbit-skipped-is-not-a-hold",
+			mutate: func(t *testing.T, f *fixtures) {
+				f.pr.Body = tickedBody
+			},
+			stdout: []string{"coderabbit: skipped for this repository", "all gates satisfied; handing off"},
+			merged: true, commented: true,
+		},
+		{
+			// GATE 6 — a CodeRabbit comment in a shape the gate does not
+			// recognise (neither a verdict nor a skip notice) still holds:
+			// merging on an unread review would claim it passed.
 			name: "coderabbit-unparseable",
 			mutate: func(t *testing.T, f *fixtures) {
 				f.pr.Body = tickedBody
 				f.dropHoldMarker()
+				f.coderabbit("Walkthrough: some prose with no verdict in it.")
 			},
 			stdout:  []string{"not auto-merging:"},
 			holds:   []string{"CodeRabbit's review could not be parsed for a verdict"},
@@ -680,6 +690,31 @@ func TestAutoMergeGate(t *testing.T) {
 			stdout:  []string{"not auto-merging:"},
 			holds:   []string{"changes files outside the scope issue #" + issueNumber + " named"},
 			labeled: true, commented: true,
+		},
+		{
+			// GATE 7 — an issue that lists no paths cannot bound a code
+			// change, so a human confirms it.
+			name: "issue-without-paths-holds-code-change",
+			mutate: func(t *testing.T, f *fixtures) {
+				f.pr.Body = tickedBody
+				f.dropHoldMarker()
+				f.issue.Body = "Make the thing better. No file paths here."
+			},
+			stdout:  []string{"not auto-merging:"},
+			holds:   []string{"names no files or packages"},
+			labeled: true, commented: true,
+		},
+		{
+			// GATE 7 — but a change that is only documentation and tests
+			// cannot alter behaviour, so a path-less issue does not hold it.
+			name: "issue-without-paths-accepts-docs-only",
+			mutate: func(t *testing.T, f *fixtures) {
+				f.pr.Body = tickedBody
+				f.issue.Body = "Document the thing. No file paths here."
+				f.files = []fileRec{{Filename: "docs/glossary.md", Status: "modified", Patch: "@@ -1 +1 @@\n-old\n+new"}}
+			},
+			stdout: []string{"all gates satisfied; handing off"},
+			merged: true, commented: true,
 		},
 		{
 			// GATE 7 — the linked issue is found from the branch name when
@@ -711,7 +746,10 @@ func TestAutoMergeGate(t *testing.T) {
 			// The hold comment is one comment per PR: a later evaluation
 			// edits the gate's own comment in place (here the recorded one is
 			// in the old format) instead of adding another.
-			name:    "hold-comment-edited-in-place",
+			name: "hold-comment-edited-in-place",
+			mutate: func(t *testing.T, f *fixtures) {
+				f.coderabbit("Walkthrough: some prose with no verdict in it.")
+			},
 			stdout:  []string{"not auto-merging:"},
 			holds:   []string{"CodeRabbit's review could not be parsed"},
 			labeled: true, commented: false, edited: true,
@@ -802,6 +840,33 @@ func TestAutoMergeGate(t *testing.T) {
 			},
 			stdout:  []string{"comment was ours; nothing to re-evaluate"},
 			noCalls: true,
+		},
+		{
+			// issue_comment also fires for plain issues. Those carry no
+			// issue.pull_request.url, and looking them up as a pull request
+			// 404s, which failed the run for every comment on every issue.
+			name: "comment-on-plain-issue-is-not-a-pr",
+			env: map[string]string{
+				"EVENT_PR": "",
+				"ISSUE_PR": "655",
+				"IS_PR":    "",
+				"HEAD_SHA": "",
+			},
+			stdout:  []string{"comment on issue #655, not a pull request; nothing to gate"},
+			noCalls: true,
+		},
+		{
+			// A comment on a pull request still re-evaluates that PR.
+			name: "comment-on-pr-is-evaluated",
+			env: map[string]string{
+				"EVENT_PR": "",
+				"ISSUE_PR": prNumber,
+				"IS_PR":    "https://api.github.com/repos/" + repoSlug + "/pulls/" + prNumber,
+				"HEAD_SHA": "",
+			},
+			stdout:    []string{"evaluating PR #" + prNumber},
+			merged:    true,
+			commented: true,
 		},
 		{
 			// If the merge itself is refused, the gate fails loudly rather

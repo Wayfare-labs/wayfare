@@ -487,6 +487,7 @@ func TestHandlerRateLimitCoversEveryRoute(t *testing.T) {
 		"/api/assets",
 		"/api/thresholds",
 		"/healthz",
+		"/metrics",
 		"/",
 	}
 	for _, path := range paths {
