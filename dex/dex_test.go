@@ -66,6 +66,26 @@ func dec(t *testing.T, s string) decimal.Decimal {
 	return d
 }
 
+// TestReplayRateLimitedSnapshotReturnsErrRateLimitedWithRetryAfter verifies that replaying
+// the recorded 429 fixture yields *dex.ErrRateLimited with RetryAfter > 0.
+func TestReplayRateLimitedSnapshotReturnsErrRateLimitedWithRetryAfter(t *testing.T) {
+	m := loadSnapshot(t, "rate-limited-429")
+	c := replayClient(m)
+
+	_, err := c.StrictSendPaths(context.Background(), asset.USDC(), dec(t, "100"), asset.NGNC())
+	if err == nil {
+		t.Fatal("expected an error for 429 snapshot replay, got none")
+	}
+
+	var limited *dex.ErrRateLimited
+	if !errors.As(err, &limited) {
+		t.Fatalf("error %q does not unwrap to ErrRateLimited", err)
+	}
+	if limited.RetryAfter != 30*time.Second {
+		t.Errorf("RetryAfter = %s, want 30s", limited.RetryAfter)
+	}
+}
+
 // TestStrictSendPathsParsesRecordedResponse covers the parse against real
 // bytes, including the native hop.
 func TestStrictSendPathsParsesRecordedResponse(t *testing.T) {

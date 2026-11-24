@@ -95,10 +95,8 @@ func main() {
 			"report corridors whose newest record is older than -max-age (or missing) and exit; 1 stale, 2 check unavailable")
 		maxAge = flag.Duration("max-age", 2*monitor.DefaultInterval,
 			"staleness ceiling for -check-fresh; default is two missed sweeps")
-		rescore = flag.Bool("rescore", false,
-			"re-derive every stored classification from its stored rungs and reference and report drift; read-only, exits non-zero on unacknowledged drift")
-		exportChainHeadsFlag = flag.Bool("export-chain-heads", false,
-			"export current chain heads as JSON to stdout and exit")
+		refMaxAge = flag.Duration("ref-max-age", refrate.DefaultMaxAge,
+			"maximum allowed age of a reference rate (default: 72h)")
 		histFirst = flag.Bool("history-first", false,
 			"serve the stored run instead of measuring, unless a request asks for ?live=1")
 		// Per-client request bounds (issue #320). A live measurement is a
@@ -128,6 +126,10 @@ func main() {
 	if *version {
 		printVersion(os.Stdout, progName)
 		return
+	}
+	if *refMaxAge <= 0 {
+		fmt.Fprintln(os.Stderr, "-ref-max-age must be positive")
+		os.Exit(2)
 	}
 
 	logger := newLogger(*logLevel)
@@ -253,12 +255,12 @@ func main() {
 		// Two independent providers, each cached, cross-checked for
 		// divergence. Caching matters here specifically: a ladder is a
 		// dozen quotes that would otherwise each fetch the same mid.
-		RefRate: &refrate.Cross{
-			Primary: &refrate.Cached{Inner: &refrate.ExchangeRateAPI{
+		RefRate: checkedReferenceCross(
+			&refrate.Cached{Inner: &refrate.ExchangeRateAPI{
 				Client: metrics.NewClient(metrics.UpstreamExchangeRateAPI, collector, referenceTimeout),
 				Logger: logger,
 			}},
-			Secondary: &refrate.Cached{Inner: &refrate.CurrencyAPI{
+			&refrate.Cached{Inner: &refrate.CurrencyAPI{
 				Client: metrics.NewClient(metrics.UpstreamCurrencyAPI, collector, referenceTimeout),
 				Logger: logger,
 			}},
@@ -267,11 +269,12 @@ func main() {
 			// It never contributes a scored mid (see refrate.Cross). Cached
 			// because a sweep prices many rungs and a diagnostic is a
 			// daily-published figure, not a per-rung one.
-			Diagnostic: &refrate.Cached{Inner: &refrate.FloatRates{
+			&refrate.Cached{Inner: &refrate.FloatRates{
 				Client: metrics.NewClient(metrics.UpstreamFloatRates, collector, referenceTimeout),
 				Logger: logger,
 			}},
-		},
+			*refMaxAge,
+		),
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -285,7 +288,7 @@ func main() {
 	// Built once for either use: the -once path and the interval path configure
 	// the same snapshots and the same failover, and a second construction would
 	// be a second place for the two to disagree.
-	sched, err := newScheduler(engine, store, *dataDir, *horizon, *horizonSecondary, outbound, logger, collector)
+	sched, err := newScheduler(engine, store, *dataDir, *horizon, *horizonSecondary, *refMaxAge, outbound, logger, collector)
 	if err != nil {
 		logger.Error("configuring the scheduler", "error", err)
 		os.Exit(2)
@@ -388,6 +391,23 @@ func shutdownServer(srv *http.Server, grace time.Duration, logger *slog.Logger) 
 	}
 }
 
+// checkedReferenceCross applies the absolute freshness policy outside each
+// cache. Cached replies are therefore rechecked on every use, and one stale
+// source degrades through Cross rather than becoming an apparently fresh hit.
+func checkedReferenceCross(primary, secondary, diagnostic refrate.Provider, maxAge time.Duration) *refrate.Cross {
+	checked := func(provider refrate.Provider) refrate.Provider {
+		if provider == nil {
+			return nil
+		}
+		return &refrate.Checked{Inner: provider, MaxAge: maxAge}
+	}
+	return &refrate.Cross{
+		Primary:    checked(primary),
+		Secondary:  checked(secondary),
+		Diagnostic: checked(diagnostic),
+	}
+}
+
 // newScheduler wires the scheduled sweep, including the snapshot archive when a
 // data directory was given.
 //
@@ -396,7 +416,7 @@ func shutdownServer(srv *http.Server, grace time.Duration, logger *slog.Logger) 
 // fallback host that was rejected at startup is one that will not be there
 // during the outage it was configured for.
 func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon, horizonSecondary string,
-	budget *transport.Budget, logger *slog.Logger, collector *metrics.Collector) (*monitor.Scheduler, error) {
+	refMaxAge time.Duration, budget *transport.Budget, logger *slog.Logger, collector *metrics.Collector) (*monitor.Scheduler, error) {
 	sched := &monitor.Scheduler{
 		Engine: engine, Store: store, Logger: logger, Metrics: collector,
 		Checks: instrumentedChecksRunner(horizon, collector),
@@ -453,11 +473,12 @@ func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon, 
 			// The root lookups go through the same recorder, so the ledger a
 			// stored range names is itself in the snapshot evidence.
 			Ledgers: snapshotDEX,
-			RefRate: &refrate.Cross{
-				Primary:    &refrate.Cached{Inner: &refrate.ExchangeRateAPI{Client: client(metrics.UpstreamExchangeRateAPI), Logger: logger}},
-				Secondary:  &refrate.Cached{Inner: &refrate.CurrencyAPI{Client: client(metrics.UpstreamCurrencyAPI), Logger: logger}},
-				Diagnostic: &refrate.Cached{Inner: &refrate.FloatRates{Client: client(metrics.UpstreamFloatRates), Logger: logger}},
-			},
+			RefRate: checkedReferenceCross(
+				&refrate.Cached{Inner: &refrate.ExchangeRateAPI{Client: client(metrics.UpstreamExchangeRateAPI), Logger: logger}},
+				&refrate.Cached{Inner: &refrate.CurrencyAPI{Client: client(metrics.UpstreamCurrencyAPI), Logger: logger}},
+				&refrate.Cached{Inner: &refrate.FloatRates{Client: client(metrics.UpstreamFloatRates), Logger: logger}},
+				refMaxAge,
+			),
 		}
 	}
 	sched.SnapshotChecksFactory = func(recorder *snapshot.Recorder) *checks.Runner {
