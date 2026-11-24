@@ -611,9 +611,7 @@ func TestFailedFetchEvictsEntrySoConcurrentWaitersSeeErrorAndSubsequentCallRefet
 		}
 	}
 
-	// The entry should be evicted: the map must be clean. Failed fetches are
-	// not cached, so every waiter's re-fetch also fails and the entry is
-	// deleted each time.
+	// The entry must be evicted after the failed in-flight burst completes.
 	c.mu.Lock()
 	n := len(c.entries)
 	c.mu.Unlock()
@@ -676,5 +674,92 @@ func TestZeroTTLUsesDefaultCacheTTL(t *testing.T) {
 	}
 	if got := inner.calls.Load(); got != 2 {
 		t.Errorf("calls = %d with zero TTL past default window, want 2", got)
+	}
+}
+
+// TestConcurrentFailedFetchCollapsesIntoOneCall verifies issue #871:
+// N concurrent callers waiting on a failing fetch observe exactly one upstream
+// call and all receive the error, while a caller arriving after the burst
+// triggers a fresh fetch (errors are not cached).
+func TestConcurrentFailedFetchCollapsesIntoOneCall(t *testing.T) {
+	const waiters = 12
+	rateLimitErr := &ErrRateLimited{
+		Source:     "counting",
+		RetryAfter: 45 * time.Second,
+		Message:    "too many requests",
+	}
+	inner := &countingProvider{err: rateLimitErr, delay: 40 * time.Millisecond}
+	c := &Cached{Inner: inner}
+
+	var wg sync.WaitGroup
+	errs := make([]error, waiters)
+	for i := 0; i < waiters; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = c.Rate(context.Background(), "USD", "NGN")
+		}(i)
+	}
+	wg.Wait()
+
+	if got := inner.calls.Load(); got != 1 {
+		t.Fatalf("upstream called %d times for %d concurrent callers on failed fetch, want 1", got, waiters)
+	}
+	for i, err := range errs {
+		var limited *ErrRateLimited
+		if !errors.As(err, &limited) {
+			t.Errorf("caller %d got %v, want *ErrRateLimited", i, err)
+		}
+	}
+
+	// A caller arriving after the burst completes triggers a fresh fetch.
+	if _, err := c.Rate(context.Background(), "USD", "NGN"); err == nil {
+		t.Fatal("expected post-burst call while still failing to return error")
+	}
+	if got := inner.calls.Load(); got != 2 {
+		t.Fatalf("calls = %d after post-burst retry, want 2", got)
+	}
+
+	inner.err = nil
+	inner.mid = "1350"
+	got, err := c.Rate(context.Background(), "USD", "NGN")
+	if err != nil {
+		t.Fatalf("expected recovery fetch to succeed, got %v", err)
+	}
+	if !got.Mid.Equal(decimal.RequireFromString("1350")) {
+		t.Errorf("Mid = %s, want 1350", got.Mid)
+	}
+	if calls := inner.calls.Load(); calls != 3 {
+		t.Errorf("calls = %d after recovery fetch, want 3", calls)
+	}
+}
+
+// TestCanceledFetcherDoesNotFailLiveWaiter ensures a live waiter retries if
+// the in-flight fetcher failed solely because its own context was canceled.
+func TestCanceledFetcherDoesNotFailLiveWaiter(t *testing.T) {
+	inner := &countingProvider{mid: "1350", delay: 40 * time.Millisecond}
+	c := &Cached{Inner: inner}
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	err1Ch := make(chan error, 1)
+	go func() {
+		_, err := c.Rate(ctx1, "USD", "NGN")
+		err1Ch <- err
+	}()
+	time.Sleep(5 * time.Millisecond)
+
+	res2Ch := make(chan error, 1)
+	go func() {
+		_, err := c.Rate(context.Background(), "USD", "NGN")
+		res2Ch <- err
+	}()
+	time.Sleep(5 * time.Millisecond)
+
+	cancel1()
+	if err1 := <-err1Ch; !errors.Is(err1, context.Canceled) {
+		t.Fatalf("caller 1 err = %v, want context.Canceled", err1)
+	}
+	if err2 := <-res2Ch; err2 != nil {
+		t.Fatalf("live waiter failed after peer context cancel: %v", err2)
 	}
 }
