@@ -113,6 +113,12 @@ func TestUIBootHasNoHardcodedDefaultCorridor(t *testing.T) {
 			t.Errorf("boot() missing %q", want)
 		}
 	}
+	guard := strings.Index(boot, "if (!ready) return;")
+	for _, load := range []string{"await navigateTo();", "await loadCorridor("} {
+		if at := strings.Index(boot, load); at >= 0 && at < guard {
+			t.Errorf("boot() reaches %q before the ready check", load)
+		}
+	}
 }
 
 // TestUILoadAssetsReportsFailure asserts loadAssets() tells the caller which
