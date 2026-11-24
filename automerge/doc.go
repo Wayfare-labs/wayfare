@@ -1,7 +1,7 @@
 // Package automerge exercises this repository's auto-merge gate offline
 // (issue #319).
 //
-// .github/workflows/auto-merge.yml carries the whole merge decision — seven
+// .github/scripts/auto-merge-gate.sh (run by .github/workflows/auto-merge.yml) carries the whole merge decision — seven
 // gates in ~350 lines of shell — and until now nothing had run it: per the
 // audit in #48 it had never merged a pull request. A gate that is never
 // exercised fails the first time it is trusted, and for this repository the

@@ -64,8 +64,11 @@ literal. A circle has no corner to round.
 
 Spacing and radius carry no colour, so the scale is defined once in the light
 `:root` and needs no dark override. The dark block overrides only colour
-primitives; the scale resolves identically in both schemes. This is the same
-"one contract, rendered twice" rule the interactive states use.
+primitives; the scale resolves identically in both schemes, and no dark-mode
+surface, border or shadow is ever sized differently from its light counterpart.
+This is the same "one contract, rendered twice" rule the interactive states use.
+Dark mode is a designed colour palette, not an inversion of light mode, and
+changing a colour primitive never changes a spacing or radius token.
 
 ## Breakpoints
 

@@ -23,6 +23,7 @@ findings in:
 | #269 cross-browser matrix | [`artifacts/269-cross-browser.md`](artifacts/269-cross-browser.md) |
 | #270 mobile device QA | [`artifacts/270-mobile.md`](artifacts/270-mobile.md) |
 | #272 QA both colour schemes | [`artifacts/272-color-schemes.md`](artifacts/272-color-schemes.md) |
+| #286 token contrast audit (offline CSS specimens) | [`artifacts/286-token-contrast.md`](artifacts/286-token-contrast.md) |
 | #293 errors preserve the page | [`artifacts/293-error-preservation.md`](artifacts/293-error-preservation.md) |
 | #304 state legible without colour | [`artifacts/304-state-legibility.md`](artifacts/304-state-legibility.md) |
 | #751 scheduled accessibility re-audit | [`artifacts/751-scheduled-wcag-audit.md`](artifacts/751-scheduled-wcag-audit.md) |

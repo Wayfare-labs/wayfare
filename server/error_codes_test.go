@@ -88,6 +88,10 @@ func TestErrorCodeContract(t *testing.T) {
 		{"market-structure method", http.MethodPost, "/api/market-structure", codeMethodNotAllowed, http.StatusMethodNotAllowed},
 		{"market-structure unknown param", http.MethodGet, "/api/market-structure?tp=x", codeInvalidQuery, http.StatusBadRequest},
 		{"health unknown param", http.MethodGet, "/healthz?tp=x", codeInvalidQuery, http.StatusBadRequest},
+		// /readyz is a second probe, not a second protocol: the same causes
+		// carry the same codes (issue #704).
+		{"ready method", http.MethodPost, "/readyz", codeMethodNotAllowed, http.StatusMethodNotAllowed},
+		{"ready unknown param", http.MethodGet, "/readyz?tp=x", codeInvalidQuery, http.StatusBadRequest},
 		{"chain-heads method", http.MethodPost, "/api/chain-heads", codeMethodNotAllowed, http.StatusMethodNotAllowed},
 		{"chain-heads unknown param", http.MethodGet, "/api/chain-heads?tp=x", codeInvalidQuery, http.StatusBadRequest},
 		{"thresholds method", http.MethodPost, "/api/thresholds", codeMethodNotAllowed, http.StatusMethodNotAllowed},

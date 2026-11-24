@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 )
 
@@ -270,4 +271,23 @@ func TestCurrencyAPISuccessFields(t *testing.T) {
 	if r.AsOf.IsZero() {
 		t.Error("AsOf must be set from the date field")
 	}
+}
+
+func FuzzCurrencyAPIRate(f *testing.F) {
+	snapshot, err := os.ReadFile("../testdata/snapshots/usdc-ghsc-20260821T222915Z/responses/001-v1-currencies-usd.json")
+	if err != nil {
+		f.Fatalf("reading currency-api snapshot seed: %v", err)
+	}
+	f.Add(snapshot)
+	f.Add([]byte(`{"date":"2026-08-21","usd":{"ngn":0}}`))
+	f.Add([]byte(`{"date":"2026-08-21","usd":{"ngn":-1}}`))
+	f.Add([]byte(`{"date":"2026-08-21","usd":{"ngn":"NaN"}}`))
+
+	f.Fuzz(func(t *testing.T, body []byte) {
+		provider := &CurrencyAPI{Client: &http.Client{Transport: fuzzBodyTransport(body)}}
+		rate, err := provider.Rate(context.Background(), "USD", "NGN")
+		if err == nil && !rate.Mid.IsPositive() {
+			t.Fatalf("provider accepted non-positive rate %s", rate.Mid)
+		}
+	})
 }

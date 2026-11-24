@@ -1,0 +1,35 @@
+/* #286 design candidate only. Loaded by token-contrast.mjs --candidate.
+   Never shipped to the product. The harness first lifts the current explicit
+   dark block out of its OS query; implement that relocation, not duplication. */
+:root {
+  --link-ink: #047857;
+  --provenance-ink: #854D0E;
+  --structural-ink: #334155;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --link-ink: #6EE7B7;
+    --provenance-ink: #FCD34D;
+    --structural-ink: #CBD5E1;
+  }
+}
+:root[data-theme="dark"] {
+  --link-ink: #6EE7B7;
+  --provenance-ink: #FCD34D;
+  --structural-ink: #CBD5E1;
+  --focus-outline: #5EEAD4;
+}
+a.to-table, details.cost-decomp summary { color: var(--link-ink); }
+.provenance:not(.provenance-live) {
+  color: var(--provenance-ink);
+  border-color: var(--provenance-ink);
+  background: color-mix(in srgb, var(--provenance-ink) 10%, transparent);
+}
+.b-direct, .b-derivative, .b-nomarket,
+.cs-info .cs-state.cs-direct, .cs-info .cs-state.cs-derivative,
+.cs-info .cs-state.cs-nomarket {
+  color: var(--structural-ink);
+  background: var(--neutral-soft);
+}
+.f-pass { color: var(--ok); }
+.f-fail { color: var(--bad); }

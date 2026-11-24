@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -168,4 +170,40 @@ func csvRow(r *runstore.Record) []string {
 		r.Reference.SecondaryAsOf,
 		r.Reference.DivergencePct,
 	}
+}
+
+// exportStaticSnapshot writes a static corridors.json snapshot of all corridors
+// to the given file path. This is the wire shape for the corridors.json file
+// published on every sweep (issue #691).
+func exportStaticSnapshot(store runstore.Store, filePath string, logger *slog.Logger) int {
+	if store == nil {
+		logger.Error("-export-static requires a store; none is configured")
+		return 2
+	}
+
+	ctx := context.Background()
+
+	// Build the static snapshot
+	snap, err := runstore.BuildStaticSnapshot(store, ctx, time.Now().UTC())
+	if err != nil {
+		logger.Error("building static snapshot", "error", err)
+		return 2
+	}
+
+	// Marshal to JSON
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		logger.Error("marshaling static snapshot", "error", err)
+		return 2
+	}
+	data = append(data, '\n')
+
+	// Write to file
+	if err := os.WriteFile(filePath, data, 0o644); err != nil {
+		logger.Error("writing static snapshot", "path", filePath, "error", err)
+		return 2
+	}
+
+	logger.Info("exported static snapshot", "path", filePath, "corridors", len(snap.Corridors))
+	return 0
 }

@@ -15,4 +15,10 @@ const (
 	defaultRateLimit = 4.0
 	// defaultRateBurst is the per-client instantaneous allowance.
 	defaultRateBurst = 10
+
+	// Outbound Horizon budget (issue #700). Horizon's public limit is per IP
+	// and counts the sweep and live requests together, so the default sits
+	// under it rather than at a figure that only looks safe per caller.
+	defaultHorizonRate  = 12.0
+	defaultHorizonBurst = 24.0
 )

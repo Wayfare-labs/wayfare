@@ -38,5 +38,5 @@ var DirectDependencies = []string{
 // no other lockfile to drift against.
 var DirectDependenciesPinned = map[string]string{
 	"github.com/BurntSushi/toml":    "v1.6.0",
-	"github.com/shopspring/decimal": "v1.4.0",
+	"github.com/shopspring/decimal": "v1.5.0",
 }

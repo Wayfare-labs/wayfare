@@ -19,6 +19,10 @@ import (
 // both measure the same corridor at the same sizes.
 var DefaultSizes = dex.DefaultSizes
 
+// The Horizon client is the ledger source in production; this makes that a
+// build-time fact, like the Pathfinder assertion.
+var _ LedgerSource = (*dex.Client)(nil)
+
 // ladderConcurrency bounds parallel pricing. Horizon is a shared public
 // service and a ladder is a burst of identical queries, so this stays low
 // enough to be a well-behaved client.
@@ -54,7 +58,29 @@ type Rung struct {
 	// Err is set when this size alone failed to price, so one transient
 	// failure does not discard the whole ladder.
 	Err error
+
+	// Ledger is the ledger sequence Horizon's root reported immediately after
+	// this rung was priced: the newest ledger the rung's book could have
+	// reflected. Zero means unknown — the engine has no ledger source, the
+	// rung failed before it was priced, or the lookup failed — and is never
+	// rendered as ledger 0.
+	Ledger int64
 }
+
+// LedgerRange is the span of ledgers a ladder's rungs were observed at.
+//
+// A ladder takes tens of seconds, which is several ledgers, so its rungs can
+// be priced against different books. The range makes that visible: First and
+// Last are the lowest and highest ledger any rung observed, and a reader can
+// discard a ladder whose span straddled a large book change.
+type LedgerRange struct {
+	First int64
+	Last  int64
+}
+
+// Span is the number of ledgers closed between the first and last
+// observation. Zero means every rung observed the same ledger.
+func (r LedgerRange) Span() int64 { return r.Last - r.First }
 
 // Priced reports whether this rung produced a quote.
 func (r Rung) Priced() bool {
@@ -95,6 +121,14 @@ type LadderResult struct {
 	Integrity Integrity
 	DependsOn []asset.Asset
 
+	// Chain is the full dependency tree when the corridor is derivative.
+	// It is the union across all rungs: if any rung discovered additional
+	// dependencies, they appear here, and when the same dependency was
+	// measured on some rungs but unmeasured on others the measured node
+	// wins — one rung's failed request never erases another's finding.
+	// Nil when the corridor is not derivative.
+	Chain []DependencyNode
+
 	ReferenceMid    decimal.Decimal
 	ReferenceSource string
 
@@ -107,14 +141,14 @@ type LadderResult struct {
 	Parallel *refrate.Parallel
 
 	// Floor is the loss percentage at the smallest size priced. It
-	// approximates the corridor's cost with price impact removed. The
-	// same floor is the baseline every priced rung's slippage is
-	// measured against — see LadderResult.decomposeSlippage for why
-	// this size is the floor and what slippage means on top of it.
+	// approximates the corridor's cost with price impact removed.
 	Floor decimal.Decimal
 
 	// FloorSize is the size Floor was measured at.
 	FloorSize decimal.Decimal
+
+	// FloorEffectiveRate is the effective rate at the smallest priced rung.
+	FloorEffectiveRate decimal.Decimal
 
 	// WorstLoss and WorstSize record the other end of the curve.
 	WorstLoss decimal.Decimal
@@ -130,6 +164,11 @@ type LadderResult struct {
 
 	// Finding is a plain-language statement of what the ladder shows.
 	Finding string
+
+	// LedgerRange is the first and last ledger observed across the rungs.
+	// Nil when no rung observed a ledger, which is the honest "unknown"
+	// rather than a range of zeros.
+	LedgerRange *LedgerRange
 }
 
 // Viable reports whether any size produced a recommendable route.
@@ -306,6 +345,57 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 		Request: req,
 		Rungs:   make([]Rung, len(sorted)),
 	}
+	setUnmeasured := func(err error) {
+		for i, size := range sorted {
+			out.Rungs[i] = Rung{SendAmount: size, Err: err}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		setUnmeasured(err)
+		return out, err
+	}
+
+	// A ladder is one measurement, so every size must be scored against the
+	// same benchmark. Fetch before starting any Horizon work: a missing
+	// reference fails the ladder without spending pathfinder requests.
+	if e.RefRate == nil {
+		err := fmt.Errorf("route: a reference rate provider is required; " +
+			"without one the engine can rank routes but cannot tell a good one from a bad one")
+		setUnmeasured(err)
+		out.summarise()
+		return out, nil
+	}
+	hasValidSize := false
+	for i, size := range sorted {
+		if size.IsZero() || size.IsNegative() {
+			out.Rungs[i] = Rung{
+				SendAmount: size,
+				Err:        fmt.Errorf("route: send amount must be positive, got %s", size),
+			}
+			continue
+		}
+		hasValidSize = true
+	}
+	if !hasValidSize {
+		out.summarise()
+		return out, nil
+	}
+	ref, err := e.RefRate.Rate(ctx, req.ReferenceBase, req.ReferenceQuote)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			setUnmeasured(ctxErr)
+			return out, ctxErr
+		}
+		err = fmt.Errorf("route: reference rate unavailable: %w", err)
+		setUnmeasured(err)
+		out.summarise()
+		return out, nil
+	}
+	if err := ctx.Err(); err != nil {
+		setUnmeasured(err)
+		return out, err
+	}
+	parallel := e.parallelAgainst(ctx, ref)
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, ladderConcurrency)
@@ -317,14 +407,18 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res, err := e.Quote(ctx, Request{
+			res, err := e.quoteWith(ctx, Request{
 				SendAsset:      req.SendAsset,
 				SendAmount:     size,
 				ReceiveAsset:   req.ReceiveAsset,
 				ReferenceBase:  req.ReferenceBase,
 				ReferenceQuote: req.ReferenceQuote,
-			})
-			out.Rungs[i] = Rung{SendAmount: size, Result: res, Err: err}
+			}, ref, parallel)
+			rung := Rung{SendAmount: size, Result: res, Err: err}
+			if err == nil {
+				rung.Ledger = e.observedLedger(ctx)
+			}
+			out.Rungs[i] = rung
 		}(i, size)
 	}
 	wg.Wait()
@@ -336,7 +430,40 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 		return out, err
 	}
 	out.summarise()
+	out.LedgerRange = ledgerRange(out.Rungs)
 	return out, nil
+}
+
+// observedLedger asks the engine's ledger source for the current chain head.
+// A missing source or a failed lookup is unknown (zero), never an error: the
+// ledger annotates a measurement and must not be able to fail one.
+func (e *Engine) observedLedger(ctx context.Context) int64 {
+	if e.Ledgers == nil {
+		return 0
+	}
+	seq, err := e.Ledgers.ChainHead(ctx)
+	if err != nil || seq <= 0 {
+		return 0
+	}
+	return seq
+}
+
+// ledgerRange is the lowest and highest ledger any rung observed, or nil when
+// no rung observed one.
+func ledgerRange(rungs []Rung) *LedgerRange {
+	var out *LedgerRange
+	for _, r := range rungs {
+		if r.Ledger <= 0 {
+			continue
+		}
+		if out == nil {
+			out = &LedgerRange{First: r.Ledger, Last: r.Ledger}
+			continue
+		}
+		out.First = min(out.First, r.Ledger)
+		out.Last = max(out.Last, r.Ledger)
+	}
+	return out
 }
 
 // MarginalClassification describes the direction of marginal cost as size
@@ -409,6 +536,7 @@ func (l *LadderResult) summarise() {
 		anyDirect   bool
 		allNoMarket = true
 		deps        = map[string]asset.Asset{}
+		chainMap    = map[string]DependencyNode{}
 		firstErr    error
 	)
 
@@ -442,6 +570,18 @@ func (l *LadderResult) summarise() {
 			for _, d := range r.Result.DependsOn {
 				deps[d.Code+":"+d.Issuer] = d
 			}
+			for _, c := range r.Result.Chain {
+				// A rung that failed to measure a dependency reports it
+				// unmeasured. That must never overwrite a real measurement
+				// from another rung: the union across rungs keeps the
+				// strongest evidence for each dependency, so a measured
+				// node only ever replaces an unmeasured placeholder.
+				key := c.Asset.Code + ":" + c.Asset.Issuer
+				existing, ok := chainMap[key]
+				if !ok || (c.Measured && !existing.Measured) {
+					chainMap[key] = c
+				}
+			}
 		case IntegrityNoMarket:
 			// leaves allNoMarket intact
 		default:
@@ -460,7 +600,9 @@ func (l *LadderResult) summarise() {
 		l.Rungs[i].Decomposition = Decompose(q, l.ReferenceMid)
 
 		if l.FloorSize.IsZero() {
-			l.Floor, l.FloorSize = q.LossPct, r.SendAmount
+			l.Floor = q.LossPct
+			l.FloorSize = r.SendAmount
+			l.FloorEffectiveRate = q.EffectiveRate
 		}
 		if q.LossPct.GreaterThanOrEqual(l.WorstLoss) {
 			l.WorstLoss, l.WorstSize = q.LossPct, r.SendAmount
@@ -489,15 +631,16 @@ func (l *LadderResult) summarise() {
 		sort.Slice(l.DependsOn, func(i, j int) bool {
 			return l.DependsOn[i].Code < l.DependsOn[j].Code
 		})
+		l.Chain = make([]DependencyNode, 0, len(chainMap))
+		for _, c := range chainMap {
+			l.Chain = append(l.Chain, c)
+		}
+		sort.Slice(l.Chain, func(i, j int) bool {
+			return l.Chain[i].Asset.Code < l.Chain[j].Asset.Code
+		})
 	default:
 		l.Integrity = IntegrityUnknown
 	}
-
-	// Slippage is a ladder-level quantity: each priced rung's
-	// decomposition carries the excess loss over the floor the loop
-	// above established, and the floor rung's own slippage is a
-	// measured zero. decomposeSlippage documents the definition.
-	l.decomposeSlippage()
 
 	l.Curve = l.buildCurve()
 	l.computeMarginalCosts()
@@ -533,11 +676,19 @@ func (l *LadderResult) finding(anyPriced bool, firstErr error) string {
 
 	var prefix string
 	if l.Integrity == IntegrityDerivative {
-		prefix = fmt.Sprintf(
-			"Derivative corridor: every path from %s to %s routes through %s, so "+
-				"%s has no independent market and these figures compound %s's cost "+
-				"with its own. ",
-			send, recv, describeAssets(l.DependsOn), recv, describeAssets(l.DependsOn))
+		if allMeasured(l.Chain) {
+			prefix = fmt.Sprintf(
+				"Derivative corridor: every path from %s to %s routes through %s, so "+
+					"%s has no independent market and these figures inherit %s's "+
+					"liquidity and failure modes. ",
+				send, recv, describeAssets(l.DependsOn), recv, describeAssets(l.DependsOn))
+		} else {
+			prefix = fmt.Sprintf(
+				"Derivative corridor: every path from %s to %s routes through %s, so "+
+					"%s has no independent market. Their own integrity was not fully "+
+					"measured, so these figures may compound an unmeasured loss. ",
+				send, recv, describeAssets(l.DependsOn), recv)
+		}
 	}
 
 	var body string

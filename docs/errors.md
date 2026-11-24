@@ -15,6 +15,9 @@ small JSON object:
   contract: it may be reworded at any time.
 - `code` is the contract. It is a stable, lower-case `snake_case` token that
   names the cause. A client should switch on `code`, never on the English.
+  The bundled web UI follows this rule: it carries `code` onto the error
+  panel as a `data-code` attribute, so each distinct cause is distinguishable
+  in the DOM and to tests, and it never branches on the `error` prose.
 - The language of the response does not change the shape. An error is never
   measurement-shaped: it carries no `integrity`, `rungs`, `floor_loss_pct`,
   `reference_mid`, `finding` or `live` field, so a monitoring dashboard cannot

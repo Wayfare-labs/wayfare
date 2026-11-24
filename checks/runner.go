@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/Wayfare-labs/wayfare/anchor"
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/dex"
@@ -68,6 +70,7 @@ func (r *Runner) Default() []Check {
 		SEP38QuoteServerPublished{},
 		IssuerAuthFlags{HorizonURL: r.HorizonURL, HTTPClient: r.client()},
 		IssuerFlagImmutability{HorizonURL: r.HorizonURL, HTTPClient: r.client()},
+		IssuerDrift{HorizonURL: r.HorizonURL, HTTPClient: r.client()},
 		HomeDomainRoundTrip{HorizonURL: r.HorizonURL, HTTPClient: r.client(), Resolver: r.resolver()},
 	}
 }
@@ -98,6 +101,15 @@ type Corridor struct {
 	// against a reference report undetermined when it is unscorable, and
 	// short-circuit before any network call.
 	Reference refrate.Rate
+
+	// Baseline is the issuer drift observation stored by the previous run of
+	// this corridor, if any. With it the issuer.drift check reports what
+	// changed since then; nil means there is nothing to compare against yet.
+	Baseline *IssuerDriftBaseline
+	// FloorSize and FloorEffectiveRate identify the smallest priced ladder
+	// rung. They are carried into the metric set rather than fetched again.
+	FloorSize          decimal.Decimal
+	FloorEffectiveRate decimal.Decimal
 }
 
 func (r *Runner) checks() []Check {
@@ -119,13 +131,13 @@ func (r *Runner) metrics(c Corridor) []Metric {
 // DefaultMetrics returns the metrics a corridor sweep runs when none were
 // configured.
 //
-// Deliberately small, and deliberately four metrics over one endpoint. The
-// ladder has already spent a dozen pathfinding round trips by the time a
-// corridor reaches this point, so the default set reads the order book and
-// nothing else: spread, concentration, observed depth, and the book's deviation
-// from the reference mid. Each metric fetches the book itself (metrics do not
-// share a fetch, so one cannot silently answer from another's data), which
-// makes the default set four /order_book requests per measured corridor.
+// Deliberately small: four order-book metrics plus a free metric using the
+// ladder's existing floor rung. The ladder has already spent a dozen
+// pathfinding round trips by the time a corridor reaches this point, so the
+// order-book metrics read the book:
+// spread, concentration, observed depth, and deviation from the reference
+// mid. The floor-loss metric reuses the measured smallest rung and makes no
+// additional upstream request.
 //
 // PriceImpactMetric and DepthMetric.RunExecutable are excluded on purpose: both
 // sweep pathfinding at every probed size, and repeating a ladder that was just
@@ -137,6 +149,10 @@ func (r *Runner) DefaultMetrics(c Corridor) []Metric {
 		ConcentrationMetric{DEX: d},
 		DepthMetric{DEX: d},
 		DeviationMetric{DEX: d, Reference: c.Reference},
+		FloorLossMetric{
+			Size: c.FloorSize, EffectiveRate: c.FloorEffectiveRate,
+			Reference: c.Reference,
+		},
 	}
 }
 
@@ -181,11 +197,17 @@ func (r *Runner) client() *http.Client {
 // nothing because a document could not be fetched would discard observations
 // that were perfectly obtainable.
 func (r *Runner) ForAsset(ctx context.Context, a asset.Asset) *Findings {
+	return r.ForAssetWithBaseline(ctx, a, nil)
+}
+
+// ForAssetWithBaseline runs checks with the stored issuer drift observation,
+// if one exists, as the baseline for this asset.
+func (r *Runner) ForAssetWithBaseline(ctx context.Context, a asset.Asset, baseline *IssuerDriftBaseline) *Findings {
 	ctx, cancel := context.WithTimeout(ctx, r.timeout())
 	defer cancel()
 
 	f := &Findings{}
-	for _, res := range RunAll(ctx, r.checks(), r.subject(ctx, a)) {
+	for _, res := range RunAll(ctx, r.checksWithBaseline(baseline), r.subject(ctx, a)) {
 		f.Add(res)
 	}
 	return f
@@ -211,7 +233,7 @@ func (r *Runner) ForCorridor(ctx context.Context, c Corridor) *Findings {
 	subject.ReferenceAgreement = c.Reference.Agreement.String()
 
 	f := &Findings{}
-	for _, res := range RunAll(ctx, r.checks(), subject) {
+	for _, res := range RunAll(ctx, r.checksWithBaseline(c.Baseline), subject) {
 		f.Add(res)
 	}
 	for _, m := range r.metrics(c) {
@@ -248,4 +270,28 @@ func (r *Runner) subject(ctx context.Context, a asset.Asset) Subject {
 		// several different questions.
 	}
 	return subject
+}
+
+// checksWithBaseline returns the check set with the issuer drift baseline, if
+// one is given, installed on the issuer.drift check. The runner's own check
+// set is never modified: each call works on a copy.
+func (r *Runner) checksWithBaseline(baseline *IssuerDriftBaseline) []Check {
+	checks := append([]Check(nil), r.checks()...)
+	if baseline == nil {
+		return checks
+	}
+	for i, check := range checks {
+		switch drift := check.(type) {
+		case IssuerDrift:
+			drift.Baseline = baseline
+			checks[i] = drift
+		case *IssuerDrift:
+			if drift != nil {
+				copy := *drift
+				copy.Baseline = baseline
+				checks[i] = copy
+			}
+		}
+	}
+	return checks
 }

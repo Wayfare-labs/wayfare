@@ -21,6 +21,16 @@
 // Below these thresholds the result is UNDETERMINED. No statistics are
 // fabricated from insufficient data.
 //
+// # Structural floor tracking
+//
+// The structural floor is the corridor's spread at the dust size. Its
+// movement over time is tracked by TrackFloor, which applies the same
+// minimum-sample and undetermined rules to a longitudinal series of floor
+// observations. A floor value that is unavailable for a given observation
+// must be supplied as an unknown (nil), never as zero or a default; such
+// observations are excluded from the series and counted separately so the
+// caller can see how much of the history is missing.
+//
 // # What this is NOT
 //
 //   - Not a new persistence mechanism
@@ -32,6 +42,8 @@
 package analysis
 
 import (
+	"time"
+
 	"github.com/shopspring/decimal"
 )
 
@@ -109,14 +121,21 @@ func DefaultRegimeThresholds() RegimeThresholds {
 	}
 }
 
-// TrendResult holds the output of a trend analysis.
+// Point is one timestamped metric observation.
+type Point struct {
+	At    time.Time
+	Value decimal.Decimal
+}
+
+// TrendResult holds the output of a trend analysis. Slope and Magnitude are
+// expressed in value units per day.
 type TrendResult struct {
 	// Direction is whether the metric is improving, stable, or worsening.
 	Direction TrendDirection
 
 	// Magnitude is the absolute value of the trend slope, expressed in
-	// the same units as the input (typically percentage points per
-	// observation).
+	// the same units as the input per day (typically percentage points per
+	// day).
 	Magnitude decimal.Decimal
 
 	// Slope is the signed trend slope. Positive means increasing values,
@@ -130,6 +149,11 @@ type TrendResult struct {
 type MetricStats struct {
 	// ObservationCount is the total number of observations.
 	ObservationCount int
+
+	// FirstAt and LastAt bound the observations used by the analysis. They are
+	// nil when there are no observations.
+	FirstAt *time.Time
+	LastAt  *time.Time
 
 	// Mean is the arithmetic mean of the observed values.
 	// nil when undetermined (insufficient observations).
@@ -155,14 +179,31 @@ type MetricStats struct {
 	Reason string
 }
 
-// AnalyzeDecimal computes statistics over a slice of decimal values.
+// AnalyzeDecimal computes statistics over a regular six-hour sequence of decimal
+// values. Call AnalyzeSeries when observations have recorded timestamps.
+// Deprecated: use AnalyzeSeries for data whose spacing is not exactly six hours.
 // It applies the documented minimum sample size thresholds and never
 // fabricates statistics from insufficient data.
 //
 // The thresholds parameter controls regime classification. Pass nil to
 // use DefaultRegimeThresholds().
 func AnalyzeDecimal(values []decimal.Decimal, thresholds *RegimeThresholds) *MetricStats {
-	n := len(values)
+	points := make([]Point, len(values))
+	for i, value := range values {
+		points[i] = Point{
+			At:    time.Unix(int64(i)*6*60*60, 0).UTC(),
+			Value: value,
+		}
+	}
+	return AnalyzeSeries(points, thresholds)
+}
+
+// AnalyzeSeries computes statistics over timestamped decimal values.
+// Regression uses elapsed hours from the first point, and reports slope and
+// magnitude in value units per day. The minimum sample sizes are unchanged
+// from AnalyzeDecimal.
+func AnalyzeSeries(points []Point, thresholds *RegimeThresholds) *MetricStats {
+	n := len(points)
 	if thresholds == nil {
 		t := DefaultRegimeThresholds()
 		thresholds = &t
@@ -170,6 +211,11 @@ func AnalyzeDecimal(values []decimal.Decimal, thresholds *RegimeThresholds) *Met
 
 	result := &MetricStats{
 		ObservationCount: n,
+	}
+	if n > 0 {
+		first, last := points[0].At, points[n-1].At
+		result.FirstAt = &first
+		result.LastAt = &last
 	}
 
 	if n == 0 {
@@ -190,6 +236,11 @@ func AnalyzeDecimal(values []decimal.Decimal, thresholds *RegimeThresholds) *Met
 	}
 
 	// Compute mean.
+	values := make([]decimal.Decimal, n)
+	for i, point := range points {
+		values[i] = point.Value
+	}
+
 	mean := computeMean(values)
 	result.Mean = &mean
 
@@ -202,11 +253,59 @@ func AnalyzeDecimal(values []decimal.Decimal, thresholds *RegimeThresholds) *Met
 
 	// Compute trend only with sufficient data.
 	if n >= MinSampleSizeForTrend {
-		trend := computeTrend(values)
+		trend := computeTrendSeries(points)
 		result.Trend = &trend
 	}
 
 	return result
+}
+
+// FloorSeries is a longitudinal series of structural-floor observations.
+// A nil entry is an unknown observation (the floor could not be obtained for
+// that measurement) and is never treated as zero.
+type FloorSeries struct {
+	// Observations are timestamped floor values in chronological order; nil
+	// means unknown for that measurement.
+	Observations []*Point
+}
+
+// FloorTrack is the result of tracking the structural floor over time.
+type FloorTrack struct {
+	// Known is the number of observations with a known floor value.
+	Known int
+
+	// Unknown is the number of observations whose floor was unavailable.
+	// These are excluded from the statistics, never imputed.
+	Unknown int
+
+	// Stats is the analysis of the known observations only. Its
+	// Undetermined flag applies the same minimum sample rules as
+	// AnalyzeDecimal.
+	Stats *MetricStats
+}
+
+// TrackFloor analyses the structural floor series over time. Unknown
+// observations are excluded from the statistics and counted in Unknown so the
+// history's gaps stay visible. Statistics are computed through AnalyzeSeries,
+// so elapsed time, minimum sample sizes and undetermined semantics are
+// identical to every other timestamped metric in this package. Pass nil
+// thresholds for the defaults.
+func TrackFloor(series FloorSeries, thresholds *RegimeThresholds) FloorTrack {
+	points := make([]Point, 0, len(series.Observations))
+	unknown := 0
+	for _, obs := range series.Observations {
+		if obs == nil {
+			unknown++
+			continue
+		}
+		points = append(points, *obs)
+	}
+
+	return FloorTrack{
+		Known:   len(points),
+		Unknown: unknown,
+		Stats:   AnalyzeSeries(points, thresholds),
+	}
 }
 
 // computeMean calculates the arithmetic mean of a slice of decimals.
@@ -242,20 +341,34 @@ func computeStdDev(values []decimal.Decimal, mean decimal.Decimal) decimal.Decim
 
 // computeTrend calculates the trend using linear regression (least squares).
 func computeTrend(values []decimal.Decimal) TrendResult {
-	n := len(values)
+	points := make([]Point, len(values))
+	for i, value := range values {
+		points[i] = Point{
+			At:    time.Unix(int64(i)*6*60*60, 0).UTC(),
+			Value: value,
+		}
+	}
+	return computeTrendSeries(points)
+}
+
+// computeTrendSeries calculates a least-squares trend using elapsed hours
+// from the first observation. The result is normalised to value units per day.
+func computeTrendSeries(points []Point) TrendResult {
+	n := len(points)
 	if n < 2 {
 		return TrendResult{Direction: TrendStable}
 	}
 
-	// Simple linear regression: y = a + b*x
-	// where x is the observation index (0, 1, 2, ...) and y is the value.
+	// Simple linear regression: y = a + b*x, where x is elapsed hours.
 	sumX := decimal.Zero
 	sumY := decimal.Zero
 	sumXY := decimal.Zero
 	sumX2 := decimal.Zero
 
-	for i, v := range values {
-		x := decimal.NewFromInt(int64(i))
+	firstAt := points[0].At
+	for _, point := range points {
+		x := decimal.NewFromInt(point.At.Sub(firstAt).Nanoseconds()).Div(decimal.NewFromInt(int64(time.Hour)))
+		v := point.Value
 		sumX = sumX.Add(x)
 		sumY = sumY.Add(v)
 		sumXY = sumXY.Add(x.Mul(v))
@@ -271,11 +384,12 @@ func computeTrend(values []decimal.Decimal) TrendResult {
 
 	// Slope b = (n*Σ(xy) - Σx*Σy) / (n*Σ(x²) - (Σx)²)
 	slope := nD.Mul(sumXY).Sub(sumX.Mul(sumY)).Div(denom)
+	slope = slope.Mul(decimal.NewFromInt(24))
 
 	// Classify direction with a dead zone to avoid calling noise a trend.
-	// The dead zone is 0.1 percentage points per observation, which
-	// represents a change of 0.1% per 6-hour cycle (≈1% per 2.5 days).
-	deadZone := decimal.NewFromFloat(0.1)
+	// The dead zone is 0.4 percentage points per day, equivalent to the old
+	// 0.1 percentage-point threshold at a regular six-hour cadence.
+	deadZone := decimal.NewFromFloat(0.4)
 
 	absSlope := slope.Abs()
 	direction := TrendStable

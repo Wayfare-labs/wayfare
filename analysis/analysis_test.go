@@ -3,6 +3,7 @@ package analysis
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
@@ -272,6 +273,50 @@ func TestComputeTrendSingleValue(t *testing.T) {
 	result := computeTrend(decs(42))
 	if result.Direction != TrendStable {
 		t.Errorf("direction = %v, want stable for single value", result.Direction)
+	}
+}
+
+func TestComputeTrendSeriesUsesElapsedTime(t *testing.T) {
+	base := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	values := func(gap time.Duration) []Point {
+		return []Point{
+			{At: base, Value: decimal.NewFromInt(0)},
+			{At: base.Add(24 * time.Hour), Value: decimal.NewFromInt(10)},
+			{At: base.Add(24*time.Hour + gap), Value: decimal.NewFromInt(20)},
+		}
+	}
+
+	even := computeTrendSeries(values(24 * time.Hour))
+	gapped := computeTrendSeries(values(48 * time.Hour))
+	if even.Slope.Equal(gapped.Slope) {
+		t.Fatalf("even and gapped slopes are both %s; timestamps must affect OLS", even.Slope)
+	}
+	if even.Slope.Sub(decimal.NewFromInt(10)).Abs().GreaterThan(decimal.NewFromFloat(1e-12)) {
+		t.Errorf("even slope = %s, want 10 percentage points/day", even.Slope)
+	}
+	wantGapped := decimal.NewFromInt(45).Div(decimal.NewFromInt(7))
+	if gapped.Slope.Sub(wantGapped).Abs().GreaterThan(decimal.NewFromFloat(1e-12)) {
+		t.Errorf("gapped slope = %s, want hand-computed %s", gapped.Slope, wantGapped)
+	}
+}
+
+func TestAnalyzeSeriesReportsSpan(t *testing.T) {
+	base := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	points := make([]Point, 30)
+	for i := range points {
+		points[i] = Point{At: base.Add(time.Duration(i) * 6 * time.Hour), Value: dec(25)}
+	}
+
+	result := AnalyzeSeries(points, nil)
+	if result.FirstAt == nil || !result.FirstAt.Equal(base) {
+		t.Fatalf("FirstAt = %v, want %s", result.FirstAt, base)
+	}
+	wantLast := base.Add(29 * 6 * time.Hour)
+	if result.LastAt == nil || !result.LastAt.Equal(wantLast) {
+		t.Fatalf("LastAt = %v, want %s", result.LastAt, wantLast)
+	}
+	if result.Trend != nil {
+		t.Error("30 observations must remain below the trend minimum")
 	}
 }
 

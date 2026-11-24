@@ -116,6 +116,19 @@ type RungJSON struct {
 	Cost         *CostBlockJSON `json:"cost,omitempty"`
 	Notes        []string       `json:"notes"`
 	Error        string         `json:"error,omitempty"`
+
+	// Ledger is the chain head observed right after this rung was priced.
+	// Omitted when unknown; never published as 0.
+	Ledger int64 `json:"ledger,omitempty"`
+}
+
+// LedgerRangeJSON is the span of ledgers a ladder's rungs were observed at.
+// Span is Last minus First: the number of ledgers that closed while the
+// ladder was being priced.
+type LedgerRangeJSON struct {
+	First int64 `json:"first"`
+	Last  int64 `json:"last"`
+	Span  int64 `json:"span"`
 }
 
 // ReferenceDiagnosticJSON is the third-provider attribution of a DISAGREE.
@@ -140,6 +153,12 @@ type CorridorJSON struct {
 
 	Integrity string      `json:"integrity"`
 	DependsOn []AssetJSON `json:"depends_on"`
+
+	// DependencyChain is the full tree of dependencies when the corridor
+	// is derivative. Nil when Integrity is not DERIVATIVE. Each node
+	// carries the dependency's measured integrity or an explicit "not
+	// measured" state with a reason.
+	DependencyChain *DependencyChainJSON `json:"dependency_chain,omitempty"`
 
 	ReferenceMid    string `json:"reference_mid"`
 	ReferenceSource string `json:"reference_source"`
@@ -209,6 +228,10 @@ type CorridorJSON struct {
 	// Live is false.
 	Stale *StaleJSON `json:"stale,omitempty"`
 
+	// Correction describes erratum metadata when the served reading is a correction
+	// or amends an earlier sequence number (issue #729).
+	Correction *CorrectionJSON `json:"correction,omitempty"`
+
 	// Findings are check results: facts about the counterparties this
 	// corridor depends on. They qualify the headline and never move it —
 	// Integrity and Verdict above are computed without reference to them,
@@ -219,6 +242,10 @@ type CorridorJSON struct {
 	Curve      *ExecutionRateCurveJSON `json:"curve"`
 	Rungs      []RungJSON              `json:"rungs"`
 	MeasuredAt string                  `json:"measured_at"`
+
+	// LedgerRange is the first and last ledger observed across the rungs.
+	// Omitted when no rung observed one.
+	LedgerRange *LedgerRangeJSON `json:"ledger_range,omitempty"`
 }
 
 // StaleJSON labels a reading served from history rather than measured now.
@@ -231,6 +258,20 @@ type StaleJSON struct {
 	RecordedAt string `json:"recorded_at"`
 	AgeSeconds int64  `json:"age_seconds"`
 	AgeHuman   string `json:"age_human"`
+}
+
+// CorrectionJSON describes erratum metadata when a reading amends or was amended
+// by a correction record (issue #729).
+type CorrectionJSON struct {
+	TargetSeq             int64  `json:"target_seq,omitempty"`
+	CorrectedBySeq        int64  `json:"corrected_by_seq,omitempty"`
+	Reason                string `json:"reason"`
+	IsCorrection          bool   `json:"is_correction,omitempty"`
+	Corrected             bool   `json:"corrected,omitempty"`
+	OriginalFloorLossPct  string `json:"original_floor_loss_pct,omitempty"`
+	CorrectedFloorLossPct string `json:"corrected_floor_loss_pct,omitempty"`
+	OriginalWorstLossPct  string `json:"original_worst_loss_pct,omitempty"`
+	CorrectedWorstLossPct string `json:"corrected_worst_loss_pct,omitempty"`
 }
 
 // AssetJSON identifies an asset on the wire.
@@ -265,6 +306,32 @@ type AssetJSON struct {
 	Asset         string `json:"asset,omitempty"`
 }
 
+// DependencyChainJSON is the wire representation of a dependency tree.
+// It is present only when the corridor is derivative (integrity = "DERIVATIVE").
+// Nil on the wire means the corridor is direct or has no market — never an
+// empty object.
+type DependencyChainJSON struct {
+	Depth     int                  `json:"depth"`
+	DependsOn []DependencyNodeJSON `json:"depends_on"`
+}
+
+// DependencyNodeJSON is one link in a dependency chain on the wire.
+//
+// Measured is always present. When false, Integrity carries no meaningful
+// value (it will be "UNKNOWN") and Reason explains why: cycle detected,
+// depth cap exceeded, Horizon error, or context cancelled. A consumer
+// rendering this node must not present it as though its integrity were a
+// finding — an unmeasured link has no finding to present.
+type DependencyNodeJSON struct {
+	Code         string               `json:"code"`
+	Issuer       string               `json:"issuer,omitempty"`
+	Peg          string               `json:"peg,omitempty"`
+	Integrity    string               `json:"integrity"`
+	Measured     bool                 `json:"measured"`
+	Reason       string               `json:"reason,omitempty"`
+	Dependencies []DependencyNodeJSON `json:"dependencies,omitempty"`
+}
+
 func ToAssetJSON(a asset.Asset) AssetJSON {
 	j := AssetJSON{Code: a.Code, Issuer: a.Issuer}
 	if a.Identifiable() {
@@ -280,6 +347,46 @@ func ToAssetJSON(a asset.Asset) AssetJSON {
 	}
 	if peg, ok := asset.FiatPeg(a); ok {
 		j.Peg = peg
+	}
+	return j
+}
+
+// ToDependencyChainJSON renders a dependency tree for the wire.
+//
+// Nil input produces nil output (omitted from JSON via omitempty). An empty
+// slice produces a chain with depth 0 and an empty depends_on array, which
+// is structurally valid but semantically should not occur — a derivative
+// corridor always has at least one dependency.
+func ToDependencyChainJSON(nodes []DependencyNode) *DependencyChainJSON {
+	if len(nodes) == 0 {
+		return nil
+	}
+	out := &DependencyChainJSON{
+		Depth:     chainDepth(nodes),
+		DependsOn: make([]DependencyNodeJSON, 0, len(nodes)),
+	}
+	for _, n := range nodes {
+		out.DependsOn = append(out.DependsOn, toDependencyNodeJSON(n))
+	}
+	return out
+}
+
+func toDependencyNodeJSON(n DependencyNode) DependencyNodeJSON {
+	j := DependencyNodeJSON{
+		Code:      n.Asset.Code,
+		Issuer:    n.Asset.Issuer,
+		Integrity: n.Integrity.String(),
+		Measured:  n.Measured,
+		Reason:    n.Reason,
+	}
+	if peg, ok := asset.FiatPeg(n.Asset); ok {
+		j.Peg = peg
+	}
+	if len(n.Dependencies) > 0 {
+		j.Dependencies = make([]DependencyNodeJSON, 0, len(n.Dependencies))
+		for _, d := range n.Dependencies {
+			j.Dependencies = append(j.Dependencies, toDependencyNodeJSON(d))
+		}
 	}
 	return j
 }
@@ -360,7 +467,17 @@ func ToCostBlockJSON(d CostDecomposition) *CostBlockJSON {
 	return out
 }
 
+// ToCorridorJSON renders a ladder result as the shared wire shape, stamping
+// measured_at with the current time.
 func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
+	return ToCorridorJSONAt(l, pair, time.Now())
+}
+
+// ToCorridorJSONAt is ToCorridorJSON with the measured_at instant supplied by
+// the caller. It exists so a producer with an injectable clock (cmd/ladder's
+// golden test, issue #668) can render the exact bytes it ships without the
+// wall clock leaking into them; every other field is identical.
+func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) CorridorJSON {
 	out := CorridorJSON{
 		SendAsset:          ToAssetJSON(l.Request.SendAsset),
 		ReceiveAsset:       ToAssetJSON(l.Request.ReceiveAsset),
@@ -380,7 +497,7 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 		Live:               true,
 		Finding:            l.Finding,
 		Rungs:              make([]RungJSON, 0, len(l.Rungs)),
-		MeasuredAt:         time.Now().UTC().Format(time.RFC3339),
+		MeasuredAt:         measuredAt.UTC().Format(time.RFC3339),
 	}
 	if !l.Reference.AsOf.IsZero() {
 		out.ReferenceAsOf = l.Reference.AsOf.UTC().Format(time.RFC3339)
@@ -451,6 +568,10 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 	for _, d := range l.DependsOn {
 		out.DependsOn = append(out.DependsOn, ToAssetJSON(d))
 	}
+	out.DependencyChain = ToDependencyChainJSON(l.Chain)
+	if lr := l.LedgerRange; lr != nil {
+		out.LedgerRange = &LedgerRangeJSON{First: lr.First, Last: lr.Last, Span: lr.Span()}
+	}
 
 	for _, r := range l.Rungs {
 		rj := RungJSON{
@@ -458,6 +579,7 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 			Priced:     r.Priced(),
 			Integrity:  IntegrityUnknown.String(),
 			Notes:      []string{},
+			Ledger:     r.Ledger,
 		}
 		if r.MarginalCost != nil {
 			rj.MarginalCost = r.MarginalCost.Cost.String()

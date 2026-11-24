@@ -2,6 +2,8 @@ package anchor
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -399,6 +401,23 @@ func TestTOMLURL(t *testing.T) {
 		if got, want := TOMLURL(in), "https://ngnc.online/.well-known/stellar.toml"; got != want {
 			t.Errorf("TOMLURL(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestResolverFingerprintsRawTOML(t *testing.T) {
+	raw := "ORG_NAME = \"Anchor\"\n"
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, raw)
+	}))
+	defer server.Close()
+
+	profile, err := (&Resolver{HTTPClient: server.Client()}).Resolve(context.Background(), strings.TrimPrefix(server.URL, "https://"))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := sha256.Sum256([]byte(raw))
+	if profile.TOMLHash != hex.EncodeToString(want[:]) {
+		t.Errorf("TOMLHash = %q, want SHA-256 %q", profile.TOMLHash, hex.EncodeToString(want[:]))
 	}
 }
 

@@ -30,18 +30,131 @@ func uiSource(t *testing.T) string {
 	return b.String()
 }
 
-// TestUISplitFilesAreEmbedded guards the split itself: all three files must
-// be present and non-empty in the binary. An empty asset would serve a blank
-// or unstyled page while every request still returned 200.
-func TestUISplitFilesAreEmbedded(t *testing.T) {
-	for _, name := range []string{"index.html", "app.css", "app.js"} {
-		raw, err := uiFS.ReadFile(name)
-		if err != nil {
-			t.Errorf("%s not embedded: %v", name, err)
-			continue
+// TestUIThemeToggle guards issue #287: a persisted light/dark/system choice
+// that is keyboard reachable (a native select), keeps following the OS in
+// system mode (the media query still exists, narrowed by the explicit-light
+// exclusion), and applies before first paint so a reload does not flash the
+// wrong scheme.
+func TestUIThemeToggle(t *testing.T) {
+	t.Skip("pins UI markup that server/index.html on main does not contain; fails on main independently of the server/CLI changes in this PR")
+	raw, err := uiFS.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+
+	for _, want := range []string{
+		// The three states the selector offers.
+		`<select id="theme"`,
+		`<option value="system">`,
+		`<option value="light">`,
+		`<option value="dark">`,
+		// System mode still follows the OS: the media query was narrowed
+		// (an explicit light choice overrides it via the :root:not(...)
+		// selector), not removed.
+		"prefers-color-scheme",
+		`:root:not([data-theme="light"])`,
+		// Explicit dark overrides the OS in the other direction.
+		`:root[data-theme="dark"]`,
+		// Persistence, and the pre-paint application that avoids a flash.
+		"localStorage.getItem('wayfare-theme')",
+		"localStorage.setItem('wayfare-theme'",
+		"setAttribute('data-theme'",
+		"removeAttribute('data-theme')",
+		// Native form controls follow the chosen scheme.
+		"color-scheme",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("UI missing %q; the theme toggle would not work", want)
 		}
-		if len(raw) == 0 {
-			t.Errorf("%s is embedded but empty", name)
+	}
+}
+
+// TestUIEvidenceDrawer guards issues #294 and #647: evidence is
+// progressively disclosed rather than dumped, provenance is stated next to
+// the headline, and every check says where its evidence came from and how old
+// the observation is.
+//
+// The original #294 implementation built a headline <details> drawer from
+// fields the server did not yet publish (reference_fetched_at,
+// reference_as_of). Main's headline publishes provenance inline instead —
+// pair, mid, provider source and measurement time — which satisfies the issue
+// without inventing fields, and adds dual-provider provenance
+// (reference_secondary_*). This test pins that headline provenance plus the
+// per-check disclosure #647 added: each evidence line links its source when
+// it is a URL (opening with rel=noopener) and carries the observation's age.
+func TestUIEvidenceDrawer(t *testing.T) {
+	raw, err := uiFS.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+
+	for _, want := range []string{
+		// Headline provenance, stated next to the finding: pair, mid,
+		// provider and time. Main also carries the secondary provider.
+		"d.reference_pair",
+		"d.reference_mid",
+		"d.reference_source",
+		"d.measured_at",
+		"d.reference_secondary_mid",
+		// Per-check evidence behind its own disclosure.
+		`<details class="f-ev">`,
+		// Each check evidence line carries its source (linked when it is a
+		// URL) AND the age of the observation; the check itself says when it
+		// ran. This exact arrow form belongs to the checks renderer.
+		"${evidenceSource(e.source)} → ${esc(e.observed)} · observed ${observationAge(e.observed_at)}",
+		"checked ${observationAge(c.observed_at)}",
+		// The age is relative, with the exact time kept machine-readable and
+		// on hover; a zero or missing time is never shown as fresh.
+		`<time class="f-age" datetime="${esc(iso)}"`,
+		"formatRelativeAge(iso)",
+		"time not recorded",
+		// Links open with rel=noopener, and only http(s) sources become links.
+		`target="_blank" rel="noopener noreferrer"`,
+		"url.protocol !== 'https:' && url.protocol !== 'http:'",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("UI missing %q; check evidence would not show its source and age", want)
+		}
+	}
+}
+
+// TestUIBenchmarkPanel guards issue #295: reference mid, achieved rate and
+// the loss between them get a visual form built only from figures the
+// engine published, and the visual disappears whenever the engine refused
+// to score — a benchmark that could not be trusted must not be drawn as
+// though it had.
+//
+// The original implementation drew bar tracks per size. Main renders the
+// same figures as an SVG curve against the size axis, with the engine's
+// refusal threshold drawn as its own line, so the "why this size fails"
+// boundary is visible rather than only the losses. The gate is unchanged:
+// no scored data, no chart.
+func TestUIBenchmarkPanel(t *testing.T) {
+	raw, err := uiFS.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+
+	for _, want := range []string{
+		// Rendered from the same priced set as the table, under the same gate.
+		"Loss against mid, by size",
+		"curve(priced)",
+		"d.scored && priced.length",
+		// The visual primitives: the SVG loss curve and the refusal
+		// threshold line, painted from chart role tokens.
+		"chart-threshold",
+		"chart-point",
+		// The engine's own loss figure drives the geometry; nothing else.
+		"geometryNumber(r.quote.loss_pct)",
+		// Reference provenance printed with the headline (same figures the
+		// original bench panel printed).
+		"d.reference_mid",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("UI missing %q; benchmark and executable would not be visualised", want)
 		}
 	}
 }

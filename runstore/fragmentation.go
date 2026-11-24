@@ -1,16 +1,3 @@
-// Package runstore keeps a tamper-evident history of corridor measurements.
-//
-// This file reads path concentration over time: whether a corridor's
-// executable value is concentrating into fewer paths, from the
-// fragmentation.paths metric each run recorded in its metrics block.
-//
-// Nothing here measures anything. The metric was measured when the run was
-// taken (checks.FragmentationMetric) and stored word-for-word with it; this
-// reader only lines the stored figures up oldest-first and compares the
-// first comparable one with the last. A run that did not record the metric,
-// or recorded it as undetermined, stays in the series as unknown with its
-// reason — it is never dropped to make the series look continuous, and never
-// read as a zero.
 package runstore
 
 import (

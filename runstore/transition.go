@@ -1,7 +1,3 @@
-// Package runstore keeps a tamper-evident history of corridor measurements.
-//
-// This file implements integrity transition detection: comparing consecutive
-// runs for the same corridor to detect structural changes in market integrity.
 package runstore
 
 import (
@@ -119,7 +115,9 @@ func DetectTransitions(ctx context.Context, store Store, corridor string) ([]*In
 
 // TransitionsFromRecords compares consecutive records in chronological order
 // and returns the structural transitions within that window.
+// Corrections are resolved first so retracted figures do not produce false transitions.
 func TransitionsFromRecords(records []*Record) []*IntegrityTransition {
+	records = EffectiveRecords(records)
 	if len(records) < 2 {
 		return nil
 	}

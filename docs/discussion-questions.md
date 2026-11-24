@@ -134,16 +134,17 @@ on every error — `server/api.go:624-629` `writeError` writes both `error` and
 `code` — and the UI now carries it: `server/index.html:986` attaches `data.code`
 to the thrown `Error`.
 
-But the code is read for exactly one purpose, `server/index.html:992`, where
-`invalid_sizes` marks the sizes field `aria-invalid`. The message the reader
-actually sees is still assembled from the English alone,
-`server/index.html:993`:
+The code now selects the banner's visual category and is attached to the
+rendered panel as `data-code`; `invalid_sizes` also marks the sizes field
+`aria-invalid`. The banner's sentence remains human-readable prose, with the
+code passed alongside it, `server/index.html`:
 
-> showErrorBanner(`Could not measure: ${esc(e.message)}`);
+> showErrorBanner(`Could not measure: ${esc(e.message)}`, e.code)
 
-So the reporter's central observation still stands: the *rendered* error text
-carries no code, and a reader cannot distinguish seven causes without reading
-prose. The plumbing to fix it is now in place, which is most of the work.
+So the reporter's central observation is partly addressed: errors no longer
+all use the same red panel, and their code remains machine-readable in the
+rendered DOM. The sentence itself still carries no code, so readers distinguish
+the cause through its explanation rather than a visible code label.
 
 ### 5. "Why does the corridor selector never load?"
 

@@ -29,7 +29,7 @@ func TestUIRenderDistinctPathCount(t *testing.T) {
 		"r.path_count",
 		"q.path_count",
 		"&mdash;",
-		"<td class=\"num\">${pathCount}</td>",
+		"<td class=\"num\" data-label=\"Paths\">${pathCount}</td>",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("UI measurements table row rendering is missing %q", want)

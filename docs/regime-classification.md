@@ -11,6 +11,19 @@ window of stored observations. It is computed by
 loss percentage into one of four states. It is deliberately **not** a verdict
 and is **not** served by any endpoint today.
 
+For timestamped data, `analysis.AnalyzeSeries` regresses each value against
+elapsed hours from the first observation. `TrendResult.Slope` and
+`TrendResult.Magnitude` are percentage points per day, and the stable dead
+zone is 0.4 percentage points per day. The dead zone preserves the old 0.1
+percentage-point threshold for a regular six-hour cadence without treating a
+multi-day outage as one observation. `MetricStats.FirstAt` and `LastAt` report
+the timestamps covered by the analyzed observations.
+
+`AnalyzeDecimal` remains for genuinely regular data and treats consecutive
+values as six hours apart; callers with recorded times should use
+`AnalyzeSeries`. The minimum gates are unchanged: mean and standard deviation
+require 30 observations, and trend requires 60.
+
 ## The labels
 
 | Regime | Condition on the mean loss | Read as |
@@ -46,8 +59,9 @@ different statistic, so it deliberately does not reuse 3/8/20:
 
 The bands are **round-number conventions, documented here and chosen once**;
 they are not derived from an empirical distribution and this document does not
-claim otherwise. If they are ever changed it is a maintainer decision on the
-analysis layer, not a contributor refactor.
+claim otherwise. No measurement in the repository was used to fit them. If they
+are ever changed it is a maintainer decision on the analysis layer, not a
+contributor refactor.
 
 **They are not verdict thresholds.** Changing them cannot change a published
 verdict, an integrity state, a check result or a metric: the analysis layer

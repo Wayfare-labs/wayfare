@@ -21,6 +21,10 @@
 // Note: dispatching a real touch gesture requires the Chrome DevTools Protocol,
 // so only the Chromium run performs a genuine touch swipe. Firefox and WebKit
 // runs pan the container with a wheel and say so.
+//
+// Timestamps: every result file carries `ranAt` (ISO-8601, from lib.now()) and
+// the `base` endpoint the figures were read from, so a reader can tell when and
+// where each number came from.
 
 import { chromium, firefox, webkit, devices } from 'playwright';
 import { settle, writeResult, shoot, now } from './lib.mjs';
@@ -144,7 +148,7 @@ for (const engine of ENGINES) {
     const context = await browser.newContext({ ...descriptor, locale: 'en-GB', timezoneId: 'UTC' });
     const page = await context.newPage();
 
-    const record = { engine, device: deviceName, descriptor: { viewport: descriptor.viewport, isMobile: descriptor.isMobile, hasTouch: descriptor.hasTouch, deviceScaleFactor: descriptor.deviceScaleFactor } };
+    const record = { engine, device: deviceName, observedAt: now(), descriptor: { viewport: descriptor.viewport, isMobile: descriptor.isMobile, hasTouch: descriptor.hasTouch, deviceScaleFactor: descriptor.deviceScaleFactor } };
 
     try {
       await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });

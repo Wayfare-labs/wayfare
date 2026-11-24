@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Wayfare-labs/wayfare/docs/schemas/runstore-v4.json",
+  "title": "Wayfare run-store record, version 4",
+  "description": "Version 4 adds the optional snapshot hash to version 3: the content hash of the exact upstream artifact the measurement was taken from. Optional, and placed after every version 3 field so a version 3 hash is unchanged.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "seq",
+    "recorded_at",
+    "corridor",
+    "integrity",
+    "depends_on",
+    "reference",
+    "floor_loss_pct",
+    "floor_size",
+    "worst_loss_pct",
+    "worst_size",
+    "recommended",
+    "finding",
+    "rungs",
+    "prev_hash",
+    "hash"
+  ],
+  "properties": {
+    "version": {
+      "const": 4
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "corridor": {
+      "type": "string",
+      "pattern": "^[A-Z0-9]{2,12}-[A-Z0-9]{2,12}$"
+    },
+    "integrity": {
+      "enum": [
+        "DIRECT",
+        "DERIVATIVE",
+        "NO-MARKET"
+      ]
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reference": {
+      "$ref": "#/$defs/reference"
+    },
+    "floor_loss_pct": {
+      "$ref": "#/$defs/decimal"
+    },
+    "floor_size": {
+      "$ref": "#/$defs/decimal"
+    },
+    "worst_loss_pct": {
+      "$ref": "#/$defs/decimal"
+    },
+    "worst_size": {
+      "$ref": "#/$defs/decimal"
+    },
+    "recommended": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/rung"
+        }
+      ]
+    },
+    "recommended_size": {
+      "$ref": "#/$defs/decimal"
+    },
+    "finding": {
+      "type": "string"
+    },
+    "rungs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/rung"
+      }
+    },
+    "checks": {
+      "type": "array",
+      "description": "Counterparty findings as they rode the wire; stored word-for-word so a history-served reading shows what the live one did. Their shape belongs to package checks.",
+      "items": {
+        "type": "object"
+      }
+    },
+    "metrics": {
+      "type": "array",
+      "description": "Measured quantities as they rode the wire. Their shape belongs to package checks.",
+      "items": {
+        "type": "object"
+      }
+    },
+    "prev_hash": {
+      "$ref": "#/$defs/hash"
+    },
+    "hash": {
+      "$ref": "#/$defs/hash"
+    },
+    "snapshot": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Content hash of the upstream snapshot artifact, empty when none was recorded."
+    }
+  },
+  "$defs": {
+    "decimal": {
+      "type": "string",
+      "pattern": "^-?[0-9]+(\\.[0-9]+)?$",
+      "description": "A decimal as a string. Negative values are allowed only where the field itself says so; loss percentages are non-negative."
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^(sha256:[a-f0-9]{64})?$",
+      "description": "Lowercase hex SHA-256 of the record's canonical preimage, prefixed 'sha256:'. The first record in a chain has an all-zero prev_hash."
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mid",
+        "source",
+        "as_of"
+      ],
+      "properties": {
+        "mid": {
+          "$ref": "#/$defs/decimal"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "secondary_mid": {
+          "$ref": "#/$defs/decimal"
+        },
+        "secondary_source": {
+          "type": "string"
+        },
+        "secondary_as_of": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "divergence_pct": {
+          "$ref": "#/$defs/decimal"
+        },
+        "scored_against": {
+          "type": "string"
+        },
+        "fetched_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this project last obtained the rate, which is not as_of: that is the provider's own stamp."
+        }
+      }
+    },
+    "rung": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "send_amount",
+        "priced",
+        "integrity"
+      ],
+      "properties": {
+        "send_amount": {
+          "$ref": "#/$defs/decimal"
+        },
+        "priced": {
+          "type": "boolean"
+        },
+        "integrity": {
+          "enum": [
+            "DIRECT",
+            "DERIVATIVE",
+            "NO-MARKET"
+          ]
+        },
+        "receive_amount": {
+          "$ref": "#/$defs/decimal"
+        },
+        "effective_rate": {
+          "$ref": "#/$defs/decimal"
+        },
+        "loss_pct": {
+          "$ref": "#/$defs/decimal"
+        },
+        "verdict": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

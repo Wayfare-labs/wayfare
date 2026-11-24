@@ -13,6 +13,12 @@
 // Only the network-failure class is injected, because a browser cannot be made
 // to fetch from an origin that is not listening without aborting the request.
 // Everything else is a response the running server actually produced.
+//
+// Breakpoint sweep (issue #213): the harness can be run at each of the viewport
+// widths 320, 375, 768, 1024 and 1440. BREAKPOINTS is the single source of
+// truth for those widths; viewportFor() builds a Playwright viewport for one.
+// Screenshots taken via shoot() are namespaced by breakpoint when a viewport
+// width is supplied, so one result set per corridor state per width is kept.
 
 import { chromium, firefox, webkit } from 'playwright';
 import fs from 'node:fs';
@@ -21,6 +27,11 @@ import url from 'node:url';
 
 export const ENGINES = { chromium, firefox, webkit };
 export const ENGINE_NAMES = Object.keys(ENGINES);
+
+// Viewport widths required by the QA backlog entry (#213). Height is fixed so
+// the recorded layout is comparable between runs.
+export const BREAKPOINTS = [320, 375, 768, 1024, 1440];
+export const VIEWPORT_HEIGHT = 900;
 
 export const HERE = path.dirname(url.fileURLToPath(import.meta.url));
 export const RESULTS_DIR = path.join(HERE, 'results');
@@ -39,6 +50,28 @@ export function parseArgs(argv = process.argv.slice(2)) {
     out[m[1]] = m[2] === undefined ? true : m[2];
   }
   return out;
+}
+
+// parseBreakpoints reads a `--breakpoints=320,375,...` flag. Absent means the
+// full BREAKPOINTS set. Any width not in BREAKPOINTS is rejected so a typo
+// cannot silently produce an off-spec result set.
+export function parseBreakpoints(value) {
+  if (value === undefined || value === true) return [...BREAKPOINTS];
+  const widths = String(value)
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => n !== 0 || n === 0);
+  for (const w of widths) {
+    if (!BREAKPOINTS.includes(w)) {
+      throw new Error(`unsupported breakpoint ${w}; expected one of ${BREAKPOINTS.join(',')}`);
+    }
+  }
+  return widths;
+}
+
+// viewportFor returns the Playwright viewport for one breakpoint width.
+export function viewportFor(width) {
+  return { width, height: VIEWPORT_HEIGHT };
 }
 
 // launch starts an engine and a context. launchOptions is passed to the engine
@@ -89,6 +122,7 @@ export async function snapshotUI(page) {
     const errs = out ? [...out.querySelectorAll('.panel.err')] : [];
     return {
       url: location.pathname + location.search,
+      viewportWidth: window.innerWidth,
       outText: text(out),
       errorPanels: errs.map((p) => ({
         classes: p.className,
@@ -161,9 +195,13 @@ export function writeResult(name, data) {
   return file;
 }
 
-export async function shoot(page, name) {
+// shoot writes a screenshot. When `width` is given the file is namespaced by
+// breakpoint (`<name>@<width>.png`) so the per-breakpoint screenshot set for a
+// corridor state can be produced without overwriting another width's shot.
+export async function shoot(page, name, width) {
   ensureDirs();
-  const file = path.join(SHOTS_DIR, `${name}.png`);
+  const base = width === undefined ? name : `${name}@${width}`;
+  const file = path.join(SHOTS_DIR, `${base}.png`);
   await page.screenshot({ path: file, fullPage: false });
   return path.relative(HERE, file);
 }

@@ -4,11 +4,11 @@
 # keys and moves no funds, but it does publish figures under Wayfare's name,
 # and the smallest possible surface is the cheapest way to keep it that way.
 
-# golang:1.27.3-alpine, pinned by digest so the same commit builds against the
+# golang:1.27.4-alpine, pinned by digest so the same commit builds against the
 # same bytes. The tag stays in the reference — Dependabot's docker ecosystem
 # uses it to know which release to move to (.github/dependabot.yml) — and the
 # digest is what actually fixes the image.
-FROM golang:1.27.3-alpine@sha256:cd410a5c6686417875bc4815688e96ae9769f8562debc545d29fe58e73d174f0 AS build
+FROM golang:1.27.4-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS build
 
 WORKDIR /src
 
@@ -28,12 +28,13 @@ COPY . .
 RUN apk add --no-cache git
 
 # Stamp the binary with the code commit and the commit of data/ embedded at
-# build time, so /healthz reports which provenance is serving (issue #576).
+# build time, so /healthz reports which provenance is serving (issue #576) and
+# `wayfared -version` reports the same pair (issue #707).
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
     -ldflags="-s -w \
-      -X github.com/Wayfare-labs/wayfare/server.codeCommit=$(git rev-parse HEAD) \
-      -X github.com/Wayfare-labs/wayfare/server.dataCommit=$(git log -1 --format=%H -- data/)" \
+      -X github.com/Wayfare-labs/wayfare/buildinfo.codeCommit=$(git rev-parse HEAD) \
+      -X github.com/Wayfare-labs/wayfare/buildinfo.dataCommit=$(git log -1 --format=%H -- data/)" \
     -o /out/wayfared ./cmd/wayfared
 
 # gcr.io/distroless/static-debian12:nonroot, pinned by digest for the same

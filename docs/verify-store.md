@@ -12,8 +12,9 @@ against the code at time of writing (2026-08-27).
 ## What `-verify-store` does
 
 `-verify-store` walks every corridor's hash chain in the run store, recomputes
-every record's hash, checks every link, and reports pass or fail for each
-corridor. It then exits with a code the caller can test.
+every record's hash, checks every link, checks that the timestamps do not run
+backwards, and reports pass or fail for each corridor. It then exits with a
+code the caller can test.
 
 ```bash
 wayfared -verify-store -data ./data
@@ -155,6 +156,35 @@ of the history was affected. The command reports the first failure it finds
 and stops — fixing the earlier record is required before the later ones can
 verify.
 
+### The chain runs backwards in time
+
+A third verdict is not tampering. Each record's `recorded_at` must not precede
+the record before it by more than the store's 2-minute clock-skew tolerance; a
+chain that steps further back is reported like this:
+
+```
+FAIL USDC-NGNC: seq 3 timed 2026-08-22T00:00:00Z is 4.0h before seq 2 timed
+    2026-08-22T04:00:00Z, past the 2m clock-skew tolerance
+```
+
+The hashes verify — that is what makes this a different kind of bad. Nobody
+edited the history; a host wrote it with a clock that had moved backwards, and
+the chain had no way to notice at the time. Nothing in the numbers is wrong,
+but nothing can claim to be *before* or *after* anything else, so a trend drawn
+through that step is drawing an ordering that did not happen.
+
+`Append` refuses such a record now ([issue #703](https://github.com/Wayfare-labs/wayfare/issues/703)),
+so a corridor can only produce this report from history written before the
+rule existed, or by an older build. Every backwards step in a corridor is
+listed, and the corridor counts as one failed chain, which is why the exit code
+is **1**.
+
+The service is not stopped by this: `Open` loads and serves such a chain
+because its records are demonstrably the ones that were written. This command
+is where the project says whether a history is one it stands behind, and the
+answer to a backwards step is *no, not until you have read it* — usually by
+checking which host wrote `seq 3` and what its clock was doing.
+
 ---
 
 ## When to run it
@@ -195,8 +225,8 @@ This is not a blockchain and makes no distributed-consensus claim.
 
 | Code | Meaning |
 |:-----|:--------|
-| 0 | All chains verified clean, or no corridor history exists |
-| 1 | At least one chain failed, or the store could not be opened |
+| 0 | Every chain verified clean, or no corridor history exists |
+| 1 | At least one chain failed — a broken hash or link, a snapshot artifact that does not match its record, or a timestamp past the clock-skew tolerance — or the store could not be opened |
 | 2 | `-verify-store` was requested but no data directory is configured |
 
 ---
@@ -211,6 +241,11 @@ backup nobody has restored from is a hypothesis. See
 ---
 
 ## Related
+
+- [Runnable runstore example](../runstore/example_test.go) — open a temporary
+  file store, append records, and verify their hash chain
+- [Runnable snapshot example](../snapshot/example_test.go) — replay recorded
+  upstream bytes without network access
 
 - [rollback.md](rollback.md) — the rollback procedure this command anchors:
   how to return to an older image (including one with older embedded

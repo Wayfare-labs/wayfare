@@ -1,10 +1,3 @@
-// Package runstore keeps a tamper-evident history of corridor measurements.
-//
-// This file implements benchmark-vs-corridor movement: comparing consecutive
-// stored runs so that "the benchmark moved" and "the corridor moved" stay
-// distinguishable afterwards. runstore.Reference records both mids
-// deliberately (see Reference and docs/run-store.md); this is the code that
-// finally reads them apart.
 package runstore
 
 import (
@@ -115,8 +108,20 @@ func BenchmarkMovement(ctx context.Context, store Store, corridor string) ([]*Mo
 	if err != nil {
 		return nil, fmt.Errorf("runstore: fetching history for %s: %w", corridor, err)
 	}
+	return MovementsFromRecords(records), nil
+}
+
+// MovementsFromRecords derives every consecutive-pair movement from records
+// in chronological order (oldest first), without a store round-trip. It is
+// the read-side helper the trend wire uses so the API can serve the same
+// decomposition BenchmarkMovement computes, over whatever window of history
+// the request asked for.
+//
+// Corrections are resolved first so movements reflect true market observations.
+func MovementsFromRecords(records []*Record) []*Movement {
+	records = EffectiveRecords(records)
 	if len(records) < 2 {
-		return nil, nil
+		return nil
 	}
 
 	var out []*Movement
@@ -125,7 +130,7 @@ func BenchmarkMovement(ctx context.Context, store Store, corridor string) ([]*Mo
 			out = append(out, m)
 		}
 	}
-	return out, nil
+	return out
 }
 
 // benchmarkMovement derives the benchmark's move, the corridor's own move and

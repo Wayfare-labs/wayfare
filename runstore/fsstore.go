@@ -83,7 +83,7 @@ func readChain(fsys fs.FS, path, corridor string) ([]*Record, error) {
 		if err := json.Unmarshal([]byte(raw), &r); err != nil {
 			return nil, fmt.Errorf("runstore: %s line %d: %w", corridor, line, err)
 		}
-		// Versions 1 through 4 are loadable: each migration added its
+		// Versions 1 through 6 are loadable: each migration added its
 		// fields with omitempty after every earlier field, so older records
 		// encode byte-for-byte as they did when they were written and
 		// verify unchanged (see Record and docs/run-store.md). Any other
@@ -94,8 +94,15 @@ func readChain(fsys fs.FS, path, corridor string) ([]*Record, error) {
 				"runstore: %s line %d has record version %d, this build understands %d",
 				corridor, line, r.Version, Version)
 		}
-		if r.Version < Version && r.Snapshot != "" {
+		// Snapshot arrived in Version 4. Comparing against the current
+		// Version instead would refuse every valid Version 4 or 5 record that
+		// carries one as soon as Version moves past it.
+		if r.Version < 4 && r.Snapshot != "" {
 			return nil, fmt.Errorf("runstore: %s line %d has a snapshot hash in legacy record version %d",
+				corridor, line, r.Version)
+		}
+		if r.Version < 6 && r.hasLedgers() {
+			return nil, fmt.Errorf("runstore: %s line %d has ledger metadata in legacy record version %d",
 				corridor, line, r.Version)
 		}
 		out = append(out, &r)

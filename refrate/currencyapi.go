@@ -159,11 +159,10 @@ func (c *CurrencyAPI) Rate(ctx context.Context, base, quote string) (Rate, error
 			"error", err)
 		return Rate{}, &ErrUnparseable{Source: c.Name(), Err: fmt.Errorf("parsing %s/%s rate %q: %w", base, quote, raw, err)}
 	}
-	// A rate of exactly zero is absence, not a quote. Taken at face value it
-	// would divide by zero in the spread calculation, or report a route as
-	// infinitely good.
-	if mid.IsZero() {
-		log().Error("currency-api zero rate",
+	// A non-positive rate is not a usable quote. Zero divides by zero in
+	// spread calculations, and a negative rate would invert the economics.
+	if !mid.IsPositive() {
+		log().Error("currency-api non-positive rate",
 			"service", c.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String())

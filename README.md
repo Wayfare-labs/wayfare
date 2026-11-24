@@ -100,6 +100,11 @@ Why Stellar-native and what the code uses: **[docs/why-stellar-native.md](docs/w
 Full figures, with timestamps and raw output:
 **[docs/corridor-measurements.md](docs/corridor-measurements.md)**
 
+Off-chain context:
+
+- [Remittance benchmark versus World Bank RPW](docs/research-remittance-benchmark.md)
+- [MoneyGram Stellar cash-out observability](docs/research-moneygram-cashout-observability.md)
+
 Measured live on 2026-08-08 against Horizon pathfinding, three corridors from
 one issuer, all within a 60-second window:
 
@@ -163,7 +168,7 @@ LAYER 2 — DETERMINISTIC CALCULATION                               [live]
   packages: route, refrate, checks
 
   spread, depth, price impact, concentration
-                                             [implemented, not yet reachable]
+                                             [reachable through corridor sweeps]
   cost decomposition                         [implemented, on the wire]
 
   Market-structure vocabulary and current limits:
@@ -476,7 +481,16 @@ go run ./cmd/wayfared                       # serve + measure every 6h
 go run ./cmd/wayfared -serve=false          # scheduler only, no HTTP
 go run ./cmd/wayfared -verify-store -data ./data
 go run ./cmd/wayfared -export USDC-NGNC -format csv -data ./data > corridor.csv
+
+make build-stamped && ./bin/wayfared -version   # which build produced this
 ```
+
+`-version` names the code commit, the `data/` commit embedded at build time and
+the Go toolchain, each labelled with the source that supplied it, because a
+published figure can only be reproduced against a known build. A value no source
+recorded prints as `unknown` rather than as a guess, which is why the stamp comes
+from `make build-stamped`: `go run` records neither the release stamp nor VCS
+settings, so under `go run` both commits read `unknown (unstamped)`.
 
 `-export` verifies the corridor's hash chain first and refuses to write a CSV
 from a chain that does not reconcile; see
@@ -520,6 +534,73 @@ Beyond the contracts above, one field to know: **`live`** is on every response.
 `false` means the reading came from history because a live measurement failed,
 and `stale` then carries its age. With no stored run, the request errors —
 nothing is ever synthesised to fill the gap.
+- [GET /healthz](docs/api.md#get-healthz)
+- [GET /api/assets](docs/api.md#get-api-assets)
+- [GET /api/corridor](docs/api.md#get-apicorridor)
+- [GET /api/corridor/trend](docs/api.md#get-apicorridortrend)
+- [GET /api/chain-heads](docs/api.md#get-apichain-heads) — pin the current stored chain tips
+- Error responses and their machine-readable codes: [docs/errors.md](docs/errors.md)
+- `GET /` single-file UI, no build step
+
+Beyond the contracts above, two fields to know. **`live`** is on every
+response: `false` means the reading came from history because a live
+measurement failed, and `stale` then carries its age. With no stored run, the
+request errors — nothing is ever synthesised to fill the gap.
+
+Every quote also carries **`kind`** — `"dex"` for value settled entirely
+on-chain through path payments, or `"anchor-sep38"` for a priced quote from an
+anchor's own RFQ endpoint. The two can price the same pair differently, and a
+client that conflated them would misattribute the loss to the wrong rail.
+Every quote in a response is `"dex"` today — live pathfinding is the only
+thing this project prices — but the field is on the wire from the start so a
+caller never has to guess which rail a figure came from once anchor pricing
+lands (a live SEP-38 round-trip has never been performed — see
+[#180](https://github.com/Wayfare-labs/wayfare/issues/180)).
+The API is public, keyless and read-only, and answers cross-origin requests
+from any origin (`Access-Control-Allow-Origin: *`), so browser consumers on
+another origin can call it directly. No credentials are ever attached to a
+cross-origin read. A worked consumer — one small program that reads a corridor,
+respects `live` and `scored`, and refuses to render a verdict it should not —
+lives in `examples/api-consumer`, and the reading rules it encodes are written
+out in **[docs/api-consumer.md](docs/api-consumer.md)**.
+
+The `sizes` parameter overrides the default ladder (0.1 → 5000 USDC across
+12 rungs). The default sizes and the rationale for each rung are documented
+in **[docs/ladder-sizes.md](docs/ladder-sizes.md)**.
+
+**`/healthz`** answers liveness and data age. `status` is process liveness;
+`data` reports each corridor's newest stored record and its age
+(`recorded_at`, `age_seconds`, `age_human`) — the thing actually at risk on a
+`-history-first` deployment, whose served history is only as fresh as its last
+deploy. `data` is `null` when no history exists to describe: unknown, never a
+fabricated age. Alongside it, `freshness` reports the cross-corridor view in
+one place: `chain_head` (the ledger Horizon is on right now),
+`newest_record_at` and `record_count` over the whole run store. Each is
+`null` when it cannot be known — Horizon unreachable, store unreadable or
+empty — never a zero that would read as "very old" or "ledger 0".
+
+`budget` reports the outbound Horizon quota: `capacity`, `refill_per_second`,
+`available`, the waiters on each queue and the grants and refusals since start.
+Every Horizon call — the scheduled sweep and each live request — spends from
+one token bucket (`-horizon-rate-limit`, default 12/s; `-horizon-rate-burst`,
+default 24), because Horizon's public limit is per IP and counts them together.
+A sweep may borrow against future tokens so a run always completes; a live
+request that cannot get one answers with a typed budget error instead of
+waiting until the caller gives up, and `refused_live` counts those. `budget` is
+`null` when the budget is disabled with `-horizon-rate-limit=0`.
+
+Bodies are compact by default; append `&pretty=1` (or `?pretty` on an
+endpoint with no other parameters) to any of the JSON endpoints to get an
+indented body for a human reader.
+
+Query parameters are strict: a parameter an endpoint does not recognise is a
+`400`, so a typo like `?tp=NGNC` fails loudly instead of silently measuring
+the default corridor.
+
+Beyond the contracts above, key reference timestamps and fields on corridor responses include:
+- **`live`**: present on every response. `false` means the reading came from history because a live measurement failed, and `stale` then carries its age. With no stored run, the request errors — nothing is ever synthesised to fill the gap.
+- **`reference_as_of`** and **`reference_secondary_as_of`**: RFC3339 timestamps from the primary and secondary reference rate providers indicating when their respective rate was established by the upstream source. Completely omitted if the provider supplied no timestamp.
+- **`reference_fetched_at`**: RFC3339 timestamp indicating when Wayfare last obtained the rate from the provider.
 
 **The trend endpoint** answers "is this getting worse?" from the stored runs:
 every run comes back oldest first, each carrying its integrity state, its
@@ -639,8 +720,12 @@ Issues are labelled by area and by difficulty, and assigned to a roadmap
 milestone so you can see which part of the project your work moves. Start with
 [`good first issue`](https://github.com/Wayfare-labs/wayfare/labels/good%20first%20issue).
 
-The full contributor backlog — every gap found in the current tree, with the
-file or response that evidences it — is **[docs/backlog.md](docs/backlog.md)**.
+The live source of open work is the
+**[issue tracker](https://github.com/Wayfare-labs/wayfare/issues)**.
+[docs/backlog.md](docs/backlog.md) is a dated snapshot of the gaps found in the
+tree at commit `93f5cda` (2026-08-24), each with the file or response that
+evidenced it; much of it has since been done, so check the linked issue before
+relying on an entry.
 The dated review of the open `good first issue` label set is
 **[docs/good-first-issue-audit.md](docs/good-first-issue-audit.md)**.
 
@@ -751,3 +836,5 @@ direction for the corridors measured here.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+<!-- wave-stale Cjay-Cyber-2 issues 176 174 -->

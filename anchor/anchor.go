@@ -19,6 +19,8 @@ package anchor
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -37,6 +39,7 @@ type Currency struct {
 	Status          string `toml:"status"`
 	IsAssetAnchored bool   `toml:"is_asset_anchored"`
 	AnchorAsset     string `toml:"anchor_asset"`
+	AnchorAssetType string `toml:"anchor_asset_type"`
 	Desc            string `toml:"desc"`
 }
 
@@ -73,8 +76,9 @@ const MainnetPassphrase = "Public Global Stellar Network ; September 2015"
 
 // Profile is an anchor's capabilities, resolved from its stellar.toml.
 type Profile struct {
-	Domain string
-	TOML   TOML
+	Domain   string
+	TOML     TOML
+	TOMLHash string
 
 	// FetchedAt is when the stellar.toml was originally fetched. When a
 	// sweep resolves the same domain for several assets, the document is
@@ -300,13 +304,13 @@ func (r *Resolver) Resolve(ctx context.Context, domain string) (*Profile, error)
 	if _, err := toml.Decode(string(raw), &t); err != nil {
 		// Not valid TOML. Recover what we can rather than losing the
 		// anchor entirely, and record the defect. See salvage.go.
-		p := profileFrom(domain, salvageTOML(string(raw)))
+		p := profileFromRaw(domain, salvageTOML(string(raw)), raw)
 		p.Malformed = true
 		p.MalformedReason = err.Error()
 		p.FetchedAt = time.Now().UTC()
 		return p, nil
 	}
-	p := profileFrom(domain, t)
+	p := profileFromRaw(domain, t, raw)
 	p.FetchedAt = time.Now().UTC()
 	return p, nil
 }
@@ -329,6 +333,29 @@ func profileFrom(domain string, t TOML) *Profile {
 		SEP12:     strings.TrimSpace(t.KYCServer) != "",
 		Mainnet:   t.NetworkPassphrase == MainnetPassphrase,
 	}
+}
+
+func profileFromRaw(domain string, t TOML, raw []byte) *Profile {
+	p := profileFrom(domain, t)
+	sum := sha256.Sum256(raw)
+	p.TOMLHash = hex.EncodeToString(sum[:])
+	return p
+}
+
+// ProfileFromRaw parses a raw stellar.toml document into a Profile,
+// falling back to salvage parsing if the TOML is malformed.
+func ProfileFromRaw(domain string, raw []byte) *Profile {
+	var t TOML
+	if _, err := toml.Decode(string(raw), &t); err != nil {
+		p := profileFromRaw(domain, salvageTOML(string(raw)), raw)
+		p.Malformed = true
+		p.MalformedReason = err.Error()
+		p.FetchedAt = time.Now().UTC()
+		return p
+	}
+	p := profileFromRaw(domain, t, raw)
+	p.FetchedAt = time.Now().UTC()
+	return p
 }
 
 // QuoteClientBaseURL returns the SEP-38 base URL, or an error explaining why

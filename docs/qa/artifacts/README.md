@@ -11,6 +11,8 @@ and named after what it inspected, not after the reviewer.
 ## What belongs here
 
 - browser QA runs (colour, contrast, accessibility, screen-reader, cross-browser)
+- responsive / breakpoint QA — screenshot sets at 320, 375, 768, 1024 and 1440 px,
+  recorded per corridor state
 - smoke tests against a deployed instance
 - reproducibility checks — can an independent run reproduce a claimed figure?
 - documentation-vs-code audits — what the docs say versus what the code does
@@ -42,9 +44,14 @@ Examples in this tree: `272-color-schemes.md`, `259-served-history-vs-committed.
       in the text.
 - [ ] Anything that depends on a live network record carries the timestamp and the
       source.
+- [ ] For breakpoint QA: each screenshot is named by breakpoint width and corridor
+      state, and the viewport and browser used are recorded.
 
 ## Acceptance criteria
 
 - [x] The directory and this note exist.
 - [x] A new artifact added here is named and dated the same way as the existing
       ones.
+- [x] The breakpoint set (320, 375, 768, 1024, 1440) is listed as in scope for
+      responsive QA artifacts.
+

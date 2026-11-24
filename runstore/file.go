@@ -121,7 +121,7 @@ func (s *FileStore) readAll(corridor string) ([]*Record, error) {
 // is what stands between a committed chain and a served measurement, so it is
 // fuzzed rather than reached only through a file on disk (FuzzDecodeRecord).
 //
-// Versions 1 through 4 are loadable: each migration added its fields with
+// Versions 1 through 6 are loadable: each migration added its fields with
 // omitempty after every earlier field, so older records encode byte-for-byte as
 // they did when they were written and verify unchanged (see Record and
 // docs/run-store.md). Any other version is a schema this build does not
@@ -137,8 +137,16 @@ func decodeLine(corridor string, line int, raw []byte) (*Record, error) {
 				"refusing to guess at a schema it does not know",
 			corridor, line, r.Version, Version)
 	}
-	if r.Version < Version && r.Snapshot != "" {
+	if r.Version < 4 && r.Snapshot != "" {
 		return nil, fmt.Errorf("runstore: %s line %d has a snapshot hash in legacy record version %d",
+			corridor, line, r.Version)
+	}
+	if r.Version < 5 && r.Correction != nil {
+		return nil, fmt.Errorf("runstore: %s line %d has correction metadata in legacy record version %d",
+			corridor, line, r.Version)
+	}
+	if r.Version < 6 && r.hasLedgers() {
+		return nil, fmt.Errorf("runstore: %s line %d has ledger metadata in legacy record version %d",
 			corridor, line, r.Version)
 	}
 	return &r, nil
@@ -157,12 +165,27 @@ func verifyChain(corridor string, records []*Record) error {
 					"the chain is broken at position %d",
 				corridor, r.Seq, short(r.PrevHash), short(prev), i)
 		}
+		if r.Correction != nil {
+			if r.Correction.TargetSeq <= 0 || r.Correction.TargetSeq >= r.Seq {
+				return fmt.Errorf("runstore: %s: record seq %d has invalid correction target_seq %d",
+					corridor, r.Seq, r.Correction.TargetSeq)
+			}
+			if strings.TrimSpace(r.Correction.Reason) == "" {
+				return fmt.Errorf("runstore: %s: record seq %d has empty correction reason",
+					corridor, r.Seq)
+			}
+		}
 		prev = r.Hash
 	}
 	return nil
 }
 
 // Append seals r against the current tip and writes it.
+//
+// It refuses a record timestamped more than ClockSkewTolerance before the tip
+// with an *ErrOutOfOrder, and writes nothing when it does: the chain is append-
+// only, so the choice is between one missing measurement and a history whose
+// timestamps no longer mean anything.
 func (s *FileStore) Append(ctx context.Context, r *Record) error {
 	if r == nil {
 		return fmt.Errorf("runstore: refusing to append a nil record")
@@ -196,6 +219,23 @@ func (s *FileStore) Append(ctx context.Context, r *Record) error {
 	}
 
 	tip := s.tips[corridor]
+
+	// Time ordering, checked against the tip before anything is sealed. The
+	// hash chain cannot catch this on its own: a record written by a host with
+	// a wrong clock hashes and links perfectly, and the trend then draws a
+	// measurement that claims to have happened before the one already stored.
+	// See ClockSkewTolerance for why the rule is not simply "must be later".
+	if tip != nil && r.RecordedAt.Add(ClockSkewTolerance).Before(tip.RecordedAt) {
+		return &ErrOutOfOrder{
+			Corridor:      corridor,
+			TipSeq:        tip.Seq,
+			TipRecordedAt: tip.RecordedAt,
+			RecordedAt:    r.RecordedAt,
+			By:            tip.RecordedAt.Sub(r.RecordedAt),
+			Tolerance:     ClockSkewTolerance,
+		}
+	}
+
 	if tip == nil {
 		r.PrevHash = GenesisPrevHash
 		r.Seq = 1

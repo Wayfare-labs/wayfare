@@ -44,3 +44,11 @@ them.
 - `route/wire.go` — `WithFindings` branches on nothing
 - `checks/runner.go` — check execution
 - `TestFindingsDoNotMoveTheHeadline` — the test that defends this invariant
+
+## Future work
+
+Whether a publishable layer-3 estimate needs a distinct presentation shape
+is not yet designed. This ADR does not decide that; it is tracked under
+backlog entry #143 (Initiative E, E2 — Predictive intelligence, V5, future,
+not active). Nothing in this document describes a predictive capability as
+built.

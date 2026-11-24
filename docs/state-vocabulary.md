@@ -80,10 +80,12 @@ reader that announces text and nothing else.
    `--check-fail`. A metric with no value shows its reason *in place of* the
    value and is styled as unknown, so an unrun metric cannot look like a failed
    one.
-3. **No brand colour carries financial meaning.** `--brand-*` (the green) is the
-   identity colour *and* the `GOOD`/`PASS`/`DIRECT` role by historical alias. A
-   future contributor must not lean on `--accent` to mean "recommended"; the
-   recommendation is a sentence, not a colour.
+3. **No brand colour carries financial meaning.** Brand primitives are only
+   used through named roles: `--structural-*` for market provenance,
+   `--severity-*` for pricing outcomes, and `--check-*` for counterparty
+   results. In particular, `--accent` is an interactive-control affordance,
+   never a recommendation or investment signal. Recommendations are expressed
+   in text, not by borrowing a brand colour.
 4. **`UNDETERMINED` and `UNAVAILABLE` are distinct.** Undetermined: we reached
    the source and could not establish the fact. Unavailable: we could not
    complete the request. The first is a grey with a reason; the second is an

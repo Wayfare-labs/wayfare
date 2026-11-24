@@ -143,11 +143,10 @@ func (e *ExchangeRateAPI) Rate(ctx context.Context, base, quote string) (Rate, e
 			"error", err)
 		return Rate{}, &ErrUnparseable{Source: e.Name(), Err: fmt.Errorf("parsing %s/%s rate %q: %w", base, quote, raw, err)}
 	}
-	// A rate of exactly zero is treated as absent rather than as a real
-	// quote. Taking it at face value would make the spread calculation
-	// divide by zero, or worse, report a route as infinitely good.
-	if mid.IsZero() {
-		log().Error("exchangerate-api zero rate",
+	// A non-positive rate is not a usable quote. Zero divides by zero in
+	// spread calculations, and a negative rate would invert the economics.
+	if !mid.IsPositive() {
+		log().Error("exchangerate-api non-positive rate",
 			"service", e.Name(),
 			"pair", base+"/"+quote,
 			"duration", time.Since(started).Round(time.Millisecond).String())

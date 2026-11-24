@@ -200,11 +200,13 @@ owned now: the first corridor that does wire it in will publish on top of it.
 three-valued result model (`Determined` / `Passed` / `Reason`) with its severity
 ordering, and above all `route.WithFindings` — the composition point.
 
-**What the metrics default set costs.** Since 2026-10-22 `ForCorridor` measures
-four order-book metrics per corridor. Adding a metric to `DefaultMetrics` adds
-an upstream request to every measured corridor, in the API and on the schedule;
-that is a budget decision as much as a code one, so it belongs here even though
-individual metrics are open contribution.
+**What the metrics default set costs.** `ForCorridor` measures four order-book
+metrics per corridor, plus `floor-loss.reference-mid`, which reuses the ladder's
+smallest priced rung without another upstream request. Adding a metric that
+fetches from an upstream to `DefaultMetrics` adds that request to every measured
+corridor, in the API and on the schedule; that is a budget decision as much as
+a code one, so it belongs here even though individual metrics are open
+contribution.
 
 **Why composition, specifically.** `WithFindings` is the only place check
 results meet a corridor document, and it copies every headline field through

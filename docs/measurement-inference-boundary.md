@@ -286,3 +286,11 @@ No implementation is attempted as part of this finding. The design is ready for 
 ## Unpriced Rungs and Holes
 
 When upstream liquidity fails or a rung cannot be priced at a specific trade size, Wayfare explicitly marks that rung as unpriced. No rate or interpolated value is ever synthesized or assigned to fill the gap. The curve preserves holes transparently as part of the execution economics discipline.
+
+## Publishability Status of Layer-3 Estimates
+
+Status: design finding only (no implementation). Any Layer-3 (probabilistic) estimate is not publishable as fact under the four-layer rule. The published shape of such an estimate is currently undesigned and is not present in the repository.
+
+Checked 2026-09-25: no Layer-3 figure is emitted by the measurement engine; the run-record and wire layouts carry headline measurements only. A layer-3 estimate must be labelled as inference, never rendered as a measured value, and must not fill an unpriced rung. The detailed visual contract is in `docs/measurement-inference-boundary.md`'s companion design finding (backlog #147 / GitHub #208), which remains a proposal, not a built capability.
+
+Inconclusive: whether an inference badge, a separate venue value, or a separate curve field is the right publishable shape is not settled by the code as it stands. Resolving it would touch verdict thresholds, integrity semantics, the check composition rule or the run-record layout, and so is out of scope for this spike and should be raised as a separate issue.
