@@ -107,7 +107,7 @@ func TestUIBootHasNoHardcodedDefaultCorridor(t *testing.T) {
 		"await loadAssets()",          // the list first
 		"const ready =",               // the outcome is checked, not ignored
 		"if (!ready) return;",         // and a failure stops the boot, not into a default
-		"loadCorridor($('to').value)", // the corridor fetched is the one selected
+		"await navigateTo();",         // URL state is applied before the selected corridor loads
 	} {
 		if !strings.Contains(boot, want) {
 			t.Errorf("boot() missing %q", want)

@@ -3186,10 +3186,11 @@ async function navigateTo({ write = true } = {}) {
     await measure();
     return;
   }
-  await loadCorridor(to, sizes);
+  await loadCorridor(to);
 }
 
-async function loadCorridor(to, sizes = parseSizesInput(readSizes())) {
+async function loadCorridor(to) {
+  const sizes = parseSizesInput(readSizes());
   const requestId = ++corridorRequest;
   if (!to) {
     setOut(`<div class="panel">${emptyState({
