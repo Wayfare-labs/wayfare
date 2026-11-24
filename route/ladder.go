@@ -345,6 +345,57 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 		Request: req,
 		Rungs:   make([]Rung, len(sorted)),
 	}
+	setUnmeasured := func(err error) {
+		for i, size := range sorted {
+			out.Rungs[i] = Rung{SendAmount: size, Err: err}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		setUnmeasured(err)
+		return out, err
+	}
+
+	// A ladder is one measurement, so every size must be scored against the
+	// same benchmark. Fetch before starting any Horizon work: a missing
+	// reference fails the ladder without spending pathfinder requests.
+	if e.RefRate == nil {
+		err := fmt.Errorf("route: a reference rate provider is required; " +
+			"without one the engine can rank routes but cannot tell a good one from a bad one")
+		setUnmeasured(err)
+		out.summarise()
+		return out, nil
+	}
+	hasValidSize := false
+	for i, size := range sorted {
+		if size.IsZero() || size.IsNegative() {
+			out.Rungs[i] = Rung{
+				SendAmount: size,
+				Err:        fmt.Errorf("route: send amount must be positive, got %s", size),
+			}
+			continue
+		}
+		hasValidSize = true
+	}
+	if !hasValidSize {
+		out.summarise()
+		return out, nil
+	}
+	ref, err := e.RefRate.Rate(ctx, req.ReferenceBase, req.ReferenceQuote)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			setUnmeasured(ctxErr)
+			return out, ctxErr
+		}
+		err = fmt.Errorf("route: reference rate unavailable: %w", err)
+		setUnmeasured(err)
+		out.summarise()
+		return out, nil
+	}
+	if err := ctx.Err(); err != nil {
+		setUnmeasured(err)
+		return out, err
+	}
+	parallel := e.parallelAgainst(ctx, ref)
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, ladderConcurrency)
@@ -356,13 +407,13 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res, err := e.Quote(ctx, Request{
+			res, err := e.quoteWith(ctx, Request{
 				SendAsset:      req.SendAsset,
 				SendAmount:     size,
 				ReceiveAsset:   req.ReceiveAsset,
 				ReferenceBase:  req.ReferenceBase,
 				ReferenceQuote: req.ReferenceQuote,
-			})
+			}, ref, parallel)
 			rung := Rung{SendAmount: size, Result: res, Err: err}
 			if err == nil {
 				rung.Ledger = e.observedLedger(ctx)

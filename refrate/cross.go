@@ -134,6 +134,9 @@ const (
 	// typed error in the taxonomy.
 	errClassUnknown errorClass = iota
 
+	// errClassStale means a provider returned an old rate or no timestamp.
+	errClassStale
+
 	// errClassUnavailable means the provider did not answer at all —
 	// network failure, timeout, or HTTP-level error.
 	errClassUnavailable
@@ -145,6 +148,10 @@ const (
 
 // classifyError identifies which category of provider failure occurred.
 func classifyError(err error) errorClass {
+	var stale *ErrStaleRate
+	if errors.As(err, &stale) {
+		return errClassStale
+	}
 	var unavailable *ErrUnavailable
 	if errors.As(err, &unavailable) {
 		return errClassUnavailable
@@ -160,6 +167,8 @@ func classifyError(err error) errorClass {
 // in degradation notes.
 func errorDescription(err error) string {
 	switch classifyError(err) {
+	case errClassStale:
+		return "stale or has unknown age"
 	case errClassUnavailable:
 		return "unavailable"
 	case errClassUnparseable:
@@ -242,7 +251,7 @@ func (c *Cross) Rate(ctx context.Context, base, quote string) (Rate, error) {
 	switch {
 	case primaryErr != nil && secondaryErr != nil:
 		return Rate{}, fmt.Errorf(
-			"refrate: no reference rate for %s/%s: %s was %s (%v); %s was %s (%v)",
+			"refrate: no reference rate for %s/%s: %s was %s (%w); %s was %s (%w)",
 			base, quote,
 			c.Primary.Name(), errorDescription(primaryErr), primaryErr,
 			c.Secondary.Name(), errorDescription(secondaryErr), secondaryErr)

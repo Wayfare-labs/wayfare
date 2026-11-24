@@ -19,6 +19,26 @@ benchmark: when the primaries disagree, it reports which of them is farther
 from an independent observation. That is what lets a `DISAGREE` say *which*
 side looks wrong instead of only that one of them does.
 
+## Absolute freshness bound
+
+Every configured reference provider (both scored feeds and the optional
+diagnostic feed) is checked against an absolute maximum age, independently of
+the relative 48-hour `StaleGap` comparison. The default is
+**72 hours** (`refrate.DefaultMaxAge`, configurable with `-ref-max-age` in
+`wayfared` and `cmd/ladder`). The two scored feeds publish daily, so 72 hours
+allows one missed daily refresh while refusing a rate that has persisted past
+multiple expected updates. This also catches the case where both providers
+agree because they stopped updating at the same time.
+
+The age check wraps each cached provider, outside its cache, so a cache hit is
+checked again on every use. One stale scored provider is treated as unavailable
+by `Cross`: a fresh other provider may still produce an explicitly
+uncorroborated `SINGLE` result naming the stale source. If neither scored
+provider is fresh, the measurement has no reference rate and fails. A missing
+`AsOf` timestamp is unknown age, not fresh; the provider is rejected with an
+explicit reason. A non-positive `-ref-max-age` is rejected at startup rather
+than disabling the production safety bound accidentally.
+
 ## Why `floatrates` is the diagnostic provider
 
 `floatrates` publishes a free, keyless daily JSON feed per base currency:
