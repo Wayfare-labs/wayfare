@@ -413,7 +413,7 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 	}
 	parallel := e.parallelAgainst(ctx, ref)
 
-	out.Rungs = e.priceRungs(ctx, req, sorted)
+	out.Rungs = e.priceRungs(ctx, req, sorted, ref, parallel)
 
 	if err := ctx.Err(); err != nil {
 		// The partial result is returned alongside the error so a caller can
@@ -428,7 +428,7 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 	// context runs out rather than extending the measurement. The count is
 	// bounded by MaxAdaptiveExtraRungs.
 	if req.Adaptive != nil {
-		out.Rungs = mergeAdaptiveRungs(out.Rungs, e.adaptiveRungs(ctx, req, out.Rungs, *req.Adaptive))
+		out.Rungs = mergeAdaptiveRungs(out.Rungs, e.adaptiveRungs(ctx, req, out.Rungs, *req.Adaptive, ref, parallel))
 	}
 
 	out.summarise()
@@ -439,7 +439,7 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 // priceRungs prices each size concurrently and returns one rung per size, in
 // the order given. A size that cannot be priced leaves its own unmeasured rung
 // rather than failing the batch; the caller decides what a partial batch means.
-func (e *Engine) priceRungs(ctx context.Context, req LadderRequest, sizes []decimal.Decimal) []Rung {
+func (e *Engine) priceRungs(ctx context.Context, req LadderRequest, sizes []decimal.Decimal, ref refrate.Rate, parallel *refrate.Parallel) []Rung {
 	rungs := make([]Rung, len(sizes))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, ladderConcurrency)
@@ -478,12 +478,12 @@ func (e *Engine) priceRungs(ctx context.Context, req LadderRequest, sizes []deci
 // nothing (an unreachable upstream) is dropped rather than published as a hole,
 // because a hole would make the ladder look partially measured at a size the
 // caller never asked for.
-func (e *Engine) adaptiveRungs(ctx context.Context, req LadderRequest, measured []Rung, rule AdaptiveRule) []Rung {
+func (e *Engine) adaptiveRungs(ctx context.Context, req LadderRequest, measured []Rung, rule AdaptiveRule, ref refrate.Rate, parallel *refrate.Parallel) []Rung {
 	sizes := adaptiveMidpoints(measured, rule)
 	if len(sizes) == 0 || ctx.Err() != nil {
 		return nil
 	}
-	priced := e.priceRungs(ctx, req, sizes)
+	priced := e.priceRungs(ctx, req, sizes, ref, parallel)
 	if ctx.Err() != nil {
 		return nil
 	}
