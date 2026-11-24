@@ -81,7 +81,10 @@ hash-chained history embedded in the binary at build time
 push — so "down" and "up-to-date" are different complaints with different
 fixes. `/healthz` answers **process** liveness (`status`) and
 **data** age (`data.age_human`) separately, and `status: "ok"` does **not**
-mean a live measurement succeeded (`README.md:461-463`).
+mean a live measurement succeeded (`README.md:461-463`). Neither of those says
+whether the history being served was ever checked: `/readyz` answers that, and
+returns `503` for a chain that failed verification at startup or a store that
+stopped answering a read ([api.md](api.md#get-readyz)).
 
 ### Fix
 

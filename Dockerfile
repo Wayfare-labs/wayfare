@@ -28,12 +28,13 @@ COPY . .
 RUN apk add --no-cache git
 
 # Stamp the binary with the code commit and the commit of data/ embedded at
-# build time, so /healthz reports which provenance is serving (issue #576).
+# build time, so /healthz reports which provenance is serving (issue #576) and
+# `wayfared -version` reports the same pair (issue #707).
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
     -ldflags="-s -w \
-      -X github.com/Wayfare-labs/wayfare/server.codeCommit=$(git rev-parse HEAD) \
-      -X github.com/Wayfare-labs/wayfare/server.dataCommit=$(git log -1 --format=%H -- data/)" \
+      -X github.com/Wayfare-labs/wayfare/buildinfo.codeCommit=$(git rev-parse HEAD) \
+      -X github.com/Wayfare-labs/wayfare/buildinfo.dataCommit=$(git log -1 --format=%H -- data/)" \
     -o /out/wayfared ./cmd/wayfared
 
 # gcr.io/distroless/static-debian12:nonroot, pinned by digest for the same

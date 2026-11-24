@@ -131,12 +131,23 @@ func (r *Recorder) add(req *http.Request, resp *http.Response, body []byte) {
 
 	resp.Header = CleanHeaders(resp.Header)
 
+	// Record the URL that answered, not only the one that was asked for. A
+	// failover transport rewrites the origin below this recorder, so the bytes
+	// stored here can come from a different host than the request the engine
+	// built; a manifest naming the primary would send a reader to someone else's
+	// logs. The deduplication key stays on the request, because it is the query
+	// that was asked and a replay matches on path and parameters alone.
+	answered := req.URL
+	if resp.Request != nil && resp.Request.URL != nil {
+		answered = resp.Request.URL
+	}
+
 	seq := len(r.entries) + 1
 	r.entries = append(r.entries, Interaction{
 		Kind:        classify(req),
 		Method:      strings.ToUpper(req.Method),
 		Key:         key,
-		URL:         req.URL.String(),
+		URL:         answered.String(),
 		Status:      resp.StatusCode,
 		ContentType: resp.Header.Get("Content-Type"),
 		Header:      resp.Header,
