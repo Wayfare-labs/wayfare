@@ -65,17 +65,17 @@ func TestDNSRebindingRefusedAtConnectTime(t *testing.T) {
 				continue
 			}
 			resp := make([]byte, 0, 512)
-			resp = append(resp, q[0], q[1]) // Transaction ID
-			resp = append(resp, 0x81, 0x80) // Flags: standard response, no error
-			resp = append(resp, 0x00, 0x01) // QDCOUNT = 1
-			resp = append(resp, 0x00, 0x01) // ANCOUNT = 1
-			resp = append(resp, 0x00, 0x00) // NSCOUNT = 0
-			resp = append(resp, 0x00, 0x00) // ARCOUNT = 0
-			resp = append(resp, q[12:qEnd]...) // Question section
-			resp = append(resp, 0xc0, 0x0c) // Pointer to name in question
+			resp = append(resp, q[0], q[1])             // Transaction ID
+			resp = append(resp, 0x81, 0x80)             // Flags: standard response, no error
+			resp = append(resp, 0x00, 0x01)             // QDCOUNT = 1
+			resp = append(resp, 0x00, 0x01)             // ANCOUNT = 1
+			resp = append(resp, 0x00, 0x00)             // NSCOUNT = 0
+			resp = append(resp, 0x00, 0x00)             // ARCOUNT = 0
+			resp = append(resp, q[12:qEnd]...)          // Question section
+			resp = append(resp, 0xc0, 0x0c)             // Pointer to name in question
 			resp = append(resp, 0x00, 0x01, 0x00, 0x01) // Type A, Class IN
 			resp = append(resp, 0x00, 0x00, 0x00, 0x00) // TTL 0
-			resp = append(resp, 0x00, 0x04) // Length 4
+			resp = append(resp, 0x00, 0x04)             // Length 4
 			if count == 1 {
 				// Query 1 (check time): resolves to a benign public IP
 				resp = append(resp, 93, 184, 216, 34) // 93.184.216.34 (public)
