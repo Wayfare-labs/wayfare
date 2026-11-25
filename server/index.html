@@ -3176,8 +3176,11 @@ function applyTheme(v) {
   }
 }
 
-$('theme').value = storedTheme();
-$('theme').addEventListener('change', (e) => applyTheme(e.target.value));
+const theme = $('theme');
+if (theme) {
+  theme.value = storedTheme();
+  theme.addEventListener('change', (e) => applyTheme(e.target.value));
+}
 $('compare').addEventListener('click', compareCorridors);
 if ($('market-structure')) {
   $('market-structure').addEventListener('click', loadMarketStructure);
