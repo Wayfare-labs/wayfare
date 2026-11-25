@@ -86,6 +86,30 @@ func TestUIThemeToggle(t *testing.T) {
 	}
 }
 
+// TestUIThemeControlCannotAbortBoot guards issue #832: the theme control is
+// optional markup, so an older or reduced page must still reach corridor boot.
+func TestUIThemeControlCannotAbortBoot(t *testing.T) {
+	page := uiSource(t)
+	bind := between(t, page, "const theme = $('theme');", "$('compare').addEventListener")
+	if !strings.Contains(bind, "if (theme)") {
+		t.Fatal("theme initialization is not guarded; missing theme markup would abort corridor boot")
+	}
+	if !strings.Contains(bind, "theme.value = storedTheme()") {
+		t.Fatal("guarded theme initialization no longer restores the stored theme")
+	}
+	if !strings.Contains(bind, "theme.addEventListener('change'") {
+		t.Fatal("guarded theme initialization no longer wires theme changes")
+	}
+
+	boot := strings.Index(page, "(async function boot()")
+	if boot < 0 {
+		t.Fatal("UI source is missing the corridor boot function")
+	}
+	if strings.Index(page, "const theme = $('theme');") > boot {
+		t.Fatal("theme binding moved after corridor boot")
+	}
+}
+
 // TestUIEvidenceDrawer guards issues #294 and #647: evidence is
 // progressively disclosed rather than dumped, provenance is stated next to
 // the headline, and every check says where its evidence came from and how old
