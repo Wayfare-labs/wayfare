@@ -244,29 +244,16 @@ func main() {
 		DEX: dexClient,
 		// Records the ledger range each ladder's rungs were priced across.
 		Ledgers: dexClient,
-		// Two independent providers, each cached, cross-checked for
-		// divergence. Caching matters here specifically: a ladder is a
+		// The same cross-checked stack cmd/ladder uses, with each provider's
+		// traffic counted. Caching matters here specifically: a ladder is a
 		// dozen quotes that would otherwise each fetch the same mid.
-		RefRate: checkedReferenceCross(
-			&refrate.Cached{Inner: &refrate.ExchangeRateAPI{
-				Client: metrics.NewClient(metrics.UpstreamExchangeRateAPI, collector, referenceTimeout),
-				Logger: logger,
-			}},
-			&refrate.Cached{Inner: &refrate.CurrencyAPI{
-				Client: metrics.NewClient(metrics.UpstreamCurrencyAPI, collector, referenceTimeout),
-				Logger: logger,
-			}},
-			// The third provider is consulted only when the first two
-			// disagree, and only to attribute which of them is the outlier.
-			// It never contributes a scored mid (see refrate.Cross). Cached
-			// because a sweep prices many rungs and a diagnostic is a
-			// daily-published figure, not a per-rung one.
-			&refrate.Cached{Inner: &refrate.FloatRates{
-				Client: metrics.NewClient(metrics.UpstreamFloatRates, collector, referenceTimeout),
-				Logger: logger,
-			}},
-			*refMaxAge,
-		),
+		RefRate: refrate.DefaultStack(refrate.StackConfig{
+			PrimaryClient:    metrics.NewClient(metrics.UpstreamExchangeRateAPI, collector, referenceTimeout),
+			SecondaryClient:  metrics.NewClient(metrics.UpstreamCurrencyAPI, collector, referenceTimeout),
+			DiagnosticClient: metrics.NewClient(metrics.UpstreamFloatRates, collector, referenceTimeout),
+			Logger:           logger,
+			MaxAge:           *refMaxAge,
+		}),
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -383,23 +370,6 @@ func shutdownServer(srv *http.Server, grace time.Duration, logger *slog.Logger) 
 	}
 }
 
-// checkedReferenceCross applies the absolute freshness policy outside each
-// cache. Cached replies are therefore rechecked on every use, and one stale
-// source degrades through Cross rather than becoming an apparently fresh hit.
-func checkedReferenceCross(primary, secondary, diagnostic refrate.Provider, maxAge time.Duration) *refrate.Cross {
-	checked := func(provider refrate.Provider) refrate.Provider {
-		if provider == nil {
-			return nil
-		}
-		return &refrate.Checked{Inner: provider, MaxAge: maxAge}
-	}
-	return &refrate.Cross{
-		Primary:    checked(primary),
-		Secondary:  checked(secondary),
-		Diagnostic: checked(diagnostic),
-	}
-}
-
 // newScheduler wires the scheduled sweep, including the snapshot archive when a
 // data directory was given.
 //
@@ -465,12 +435,16 @@ func newScheduler(engine *route.Engine, store runstore.Store, dataDir, horizon, 
 			// The root lookups go through the same recorder, so the ledger a
 			// stored range names is itself in the snapshot evidence.
 			Ledgers: snapshotDEX,
-			RefRate: checkedReferenceCross(
-				&refrate.Cached{Inner: &refrate.ExchangeRateAPI{Client: client(metrics.UpstreamExchangeRateAPI), Logger: logger}},
-				&refrate.Cached{Inner: &refrate.CurrencyAPI{Client: client(metrics.UpstreamCurrencyAPI), Logger: logger}},
-				&refrate.Cached{Inner: &refrate.FloatRates{Client: client(metrics.UpstreamFloatRates), Logger: logger}},
-				refMaxAge,
-			),
+			// One constructor, with each upstream's labelled transport still
+			// above the recorder, so a snapshot captures every provider the
+			// stack calls.
+			RefRate: refrate.DefaultStack(refrate.StackConfig{
+				PrimaryClient:    client(metrics.UpstreamExchangeRateAPI),
+				SecondaryClient:  client(metrics.UpstreamCurrencyAPI),
+				DiagnosticClient: client(metrics.UpstreamFloatRates),
+				Logger:           logger,
+				MaxAge:           refMaxAge,
+			}),
 		}
 	}
 	sched.SnapshotChecksFactory = func(recorder *snapshot.Recorder) *checks.Runner {

@@ -34,7 +34,7 @@ func staticReference(name string, age time.Duration) refrate.Provider {
 func TestWayfaredReferenceCrossRejectsStaleSources(t *testing.T) {
 	maxAge := refrate.DefaultMaxAge
 	t.Run("one stale source degrades to single", func(t *testing.T) {
-		cross := checkedReferenceCross(
+		cross := refrate.CrossWithMaxAge(
 			staticReference("old-primary", maxAge+time.Hour),
 			staticReference("fresh-secondary", time.Hour),
 			nil,
@@ -53,7 +53,7 @@ func TestWayfaredReferenceCrossRejectsStaleSources(t *testing.T) {
 	})
 
 	t.Run("two stale sources return typed failure", func(t *testing.T) {
-		cross := checkedReferenceCross(
+		cross := refrate.CrossWithMaxAge(
 			staticReference("old-primary", maxAge+time.Hour),
 			staticReference("old-secondary", maxAge+time.Hour),
 			nil,
