@@ -18,8 +18,7 @@ func NewStore(rootDir string) *Store {
 	return &Store{RootDir: rootDir}
 }
 
-// Put stores data by its SHA-256 hash in the content store under rootDir/objects/xx/yy/... or flat/hierarchical structure.
-// Following project requirements, we store content in rootDir/objects/<sha256> or similar.
+// Put stores data by its SHA-256 hash in the content store under rootDir/objects/<sha256>.
 func (s *Store) Put(data []byte) (string, error) {
 	hash := sha256.Sum256(data)
 	hashStr := hex.EncodeToString(hash[:])

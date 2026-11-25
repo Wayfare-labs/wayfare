@@ -69,7 +69,6 @@ func MigrateSnapshotDir(snapshotDir string, store *Store) error {
 		return fmt.Errorf("load manifest for migration: %w", err)
 	}
 
-	// For each interaction, if it has a body_file or we can read its body, put it into store.
 	for i := range m.Interactions {
 		inter := &m.Interactions[i]
 		var bodyBytes []byte
@@ -81,7 +80,6 @@ func MigrateSnapshotDir(snapshotDir string, store *Store) error {
 				return fmt.Errorf("read body file %s: %w", bf, readErr)
 			}
 		} else if inter.BodySHA256 != "" {
-			// maybe already in store or loaded in memory if available
 			continue
 		}
 
@@ -90,7 +88,7 @@ func MigrateSnapshotDir(snapshotDir string, store *Store) error {
 			return fmt.Errorf("store put during migration: %w", err)
 		}
 		inter.BodySHA256 = hashKey
-		// Optionally clear or keep body_file as relative reference or remove local responses dir.
+		inter.BodyFile = ""
 	}
 
 	// Save updated manifest
