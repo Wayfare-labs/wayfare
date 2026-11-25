@@ -317,3 +317,13 @@ func (m *Manifest) FirstOfKind(kind string) (Interaction, bool) {
 	}
 	return Interaction{}, false
 }
+
+// Save writes the manifest to the given path.
+func (m *Manifest) Save(path string) error {
+	raw, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return fmt.Errorf("snapshot: marshaling manifest: %w", err)
+	}
+	raw = append(raw, '\n')
+	return os.WriteFile(path, raw, 0644)
+}
