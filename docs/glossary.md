@@ -75,7 +75,8 @@ because collapsing them discards the reason a corridor failed.
 
 | Integrity | Meaning |
 |:---|:---|
-| `DIRECT` | At least one path reaches the destination without routing through another fiat-pegged token. An independent market exists. |
+| `DIRECT` | At least one path reaches the destination without routing through another fiat-pegged token, with two-sided executable liquidity. An independent market exists. |
+| `ONE-SIDED` | At least one path reaches the destination without routing through another fiat-pegged token, but liquidity exists only on entry (no exit bids). |
 | `DERIVATIVE` | Every available path traverses another fiat-pegged token. The corridor inherits that token's liquidity and failure modes on top of its own. `depends_on` names what it depends on. |
 | `NO-MARKET` | Horizon returned no path at any size. The absence of a price, not a bad one. |
 | `UNKNOWN` | Structure not established — normally an unreachable upstream or a request that never landed. Nothing was learned about the corridor. |

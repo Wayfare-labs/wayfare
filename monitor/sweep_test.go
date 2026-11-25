@@ -3,17 +3,15 @@ package monitor
 import (
 	"context"
 	"errors"
+	"testing"
+	"time"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"testing"
-	"time"
-
 	"github.com/shopspring/decimal"
-
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
@@ -21,6 +19,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/runstore"
 	"github.com/Wayfare-labs/wayfare/snapshot"
 )
+
 
 // failHandler wraps a snapshot replayer and returns HTTP 500 for requests
 // whose query contains the given receive-asset code.  This simulates a
@@ -709,6 +708,42 @@ func TestRestartAfterCrashMidSweep(t *testing.T) {
 		}
 		if err := reopened.Verify(context.Background(), key); err != nil {
 			t.Errorf("chain for %s does not verify after restart: %v", key, err)
+		}
+	}
+}
+func TestSweepCorridors_BoundedAndIsolated(t *testing.T) {
+	ctx := context.Background()
+	corridors := []Corridor{
+		{Send: "USDC", Receive: "NGNC"},
+		{Send: "USDC", Receive: "GHSC"},
+		{Send: "USDC", Receive: "KESC"},
+	}
+
+	measure := func(ctx context.Context, c Corridor) error {
+		time.Sleep(10 * time.Millisecond)
+		if c.Receive == "GHSC" {
+			return errors.New("ghsc failed")
+		}
+		return nil
+	}
+
+	results := SweepCorridors(ctx, corridors, 2, measure)
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+
+	for _, r := range results {
+		if r.Duration <= 0 {
+			t.Errorf("expected non-zero duration for corridor %s", r.Corridor.Receive)
+		}
+		if r.Corridor.Receive.Code == "GHSC" {
+			if r.Err == nil {
+				t.Errorf("expected error for GHSC corridor isolation, got nil")
+			}
+		} else {
+			if r.Err != nil {
+				t.Errorf("expected no error for corridor %s, got %v", r.Corridor.Receive, r.Err)
+			}
 		}
 	}
 }
