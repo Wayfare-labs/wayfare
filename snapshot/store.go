@@ -10,6 +10,7 @@ import (
 	"fmt"
 )
 
+
 // StoreBody saves a response body into the content-addressed store by its SHA-256 hash.
 func (s *Store) StoreBody(body []byte) (string, error) {
 	hash := sha256.Sum256(body)
@@ -113,55 +114,44 @@ func MigrateSnapshot(snapDir string, store *Store) error {
 	_ = os.RemoveAll(filepath.Join(snapDir, "responses"))
 	return nil
 }
-// Store manages content-addressed storage of snapshot response bodies.
 type Store struct {
-	Dir string
+	baseDir string
 }
 
-// NewStore creates a new content-addressed store rooted at dir.
-func NewStore(dir string) *Store {
-	return &Store{Dir: dir}
+func NewStore(baseDir string) *Store {
+	return &Store{baseDir: baseDir}
 }
 
-// Put stores data by its SHA-256 hash in the content store under Dir/objects/<sha256>.
+func (s *Store) objectsDir() string {
+	return filepath.Join(s.baseDir, "objects")
+}
+
 func (s *Store) Put(data []byte) (string, error) {
 	hash := sha256.Sum256(data)
 	hashStr := hex.EncodeToString(hash[:])
-	hashKey := "sha256:" + hashStr
 
-	objDir := filepath.Join(s.Dir, "objects")
+	objDir := s.objectsDir()
 	if err := os.MkdirAll(objDir, 0755); err != nil {
 		return "", err
 	}
 
 	objPath := filepath.Join(objDir, hashStr)
-	if _, err := os.Stat(objPath); os.IsNotExist(err) {
-		if err := os.WriteFile(objPath, data, 0644); err != nil {
-			return "", err
-		}
+	if _, err := os.Stat(objPath); err == nil {
+		return hashStr, nil
 	}
 
-	return hashKey, nil
+	if err := os.WriteFile(objPath, data, 0644); err != nil {
+		return "", err
 }
 
-// Get retrieves response body bytes given a SHA-256 hash or hashKey.
-func (s *Store) Get(hashKey string) ([]byte, error) {
-	hashStr := hashKey
-	if len(hashStr) > 7 && hashStr[:7] == "sha256:" {
-		hashStr = hashStr[7:]
+	return hashStr, nil
 	}
-
-	objPath := filepath.Join(s.Dir, "objects", hashStr)
+func (s *Store) Get(hash string) ([]byte, error) {
+	objPath := filepath.Join(s.objectsDir(), hash)
 	return os.ReadFile(objPath)
 }
 
-// Reader returns an io.ReadCloser for the stored object.
-func (s *Store) Reader(hashKey string) (io.ReadCloser, error) {
-	hashStr := hashKey
-	if len(hashStr) > 7 && hashStr[:7] == "sha256:" {
-		hashStr = hashStr[7:]
-	}
-
-	objPath := filepath.Join(s.Dir, "objects", hashStr)
+func (s *Store) Reader(hash string) (io.ReadCloser, error) {
+	objPath := filepath.Join(s.objectsDir(), hash)
 	return os.Open(objPath)
 }
