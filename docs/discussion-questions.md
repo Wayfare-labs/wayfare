@@ -54,36 +54,46 @@ trust this document. Line numbers are at `74c1f17`.
 ### 1. "How many Horizon calls does one ladder actually make?"
 
 Asked in [#481](https://github.com/Wayfare-labs/wayfare/issues/481), 2026-09-24.
-**Still open.** Two places in the tree state a count and neither matches the
-other, let alone the measurement:
+**Fixed by [#863](https://github.com/Wayfare-labs/wayfare/issues/863).** The two
+places that disagreed now state the corrected per-corridor count and current
+registry-wide estimate:
 
-`server/api.go:54-57` says:
+`server/api.go:59-64` says:
 
 > // Timeout bounds a single corridor measurement. One Horizon call per
-> // rung, plus a two-call slippage probe on each rung above the probe
-> // threshold, so the count scales with route.DefaultSizes rather than
-> // staying a fixed dozen; this is still generous by HTTP standards.
+> // rung — twelve with route.DefaultSizes, with the thin-liquidity warning
+> // derived from those rungs — so the count scales with route.DefaultSizes;
+> // this is still generous by HTTP standards. It is the ceiling: the budget
+> // a request actually gets is derived from its rung count (see budgetFor)
+> // and never exceeds this.
 
-`docs/deployment.md:301-306` says:
+`docs/deployment.md:308-320` says:
 
 > The registry currently yields six scheduled corridors: NGNC, GHSC,
 > KESC, NGNT, ZARZ and EURMTL. USDZ and PYUSD are USD-pegged swaps and remain
 > out until issue #671 defines a meaningful USD-to-USD reference.
+>
+> The six scheduled corridors therefore make **72 Horizon calls per six-hour
+> sweep**.
+>
+> Allowing roughly four counterparty requests per corridor and two
+> reference-provider calls puts the whole sweep at about **98 upstream requests
+> every six hours**.
 
-> The three additional corridors therefore add at most 84 calls, for a
-> conservative ceiling of **152 Horizon calls per six-hour sweep**. A corridor
-> that returns NO-MARKET short-circuits its probes and costs 12 calls instead.
-> This is an upper-bound estimate for the new corridors, not a claim that their
-> live request counts have been measured.
+The reporter measured **28** calls for a priced corridor, not 12: twelve
+`/paths/strict-send` requests for the ladder, plus a two-call slippage probe
+(`dex/dex.go:298` `MeasureSlippage` prices the requested amount *and* a small
+probe) on each rung above the probe threshold of 10 send units
+(`route/route.go:334`). Across the three corridors they counted 68, not 110,
+because a `NO-MARKET` corridor short-circuits before the probe.
 
-The reporter's original three-corridor measurement remains useful as a
-baseline: **68 Horizon calls** (NGNC 28, GHSC 28 and KESC 12). Each priced
-corridor uses twelve `/paths/strict-send` requests for the ladder plus a
-two-call slippage probe (`dex/dex.go:298` `MeasureSlippage` prices the
-requested amount *and* a small probe) on each rung above the probe threshold of
-10 send units (`route/route.go:334`). The current six-corridor figure is a
-conservative upper-bound estimate, not a claim that all six have been measured
-live at those request counts.
+The probe was real; the arithmetic in both places was not. #863 stops paying for
+it on ladder rungs and derives the warning from the rung already priced, so a
+default corridor makes **12** calls. With the six registry-driven corridors in
+this PR, a sweep makes **72 Horizon calls**; including the estimated
+counterparty and reference-provider requests, the total is about **98 upstream
+requests** every six hours. A counting proxy over the recorded USDC/NGNC
+snapshot now pins the per-corridor count.
 
 ### 2. "Why does a self-contained page carry a Cloudflare challenge script?"
 
