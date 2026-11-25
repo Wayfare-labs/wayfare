@@ -60,7 +60,7 @@ func TestQuestionsDocQuotesTheCodeItRestsOn(t *testing.T) {
 		{
 			claim: "the ladder scales with DefaultSizes in server/api.go",
 			file:  "server/api.go",
-			quote: "One Horizon call per rung, plus a two-call slippage probe",
+			quote: "One Horizon call per rung — twelve with route.DefaultSizes, with the thin-liquidity warning derived from those rungs",
 		},
 		{
 			claim: "deployment.md identifies the six registry-derived scheduled corridors",
@@ -68,14 +68,14 @@ func TestQuestionsDocQuotesTheCodeItRestsOn(t *testing.T) {
 			quote: "The registry currently yields six scheduled corridors: NGNC, GHSC,",
 		},
 		{
-			claim: "deployment.md gives the conservative Horizon-call ceiling",
+			claim: "deployment.md gives the six-corridor Horizon-call estimate",
 			file:  "docs/deployment.md",
-			quote: "conservative ceiling of **152 Horizon calls per six-hour sweep**",
+			quote: "six scheduled corridors therefore make **72",
 		},
 		{
-			claim: "deployment.md gives the conservative total upstream-request estimate",
+			claim: "deployment.md gives the total upstream-request estimate",
 			file:  "docs/deployment.md",
-			quote: "no more than about **178 upstream requests every six hours**",
+			quote: "about **98 upstream requests",
 		},
 		{
 			claim: "writeError publishes a machine-readable code alongside the prose",
@@ -235,8 +235,8 @@ func sortedKeys(m map[string]string) []string {
 // question the document calls *fixed* has to stay fixed, or the document is
 // claiming a repair that has been undone.
 //
-// #474 is the one the document records as fixed, and the fix is two specific
-// call sites. Those are pinned here rather than trusted.
+// #474 and #481 are the questions the document records as fixed. #474's fix is
+// pinned here; #481's count is pinned by the deployment/api claims above.
 func TestQuestionsDocClaimsAboutTheFixedIssueStillHold(t *testing.T) {
 	doc := questionsText(t)
 
@@ -264,8 +264,8 @@ func TestQuestionsDocClaimsAboutTheFixedIssueStillHold(t *testing.T) {
 // TestQuestionsDocDoesNotClaimAnyQuestionIsAnswered is the negative test that
 // matters most.
 //
-// Four of the five questions are recorded with an open issue. A document of this
-// kind drifts toward sounding resolved, and a reader who trusts it would stop
+// Three of the five questions are not fully resolved. A document of this kind
+// drifts toward sounding resolved, and a reader who trusts it would stop
 // filing the bug. So the document has to carry the unresolved statuses, and it
 // has to be explicit about the one that is merely unestablished.
 func TestQuestionsDocDoesNotClaimAnyQuestionIsAnswered(t *testing.T) {
