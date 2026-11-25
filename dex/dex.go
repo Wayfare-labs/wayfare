@@ -483,3 +483,41 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 		"duration", time.Since(started).Round(time.Millisecond).String())
 	return nil
 }
+
+// LiquidityPool represents a classic constant-product liquidity pool from Horizon.
+type LiquidityPool struct {
+	ID              string        `json:"id"`
+	FeeBP           int           `json:"fee_bp"`
+	Type            string        `json:"type"`
+	TotalShares     string        `json:"total_shares"`
+	TotalTrustlines string        `json:"total_trustlines"`
+	Reserves        []PoolReserve `json:"reserves"`
+}
+
+// PoolReserve is one asset reserve in a liquidity pool.
+type PoolReserve struct {
+	Asset  string `json:"asset"`
+	Amount string `json:"amount"`
+}
+
+// LiquidityPool fetches pool details from Horizon's /liquidity_pools/{id} endpoint.
+func (c *Client) LiquidityPool(ctx context.Context, id string) (LiquidityPool, error) {
+	if err := ctx.Err(); err != nil {
+		return LiquidityPool{}, err
+	}
+	// FeeBP shadows the embedded field so an absent fee is distinguishable
+	// from an explicit zero.
+	var raw struct {
+		LiquidityPool
+		FeeBP *int `json:"fee_bp"`
+	}
+	endpoint := "/liquidity_pools/" + url.PathEscape(id)
+	if err := c.get(ctx, endpoint, nil, &raw); err != nil {
+		return LiquidityPool{}, err
+	}
+	if raw.FeeBP == nil {
+		return LiquidityPool{}, fmt.Errorf("dex: liquidity pool %s reports no fee_bp", id)
+	}
+	raw.LiquidityPool.FeeBP = *raw.FeeBP
+	return raw.LiquidityPool, nil
+}

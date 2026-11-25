@@ -7,7 +7,37 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
+
+	"github.com/Wayfare-labs/wayfare/snapshot"
 )
+
+// TestCurrencyAPIReplay429YieldsErrRateLimitedWithRetryAfter verifies that replaying
+// the recorded 429 fixture yields *ErrRateLimited with RetryAfter > 0.
+func TestCurrencyAPIReplay429YieldsErrRateLimitedWithRetryAfter(t *testing.T) {
+	manifestPath := "../testdata/snapshots/rate-limited-429-20261122T000000Z"
+	m, err := snapshot.Load(manifestPath)
+	if err != nil {
+		t.Fatalf("loading 429 snapshot: %v", err)
+	}
+
+	p := &CurrencyAPI{
+		BaseURL: "https://latest.currency-api.pages.dev/v1/currencies/",
+		Client:  m.HTTPClient(),
+	}
+	_, err = p.Rate(context.Background(), "USD", "NGN")
+	if err == nil {
+		t.Fatal("expected an error for 429 snapshot replay, got none")
+	}
+
+	var limited *ErrRateLimited
+	if !errors.As(err, &limited) {
+		t.Fatalf("error %q does not unwrap to ErrRateLimited", err)
+	}
+	if limited.RetryAfter != 45*time.Second {
+		t.Errorf("RetryAfter = %s, want 45s", limited.RetryAfter)
+	}
+}
 
 // TestCurrencyAPISuccess covers the normal path so a baseline exists.
 func TestCurrencyAPISuccess(t *testing.T) {

@@ -86,6 +86,30 @@ func TestUIThemeToggle(t *testing.T) {
 	}
 }
 
+// TestUIThemeControlCannotAbortBoot guards issue #832: the theme control is
+// optional markup, so an older or reduced page must still reach corridor boot.
+func TestUIThemeControlCannotAbortBoot(t *testing.T) {
+	page := uiSource(t)
+	bind := between(t, page, "const theme = $('theme');", "$('compare').addEventListener")
+	if !strings.Contains(bind, "if (theme)") {
+		t.Fatal("theme initialization is not guarded; missing theme markup would abort corridor boot")
+	}
+	if !strings.Contains(bind, "theme.value = storedTheme()") {
+		t.Fatal("guarded theme initialization no longer restores the stored theme")
+	}
+	if !strings.Contains(bind, "theme.addEventListener('change'") {
+		t.Fatal("guarded theme initialization no longer wires theme changes")
+	}
+
+	boot := strings.Index(page, "(async function boot()")
+	if boot < 0 {
+		t.Fatal("UI source is missing the corridor boot function")
+	}
+	if strings.Index(page, "const theme = $('theme');") > boot {
+		t.Fatal("theme binding moved after corridor boot")
+	}
+}
+
 // TestUIEvidenceDrawer guards issues #294 and #647: evidence is
 // progressively disclosed rather than dumped, provenance is stated next to
 // the headline, and every check says where its evidence came from and how old
@@ -322,5 +346,43 @@ func TestUIPrintableCorridorReport(t *testing.T) {
 
 	if strings.Contains(page, "@media print") && strings.Contains(page, "@media print {\n    @import") {
 		t.Error("print layout must not introduce print-time imports")
+	}
+}
+
+// TestComputeScriptHashesNormalizesCRLF guards issue #831: a Windows checkout
+// with core.autocrlf=true embeds CRLF bytes into index.html, while browsers
+// normalize CRLF/CR to LF before checking inline script-src SHA-256 hashes.
+func TestComputeScriptHashesNormalizesCRLF(t *testing.T) {
+	lfHTML := "<!doctype html><html><head><script>\nconst a = 1;\nconst b = 2;\n</script></head></html>"
+	crlfHTML := strings.ReplaceAll(lfHTML, "\n", "\r\n")
+	crHTML := strings.ReplaceAll(lfHTML, "\n", "\r")
+
+	lfHashes := computeScriptHashes([]byte(lfHTML))
+	crlfHashes := computeScriptHashes([]byte(crlfHTML))
+	crHashes := computeScriptHashes([]byte(crHTML))
+
+	if len(lfHashes) != 1 || len(crlfHashes) != 1 || len(crHashes) != 1 {
+		t.Fatalf("unexpected hash counts: lf=%d crlf=%d cr=%d", len(lfHashes), len(crlfHashes), len(crHashes))
+	}
+	if crlfHashes[0] != lfHashes[0] {
+		t.Errorf("CRLF hash %s != LF hash %s", crlfHashes[0], lfHashes[0])
+	}
+	if crHashes[0] != lfHashes[0] {
+		t.Errorf("CR hash %s != LF hash %s", crHashes[0], lfHashes[0])
+	}
+
+	// Also verify both inline <script> blocks in the embedded index.html when
+	// checked out with Windows CRLF line endings.
+	lfEmbedded := strings.ReplaceAll(strings.ReplaceAll(indexHTML(t), "\r\n", "\n"), "\r", "\n")
+	crlfEmbedded := strings.ReplaceAll(lfEmbedded, "\n", "\r\n")
+	gotLF := computeScriptHashes([]byte(lfEmbedded))
+	gotCRLF := computeScriptHashes([]byte(crlfEmbedded))
+	if len(gotLF) < 2 || len(gotCRLF) != len(gotLF) {
+		t.Fatalf("expected >=2 embedded script hashes, got lf=%d crlf=%d", len(gotLF), len(gotCRLF))
+	}
+	for i := range gotLF {
+		if gotCRLF[i] != gotLF[i] {
+			t.Errorf("embedded script[%d] CRLF hash %s != LF hash %s", i, gotCRLF[i], gotLF[i])
+		}
 	}
 }
