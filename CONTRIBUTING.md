@@ -188,6 +188,10 @@ In the pull request, describe what changed and why. If it touches pricing,
 say how you verified correctness — and if you measured something live,
 include the raw figures and the timestamp.
 
+If a pull request changes a public wire contract or run-store record shape,
+add a dated entry to [CHANGELOG.md](CHANGELOG.md) describing the consumer-visible
+change and any compatibility implications.
+
 ## Opening an issue
 
 Issues should follow the templates in [.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/)
