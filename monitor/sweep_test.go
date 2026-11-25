@@ -736,7 +736,7 @@ func TestSweepCorridors_BoundedAndIsolated(t *testing.T) {
 		if r.Duration <= 0 {
 			t.Errorf("expected non-zero duration for corridor %s", r.Corridor.Receive)
 		}
-		if r.Corridor.Receive == "GHSC" {
+		if r.Corridor.Receive.Code == "GHSC" {
 			if r.Err == nil {
 				t.Errorf("expected error for GHSC corridor isolation, got nil")
 			}
