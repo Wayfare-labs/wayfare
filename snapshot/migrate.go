@@ -1,12 +1,13 @@
 package snapshot
 
 import (
+	"os"
+	"path/filepath"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 )
+
 
 // CleanSnapshotDir cleans response headers in an existing snapshot directory's manifest.json
 // while preserving the original bodies and their hashes.
@@ -58,4 +59,40 @@ func mapOfHeader(h http.Header) map[string][]string {
 		m[k] = v
 	}
 	return m
+}
+func MigrateSnapshotDir(snapshotDir string, store *Store) error {
+	manifestPath := filepath.Join(snapshotDir, "manifest.json")
+	m, err := Load(snapshotDir)
+	if err != nil {
+		return fmt.Errorf("load manifest for migration: %w", err)
+	}
+
+	for i := range m.Interactions {
+		inter := &m.Interactions[i]
+		var bodyBytes []byte
+		if inter.BodyFile != "" {
+			bf := filepath.Join(snapshotDir, inter.BodyFile)
+			var readErr error
+			bodyBytes, readErr = os.ReadFile(bf)
+			if readErr != nil {
+				return fmt.Errorf("read body file %s: %w", bf, readErr)
+			}
+		} else if inter.BodySHA256 != "" {
+			continue
+		}
+
+	hashStr, err := store.Put(bodyBytes)
+		if err != nil {
+			return fmt.Errorf("store put during migration: %w", err)
+		}
+		inter.BodySHA256 = hashStr
+		inter.BodyFile = ""
+	}
+
+	if err := m.Save(manifestPath); err != nil {
+		return fmt.Errorf("save migrated manifest: %w", err)
+	}
+
+	_ = os.RemoveAll(filepath.Join(snapshotDir, "responses"))
+	return nil
 }
