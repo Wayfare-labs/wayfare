@@ -13,45 +13,6 @@ import (
 
 
 
-type StaleInfo struct {
-	RecordedAt  string `json:"recorded_at"`
-	AgeSeconds  int64  `json:"age_seconds"`
-	AgeHuman    string `json:"age_human"`
-	StoreHash   string `json:"store_hash"`
-	StoreHeight int64  `json:"store_height"`
-}
-
-type AssetInfo struct {
-	Code   string `json:"code"`
-	Issuer string `json:"issuer"`
-}
-
-type Rung struct {
-	Size          decimal.Decimal `json:"size"`
-	SendAmount    decimal.Decimal `json:"send_amount"`
-	Receive       decimal.Decimal `json:"receive"`
-	Mid           decimal.Decimal `json:"mid"`
-	EffectiveRate decimal.Decimal `json:"effective_rate"`
-	LossPercent   decimal.Decimal `json:"loss_percent"`
-	Verdict       string          `json:"verdict"`
-	Route         any             `json:"route,omitempty"`
-}
-
-type RecommendedRung struct {
-	Size          decimal.Decimal `json:"size"`
-	SendAmount    decimal.Decimal `json:"send_amount"`
-	Receive       decimal.Decimal `json:"receive"`
-	Mid           decimal.Decimal `json:"mid"`
-	EffectiveRate decimal.Decimal `json:"effective_rate"`
-	LossPercent   decimal.Decimal `json:"loss_percent"`
-	Verdict       string          `json:"verdict"`
-}
-
-type CorridorParams struct {
-	From string
-	To   string
-	Live bool
-}
 
 func (c *Client) Corridor(ctx context.Context, p CorridorParams) (*CorridorResponse, error) {
 	u, err := url.Parse(c.BaseURL + "/api/corridor")
@@ -92,6 +53,46 @@ func (c *Client) Corridor(ctx context.Context, p CorridorParams) (*CorridorRespo
 	}
 	return &body, nil
 }
+type StaleInfo struct {
+	RecordedAt  string `json:"recorded_at"`
+	AgeSeconds  int64  `json:"age_seconds"`
+	AgeHuman    string `json:"age_human"`
+	StoreHash   string `json:"store_hash"`
+	StoreHeight int64  `json:"store_height"`
+}
+
+type AssetInfo struct {
+	Code   string `json:"code"`
+	Issuer string `json:"issuer"`
+}
+
+type Rung struct {
+	Size          decimal.Decimal `json:"size"`
+	SendAmount    decimal.Decimal `json:"send_amount"`
+	Receive       decimal.Decimal `json:"receive"`
+	Mid           decimal.Decimal `json:"mid"`
+	EffectiveRate decimal.Decimal `json:"effective_rate"`
+	LossPercent   decimal.Decimal `json:"loss_percent"`
+	Verdict       string          `json:"verdict"`
+	Route         any             `json:"route,omitempty"`
+}
+
+type RecommendedRung struct {
+	Size          decimal.Decimal `json:"size"`
+	SendAmount    decimal.Decimal `json:"send_amount"`
+	Receive       decimal.Decimal `json:"receive"`
+	Mid           decimal.Decimal `json:"mid"`
+	EffectiveRate decimal.Decimal `json:"effective_rate"`
+	LossPercent   decimal.Decimal `json:"loss_percent"`
+	Verdict       string          `json:"verdict"`
+}
+
+type CorridorParams struct {
+	From string
+	To   string
+	Live bool
+}
+
 
 type AssetListResponse struct {
 	Assets []AssetInfo `json:"assets"`
