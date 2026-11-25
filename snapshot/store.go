@@ -10,14 +10,13 @@ import (
 	"path/filepath"
 )
 
-
-// Put stores data by its SHA-256 hash in the content store under rootDir/objects/<sha256>.
+// Put stores data by its SHA-256 hash in the content store under Dir/objects/<sha256>.
 func (s *Store) Put(data []byte) (string, error) {
 	hash := sha256.Sum256(data)
 	hashStr := hex.EncodeToString(hash[:])
 	hashKey := "sha256:" + hashStr
 
-	objDir := filepath.Join(s.RootDir, "objects")
+	objDir := filepath.Join(s.Dir, "objects")
 	if err := os.MkdirAll(objDir, 0755); err != nil {
 		return "", err
 	}
@@ -39,7 +38,7 @@ func (s *Store) Get(hashKey string) ([]byte, error) {
 		hashStr = hashStr[7:]
 	}
 
-	objPath := filepath.Join(s.RootDir, "objects", hashStr)
+	objPath := filepath.Join(s.Dir, "objects", hashStr)
 	return os.ReadFile(objPath)
 }
 
@@ -50,7 +49,7 @@ func (s *Store) Reader(hashKey string) (io.ReadCloser, error) {
 		hashStr = hashStr[7:]
 	}
 
-	objPath := filepath.Join(s.RootDir, "objects", hashStr)
+	objPath := filepath.Join(s.Dir, "objects", hashStr)
 	return os.Open(objPath)
 }
 // Store manages content-addressed storage of snapshot response bodies.
