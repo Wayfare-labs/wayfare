@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 )
 
-
 // CleanSnapshotDir cleans response headers in an existing snapshot directory's manifest.json
 // while preserving the original bodies and their hashes.
 func CleanSnapshotDir(dir string) error {
@@ -60,6 +59,7 @@ func mapOfHeader(h http.Header) map[string][]string {
 	}
 	return m
 }
+
 // MigrateSnapshotDir migrates an old snapshot directory where response bodies
 // are stored locally inside a responses/ subdirectory to a content-addressed store.
 func MigrateSnapshotDir(snapshotDir string, store *Store) error {

@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-
 func TestReplayUnchangedWithStore(t *testing.T) {
 	tmpDir := t.TempDir()
 	snapDir := filepath.Join(tmpDir, "snapshot")
@@ -22,18 +21,18 @@ func TestReplayUnchangedWithStore(t *testing.T) {
 	}
 
 	manifestJSON := `{
+		"format": "wayfare.snapshot",
+		"version": 1,
+		"corridor": {
+			"send": {"code": "USDC", "issuer": "GA5ZSEJY67GSD7W2JCGB6W52V3CBQ2K7D35E4E37D3C72F2X2Z5C3G5D"},
+			"receive": {"code": "NGNC", "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"}
+		},
 		"interactions": [
 			{
-				"request": {
 					"method": "GET",
-					"url": "http://example.com/test"
-				},
-				"response": {
-					"status_code": 200,
-					"header": {},
+				"url": "http://example.com/test",
 					"body_file": "responses/body1.bin"
 				}
-			}
 		]
 	}`
 	if err := os.WriteFile(filepath.Join(snapDir, "manifest.json"), []byte(manifestJSON), 0644); err != nil {
@@ -70,6 +69,7 @@ func TestReplayUnchangedWithStore(t *testing.T) {
 		t.Errorf("replayed body got %q, want %q", string(reloadedBody), string(bodyContent))
 	}
 }
+
 func TestContentAddressedStoreAndMigration(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -80,17 +80,17 @@ func TestContentAddressedStoreAndMigration(t *testing.T) {
 	body2 := []byte(`{"status":"ok"}`)
 	body3 := []byte(`{"status":"different"}`)
 
-	hash1, err := store.StoreBody(body1)
+	hash1, err := store.Put(body1)
 	if err != nil {
-		t.Fatalf("StoreBody 1: %v", err)
+		t.Fatalf("Put 1: %v", err)
 	}
-	hash2, err := store.StoreBody(body2)
+	hash2, err := store.Put(body2)
 	if err != nil {
-		t.Fatalf("StoreBody 2: %v", err)
+		t.Fatalf("Put 2: %v", err)
 	}
-	hash3, err := store.StoreBody(body3)
+	hash3, err := store.Put(body3)
 if err != nil {
-		t.Fatalf("StoreBody 3: %v", err)
+		t.Fatalf("Put 3: %v", err)
 	}
 
 	if hash1 != hash2 {
@@ -100,9 +100,9 @@ if err != nil {
 		t.Errorf("expected different hashes for different bodies, got %s", hash1)
 	}
 
-	retrieved, err := store.GetBody(hash1)
+	retrieved, err := store.Get(hash1)
 	if err != nil {
-		t.Fatalf("GetBody: %v", err)
+		t.Fatalf("Get: %v", err)
 	}
 	if string(retrieved) != string(body1) {
 		t.Errorf("retrieved body = %s, want %s", string(retrieved), string(body1))
@@ -114,8 +114,12 @@ if err != nil {
 	}
 
 	manifestJSON := `{
-		"format_version": 2,
-		"corridor": "usdc-ngnc",
+		"format": "wayfare.snapshot",
+		"version": 1,
+		"corridor": {
+			"send": {"code": "USDC", "issuer": "GA5ZSEJY67GSD7W2JCGB6W52V3CBQ2K7D35E4E37D3C72F2X2Z5C3G5D"},
+			"receive": {"code": "NGNC", "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"}
+		},
 		"interactions": [
 			{
 				"method": "GET",
@@ -131,8 +135,8 @@ if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := MigrateSnapshot(snapDir, store); err != nil {
-		t.Fatalf("MigrateSnapshot: %v", err)
+	if err := MigrateSnapshotDir(snapDir, store); err != nil {
+		t.Fatalf("MigrateSnapshotDir: %v", err)
 	}
 
 	mNew, err := Load(snapDir)
