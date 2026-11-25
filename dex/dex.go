@@ -505,10 +505,19 @@ func (c *Client) LiquidityPool(ctx context.Context, id string) (LiquidityPool, e
 	if err := ctx.Err(); err != nil {
 		return LiquidityPool{}, err
 	}
-	var pool LiquidityPool
+	// FeeBP shadows the embedded field so an absent fee is distinguishable
+	// from an explicit zero.
+	var raw struct {
+		LiquidityPool
+		FeeBP *int `json:"fee_bp"`
+	}
 	endpoint := "/liquidity_pools/" + url.PathEscape(id)
-	if err := c.get(ctx, endpoint, nil, &pool); err != nil {
+	if err := c.get(ctx, endpoint, nil, &raw); err != nil {
 		return LiquidityPool{}, err
 	}
-	return pool, nil
+	if raw.FeeBP == nil {
+		return LiquidityPool{}, fmt.Errorf("dex: liquidity pool %s reports no fee_bp", id)
+	}
+	raw.LiquidityPool.FeeBP = *raw.FeeBP
+	return raw.LiquidityPool, nil
 }
