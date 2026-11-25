@@ -95,6 +95,10 @@ func main() {
 			"report corridors whose newest record is older than -max-age (or missing) and exit; 1 stale, 2 check unavailable")
 		maxAge = flag.Duration("max-age", 2*monitor.DefaultInterval,
 			"staleness ceiling for -check-fresh; default is two missed sweeps")
+		rescore = flag.Bool("rescore", false,
+			"re-derive every stored classification from its stored rungs and reference and report drift; read-only, exits non-zero on unacknowledged drift")
+		exportChainHeadsFlag = flag.Bool("export-chain-heads", false,
+			"export current chain heads as JSON to stdout and exit")
 		refMaxAge = flag.Duration("ref-max-age", refrate.DefaultMaxAge,
 			"maximum allowed age of a reference rate (default: 72h)")
 		histFirst = flag.Bool("history-first", false,
