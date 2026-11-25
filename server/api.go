@@ -1061,6 +1061,7 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 	if age < 0 {
 		age = 0
 	}
+	scored := staleScored(&rec.Reference)
 
 	out := route.CorridorJSON{
 		SendAsset:                assetFromCode(rec.Corridor, 0),
@@ -1079,22 +1080,16 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 		// record rather than dropped. The record's reference block is the same
 		// state refrate.reconcile produced, persisted: a secondary implies
 		// two providers answered, and the recorded divergence and as-of
-		// moments decide which agreement band they fell into. ScoredAgainst
-		// records that verdicts were actually derived, so scored is faithful
-		// to measurement time instead of defaulting to false. See
-		// staleAgreement and staleScored.
+		// moments decide which agreement band they fell into. New records only
+		// set ScoredAgainst when verdicts were derived; staleScored also
+		// repairs older malfunction records that were marked unconditionally.
 		ReferenceAgreement: staleAgreement(&rec.Reference),
-		Scored:             staleScored(&rec.Reference),
+		Scored:             scored,
 		// ReferenceFetchedAt is carried from the record so a reader can tell
 		// how old the benchmark was when the reading was taken — recorded
 		// from the live path since Version 3, and absent on an older record
 		// that predates it, which is the honest "unknown" rather than a guess.
 		ReferenceFetchedAt: rec.Reference.FetchedAt,
-		Floor:              rec.FloorLossPct,
-		FloorSize:          rec.FloorSize,
-		WorstLoss:          rec.WorstLossPct,
-		WorstSize:          rec.WorstSize,
-		RecommendedSize:    rec.RecommendedSize,
 		Finding:            rec.Finding,
 		Rungs:              make([]route.RungJSON, 0, len(rec.Rungs)),
 		MeasuredAt:         rec.RecordedAt.UTC().Format(time.RFC3339),
@@ -1106,14 +1101,26 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 			AgeHuman:   humanAge(age),
 		},
 	}
+	if scored {
+		out.RecommendedSize = rec.RecommendedSize
+		out.Floor = rec.FloorLossPct
+		out.FloorSize = rec.FloorSize
+		out.WorstLoss = rec.WorstLossPct
+		out.WorstSize = rec.WorstSize
+	}
+	if !scored {
+		out.Finding = storedUnscoredFinding(rec, out.SendAsset.Code+" to "+out.ReceiveAsset.Code)
+	}
 
 	if rec.IsCorrection() {
 		out.Correction = &route.CorrectionJSON{
-			TargetSeq:             rec.Correction.TargetSeq,
-			Reason:                rec.Correction.Reason,
-			IsCorrection:          true,
-			CorrectedFloorLossPct: rec.FloorLossPct,
-			CorrectedWorstLossPct: rec.WorstLossPct,
+			TargetSeq:    rec.Correction.TargetSeq,
+			Reason:       rec.Correction.Reason,
+			IsCorrection: true,
+		}
+		if scored {
+			out.Correction.CorrectedFloorLossPct = rec.FloorLossPct
+			out.Correction.CorrectedWorstLossPct = rec.WorstLossPct
 		}
 	}
 
@@ -1165,9 +1172,12 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 				Source:        "stellar-dex",
 				ReceiveAmount: r.ReceiveAmount,
 				EffectiveRate: r.EffectiveRate,
-				LossPct:       r.LossPct,
-				Verdict:       r.Verdict,
+				Verdict:       "UNKNOWN",
 				Warnings:      []string{},
+			}
+			if scored {
+				rj.Quote.LossPct = r.LossPct
+				rj.Quote.Verdict = r.Verdict
 			}
 		}
 		out.Rungs = append(out.Rungs, rj)
@@ -1176,7 +1186,7 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 	// A stored run's recommendation is carried exactly as recorded — null
 	// stays null. Promoting a stored quote here would recreate, on the
 	// stale path, the recommendation the monitor refused to make live.
-	if rec.Recommended != nil {
+	if scored && rec.Recommended != nil {
 		out.Recommended = &route.QuoteJSON{
 			Kind:          string(route.KindDEX),
 			Description:   rec.Recommended.Path,
@@ -1201,13 +1211,27 @@ func staleJSON(rec *runstore.Record, pair string, now time.Time) route.CorridorJ
 
 // staleScored reconstructs the wire's scored bool from a stored record.
 //
-// A corridor is scored exactly when verdicts were derived against one of the
-// reference mids, which the record captures as ScoredAgainst (empty when the
-// rate was unscorable — see FromCorridorJSON's scoredAgainst). So faithfulness
-// is checking whether a scored-against source was recorded, not reproducing the
-// refrate band calculation: recording it is what made it scorable.
+// New records capture whether verdicts were derived in ScoredAgainst. Older
+// monitor records also set that field for MALFUNCTION references, so the
+// runstore reference helper additionally reconstructs that known-invalid band
+// from its persisted divergence.
 func staleScored(ref *runstore.Reference) bool {
-	return ref.ScoredAgainst != ""
+	return ref.Scorable()
+}
+
+func storedUnscoredFinding(rec *runstore.Record, corridor string) string {
+	if staleScored(&rec.Reference) ||
+		!strings.Contains(rec.Finding, "Every size tested is graded Unusable") {
+		return rec.Finding
+	}
+	finding := fmt.Sprintf(
+		"No verdict or recommendation was derived for %s. The recorded ladder tested %d sizes; "+
+			"integrity is %s. Reference cross-check: %s.",
+		corridor, len(rec.Rungs), rec.Integrity, staleAgreement(&rec.Reference))
+	if len(rec.DependsOn) > 0 {
+		finding += " Depends on " + strings.Join(rec.DependsOn, " and ") + "."
+	}
+	return finding
 }
 
 // staleAgreement reconstructs the wire's reference_agreement from a stored

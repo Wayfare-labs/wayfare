@@ -358,9 +358,9 @@ func TestCurveAlternativeReadsRealResponses(t *testing.T) {
 // curve is gated on d.scored, so a caption rendered here would put loss figures
 // on a page that has none — the failure the unscored block exists to prevent.
 //
-// The fixture matters: the stored rung really does carry a loss and a verdict,
-// so the fields the caption reads are all present. Only the gate keeps them off
-// the page, which is exactly the claim under test.
+// The fixture contains legacy zero/fabricated values, but staleJSON must omit
+// them because the stored reference was not scored. The page-level gate remains
+// defense in depth for any future response that carries unknown scores.
 func TestCurveAlternativeStaysOffAnUnscoredResponse(t *testing.T) {
 	page := uiPage(t)
 
@@ -402,11 +402,9 @@ func TestCurveAlternativeStaysOffAnUnscoredResponse(t *testing.T) {
 	if len(rungs) != 1 || !rungs[0].priced {
 		t.Fatalf("fixture rungs = %+v, want one priced rung", rungs)
 	}
-	// The gate is load-bearing only if the fields the caption wants are there
-	// to be wrongly shown.
-	if rungs[0].lossPct == "" || rungs[0].verdict == "" {
-		t.Fatal("the unscored rung publishes no loss and verdict; the fixture no " +
-			"longer proves the d.scored gate keeps figures off an unscored page")
+	if rungs[0].lossPct != "" || rungs[0].verdict != "UNKNOWN" {
+		t.Errorf("stale unscored rung published loss=%q verdict=%q, want no loss and UNKNOWN",
+			rungs[0].lossPct, rungs[0].verdict)
 	}
 
 	if !strings.Contains(page, "d.scored && priced.length") {

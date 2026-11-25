@@ -49,13 +49,15 @@ func FromCorridorJSON(c route.CorridorJSON) *Record {
 			DivergencePct:   c.ReferenceDivergencePct,
 			ScoredAgainst:   scoredAgainst(c),
 		},
-		FloorLossPct:    c.Floor,
-		FloorSize:       c.FloorSize,
-		WorstLossPct:    c.WorstLoss,
-		WorstSize:       c.WorstSize,
-		RecommendedSize: c.RecommendedSize,
-		Finding:         c.Finding,
-		Rungs:           make([]Rung, 0, len(c.Rungs)),
+		Finding: c.Finding,
+		Rungs:   make([]Rung, 0, len(c.Rungs)),
+	}
+	if c.Scored {
+		r.FloorLossPct = c.Floor
+		r.FloorSize = c.FloorSize
+		r.WorstLossPct = c.WorstLoss
+		r.WorstSize = c.WorstSize
+		r.RecommendedSize = c.RecommendedSize
 	}
 
 	// The diagnostic attribution is optional: the wire emits it only when a
@@ -102,8 +104,12 @@ func FromCorridorJSON(c route.CorridorJSON) *Record {
 		if rung.Quote != nil {
 			out.ReceiveAmount = rung.Quote.ReceiveAmount
 			out.EffectiveRate = rung.Quote.EffectiveRate
-			out.LossPct = rung.Quote.LossPct
-			out.Verdict = rung.Quote.Verdict
+			if c.Scored {
+				out.LossPct = rung.Quote.LossPct
+				out.Verdict = rung.Quote.Verdict
+			} else {
+				out.Verdict = "UNKNOWN"
+			}
 			out.Path = rung.Quote.Description
 		}
 		r.Rungs = append(r.Rungs, out)
@@ -113,7 +119,7 @@ func FromCorridorJSON(c route.CorridorJSON) *Record {
 	// shape of a broken corridor and must survive into storage: a history
 	// that filled the gap with the best-scoring quote would record a
 	// recommendation the monitor refused to make.
-	if c.Recommended != nil {
+	if c.Scored && c.Recommended != nil {
 		r.Recommended = &Rung{
 			SendAmount:    c.RecommendedSize,
 			Priced:        true,

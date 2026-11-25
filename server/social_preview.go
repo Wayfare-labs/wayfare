@@ -36,13 +36,23 @@ func (s *Server) handleSocialPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	floorLabel := "not scored"
+	floorAt := ""
+	floorDescription := "no floor loss was derived"
+	if staleScored(&record.Reference) {
+		floorLabel = record.FloorLossPct + "%"
+		floorAt = "at " + record.FloorSize + " " + from
+		floorDescription = fmt.Sprintf("floor loss %s percent at %s %s",
+			record.FloorLossPct, record.FloorSize, from)
+	}
+
 	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	w.WriteHeader(http.StatusOK)
 	_, _ = fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
   <title id="title">%s corridor integrity snapshot</title>
-  <desc id="description">Recorded %s integrity, floor loss %s percent at %s %s, on %s.</desc>
+  <desc id="description">Recorded %s integrity, %s, on %s.</desc>
   <rect width="1200" height="630" fill="#f8fafc"/>
   <path d="M0 0h1200v18H0z" fill="#0f766e"/>
   <text x="72" y="82" fill="#475569" font-family="sans-serif" font-size="24" font-weight="700" letter-spacing="2">WAYFARE / CORRIDOR SNAPSHOT</text>
@@ -50,15 +60,15 @@ func (s *Server) handleSocialPreview(w http.ResponseWriter, r *http.Request) {
   <text x="72" y="280" fill="#475569" font-family="sans-serif" font-size="22" font-weight="700" letter-spacing="1.5">INTEGRITY</text>
   <text x="72" y="350" fill="#0f172a" font-family="sans-serif" font-size="50" font-weight="700">%s</text>
   <text x="625" y="280" fill="#475569" font-family="sans-serif" font-size="22" font-weight="700" letter-spacing="1.5">FLOOR LOSS</text>
-  <text x="625" y="350" fill="#0f172a" font-family="sans-serif" font-size="50" font-weight="700">%s%%</text>
-  <text x="625" y="404" fill="#475569" font-family="sans-serif" font-size="24">at %s %s</text>
+  <text x="625" y="350" fill="#0f172a" font-family="sans-serif" font-size="50" font-weight="700">%s</text>
+  <text x="625" y="404" fill="#475569" font-family="sans-serif" font-size="24">%s</text>
   <path d="M72 466h1056" stroke="#cbd5e1" stroke-width="2"/>
   <text x="72" y="520" fill="#475569" font-family="sans-serif" font-size="20" font-weight="700" letter-spacing="1.5">RECORDED AT</text>
   <text x="72" y="568" fill="#0f172a" font-family="monospace" font-size="26">%s</text>
 </svg>`,
-		html.EscapeString(key), html.EscapeString(record.Integrity), html.EscapeString(record.FloorLossPct),
-		html.EscapeString(record.FloorSize), html.EscapeString(from), html.EscapeString(record.RecordedAt.UTC().Format(time.RFC3339Nano)),
+		html.EscapeString(key), html.EscapeString(record.Integrity), html.EscapeString(floorDescription),
+		html.EscapeString(record.RecordedAt.UTC().Format(time.RFC3339Nano)),
 		html.EscapeString(from), html.EscapeString(to), html.EscapeString(record.Integrity),
-		html.EscapeString(record.FloorLossPct), html.EscapeString(record.FloorSize), html.EscapeString(from),
+		html.EscapeString(floorLabel), html.EscapeString(floorAt),
 		html.EscapeString(record.RecordedAt.UTC().Format(time.RFC3339Nano)))
 }

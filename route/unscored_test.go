@@ -2,8 +2,10 @@ package route_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -141,5 +143,91 @@ func TestScorableBenchmarkStillGrades(t *testing.T) {
 	}
 	if res.Reference.Agreement != refrate.AgreementAgree {
 		t.Errorf("Agreement = %s, want AGREE", res.Reference.Agreement)
+	}
+}
+
+func TestMalfunctioningBenchmarkLadderDoesNotPublishLoss(t *testing.T) {
+	m := loadSnap(t, "usdc-ngnc")
+	e := &route.Engine{
+		DEX: &dex.Client{
+			HorizonURL: "https://horizon.stellar.org",
+			HTTPClient: m.HTTPClient(),
+		},
+		RefRate: &refrate.Cross{
+			Primary:   staticAt{"primary", "1350.2568"},
+			Secondary: staticAt{"secondary", "135.02568"},
+		},
+	}
+
+	res, err := e.Ladder(context.Background(), route.LadderRequest{
+		SendAsset:      asset.USDC(),
+		ReceiveAsset:   asset.NGNC(),
+		Sizes:          []decimal.Decimal{decimal.RequireFromString("0.1"), decimal.RequireFromString("100")},
+		ReferenceBase:  "USD",
+		ReferenceQuote: "NGN",
+	})
+	if err != nil {
+		t.Fatalf("Ladder: %v", err)
+	}
+	if res.Reference.Scorable() {
+		t.Fatal("malfunctioning reference cross-check was marked scorable")
+	}
+	for _, forbidden := range []string{"Unusable", "loss against"} {
+		if strings.Contains(res.Finding, forbidden) {
+			t.Errorf("unscored finding contains %q: %s", forbidden, res.Finding)
+		}
+	}
+	for _, required := range []string{"No verdict", "DIRECT", res.Reference.Note} {
+		if required != "" && !strings.Contains(res.Finding, required) {
+			t.Errorf("unscored finding is missing %q: %s", required, res.Finding)
+		}
+	}
+	if !res.Floor.IsZero() || !res.WorstLoss.IsZero() || !res.FloorSize.IsZero() || !res.WorstSize.IsZero() {
+		t.Errorf("unscored ladder contains summary measurements: floor=%s/%s worst=%s/%s",
+			res.Floor, res.FloorSize, res.WorstLoss, res.WorstSize)
+	}
+	for i, rung := range res.Rungs {
+		if len(rung.Decomposition.Parts) != 0 {
+			t.Errorf("rung %d has a cost decomposition despite the unscored reference: %+v", i, rung.Decomposition)
+		}
+		if rung.MarginalCost != nil {
+			t.Errorf("rung %d has a reference-dependent marginal cost: %+v", i, rung.MarginalCost)
+		}
+	}
+
+	raw, err := json.Marshal(route.ToCorridorJSONAt(res, "USD/NGN", time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("marshal unscored ladder: %v", err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode unscored ladder: %v", err)
+	}
+	for _, field := range []string{"floor_loss_pct", "floor_size", "worst_loss_pct", "worst_size"} {
+		if _, ok := doc[field]; ok {
+			t.Errorf("unscored corridor contains %q: %s", field, doc[field])
+		}
+	}
+	var rungs []map[string]json.RawMessage
+	if err := json.Unmarshal(doc["rungs"], &rungs); err != nil {
+		t.Fatalf("decode rungs: %v", err)
+	}
+	for i, rung := range rungs {
+		for _, field := range []string{"marginal_cost", "cost"} {
+			if _, ok := rung[field]; ok {
+				t.Errorf("unscored rung %d contains %q", i, field)
+			}
+		}
+		if quote, ok := rung["quote"]; ok && string(quote) != "null" {
+			var q map[string]json.RawMessage
+			if err := json.Unmarshal(quote, &q); err != nil {
+				t.Fatalf("decode rung %d quote: %v", i, err)
+			}
+			for _, field := range []string{"loss_pct", "loss_amount"} {
+				if _, ok := q[field]; ok {
+					t.Errorf("unscored rung %d quote contains %q", i, field)
+				}
+			}
+		}
 	}
 }

@@ -226,6 +226,30 @@ jobs:
           path: "**/testdata/fuzz/**"
           if-no-files-found: ignore
 
+  walkthrough:
+    name: first 15 minutes walkthrough
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: download modules before network isolation
+        run: go mod download
+
+      - name: run annotated walkthrough commands with no network
+        run: |
+          set -euo pipefail
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          unshare -rn bash -c 'ip link set lo up 2>/dev/null; go run ./scripts/walkthrough-ci'
+
   # The image is how the monitor actually runs. Building it only at deploy
   # time means it breaks at the least convenient moment.
   docker:
