@@ -2,8 +2,11 @@ package route_test
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -301,5 +304,154 @@ func TestUnreachableUpstreamIsAFailedMeasurement(t *testing.T) {
 	if res.Integrity != route.IntegrityUnknown {
 		t.Errorf("Integrity = %s, want UNKNOWN: nothing was learned about the corridor",
 			res.Integrity)
+	}
+}
+
+type strictSendCounter struct {
+	inner http.RoundTripper
+	calls int64
+}
+
+func (c *strictSendCounter) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Path == "/paths/strict-send" {
+		atomic.AddInt64(&c.calls, 1)
+	}
+	return c.inner.RoundTrip(req)
+}
+
+type rejectProbeTransport struct {
+	inner http.RoundTripper
+	probe string
+}
+
+func (t *rejectProbeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Query().Get("source_amount") == t.probe {
+		return nil, fmt.Errorf("probe rung unavailable")
+	}
+	return t.inner.RoundTrip(req)
+}
+
+func thinWarnings(q route.Quote) []string {
+	var out []string
+	for _, w := range q.Warnings {
+		if strings.HasPrefix(w, "thin liquidity:") {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+func TestDefaultLadderMakesOneStrictSendCallPerRung(t *testing.T) {
+	m := loadSnap(t, "usdc-ngnc")
+	e := engineOver(m, "USD/NGN", "1350.2568")
+	counter := &strictSendCounter{inner: m.Replay()}
+	e.DEX = &dex.Client{
+		HorizonURL: "https://horizon.stellar.org",
+		HTTPClient: &http.Client{Transport: counter},
+	}
+
+	res, err := e.Ladder(context.Background(), route.LadderRequest{
+		SendAsset:      asset.USDC(),
+		ReceiveAsset:   asset.NGNC(),
+		ReferenceBase:  "USD",
+		ReferenceQuote: "NGN",
+	})
+	if err != nil {
+		t.Fatalf("Ladder: %v", err)
+	}
+	if got := atomic.LoadInt64(&counter.calls); got != int64(len(route.DefaultSizes)) {
+		t.Errorf("strict-send calls = %d, want %d (one per rung)",
+			got, len(route.DefaultSizes))
+	}
+	priced := 0
+	for _, rung := range res.Rungs {
+		if rung.Priced() {
+			priced++
+		}
+	}
+	if priced != len(route.DefaultSizes) {
+		t.Errorf("priced rungs = %d, want %d", priced, len(route.DefaultSizes))
+	}
+}
+
+func TestLadderThinLiquidityWarningsMatchRecordedSingleQuotes(t *testing.T) {
+	m := loadSnap(t, "usdc-ngnc")
+	e := engineOver(m, "USD/NGN", "1350.2568")
+
+	want := make(map[string]string)
+	for _, size := range route.DefaultSizes {
+		res := quoteAt(t, e, asset.NGNC(), "NGN", size.String())
+		if len(res.Quotes) == 0 {
+			t.Fatalf("single Quote at %s priced no route", size)
+		}
+		want[size.String()] = strings.Join(thinWarnings(res.Quotes[0]), "|")
+	}
+
+	ladder, err := e.Ladder(context.Background(), route.LadderRequest{
+		SendAsset:      asset.USDC(),
+		ReceiveAsset:   asset.NGNC(),
+		Sizes:          route.DefaultSizes,
+		ReferenceBase:  "USD",
+		ReferenceQuote: "NGN",
+	})
+	if err != nil {
+		t.Fatalf("Ladder: %v", err)
+	}
+
+	sawWarning := false
+	for _, rung := range ladder.Rungs {
+		if !rung.Priced() {
+			t.Fatalf("rung %s did not price", rung.SendAmount)
+		}
+		got := strings.Join(thinWarnings(rung.Result.Quotes[0]), "|")
+		if got != "" {
+			sawWarning = true
+		}
+		if key := rung.SendAmount.String(); got != want[key] {
+			t.Errorf("rung %s warnings = %q, want %q", key, got, want[key])
+		}
+	}
+	if !sawWarning {
+		t.Fatal("the recorded snapshot produced no thin-liquidity warning; " +
+			"this parity test would prove nothing")
+	}
+}
+
+func TestLadderOmitsThinLiquidityWarningWhenProbeDidNotPrice(t *testing.T) {
+	m := loadSnap(t, "usdc-ngnc")
+	e := engineOver(m, "USD/NGN", "1350.2568")
+	e.DEX = &dex.Client{
+		HorizonURL: "https://horizon.stellar.org",
+		HTTPClient: &http.Client{Transport: &rejectProbeTransport{
+			inner: m.Replay(),
+			probe: "10",
+		}},
+	}
+
+	res, err := e.Ladder(context.Background(), route.LadderRequest{
+		SendAsset:      asset.USDC(),
+		ReceiveAsset:   asset.NGNC(),
+		Sizes:          route.DefaultSizes,
+		ReferenceBase:  "USD",
+		ReferenceQuote: "NGN",
+	})
+	if err != nil {
+		t.Fatalf("Ladder: %v", err)
+	}
+
+	pricedAboveProbe := 0
+	for _, rung := range res.Rungs {
+		if !rung.Priced() {
+			continue
+		}
+		if rung.SendAmount.GreaterThan(decimal.NewFromInt(10)) {
+			pricedAboveProbe++
+		}
+		if w := thinWarnings(rung.Result.Quotes[0]); len(w) > 0 {
+			t.Errorf("rung %s warned without a priced probe rung: %v", rung.SendAmount, w)
+		}
+	}
+	if pricedAboveProbe == 0 {
+		t.Fatal("no rung above the probe priced; the negative case would prove nothing")
 	}
 }
