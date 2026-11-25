@@ -94,8 +94,7 @@ func MigrateSnapshotDir(snapshotDir string, store *Store) error {
 	}
 
 	// Save updated manifest
-	if err := m.Save(manifestPath);
-	err != nil {
+	if err := m.Save(manifestPath); err != nil {
 		return fmt.Errorf("save migrated manifest: %w", err)
 	}
 
