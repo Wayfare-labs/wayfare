@@ -6,9 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"encoding/json"
 	"fmt"
+	"encoding/json"
 )
+
 
 
 // StoreBody saves a response body into the content-addressed store by its SHA-256 hash.
