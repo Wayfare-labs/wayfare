@@ -12,6 +12,8 @@ import (
 
 
 
+
+
 // StoreBody saves a response body into the content-addressed store by its SHA-256 hash.
 func (s *Store) StoreBody(body []byte) (string, error) {
 	hash := sha256.Sum256(body)
@@ -116,15 +118,15 @@ func MigrateSnapshot(snapDir string, store *Store) error {
 	return nil
 }
 type Store struct {
-	baseDir string
+	Dir string
 }
 
-func NewStore(baseDir string) *Store {
-	return &Store{baseDir: baseDir}
+func NewStore(dir string) *Store {
+	return &Store{Dir: dir}
 }
 
 func (s *Store) objectsDir() string {
-	return filepath.Join(s.baseDir, "objects")
+	return filepath.Join(s.Dir, "objects")
 }
 
 func (s *Store) Put(data []byte) (string, error) {
