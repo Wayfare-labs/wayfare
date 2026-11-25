@@ -309,20 +309,13 @@ The registry currently yields six scheduled corridors: NGNC, GHSC,
 KESC, NGNT, ZARZ and EURMTL. USDZ and PYUSD are USD-pegged swaps and remain
 out until issue #671 defines a meaningful USD-to-USD reference.
 
-The original three-corridor sweep was measured at 68 Horizon calls (NGNC 28,
-GHSC 28, KESC 12). Each additional market corridor can use at most 28 calls
-with the current twelve-rung ladder: one pathfinding request per rung and a
-two-call slippage probe on each of the eight rungs above the probe threshold.
-The three additional corridors therefore add at most 84 calls, for a
-conservative ceiling of **152 Horizon calls per six-hour sweep**. A corridor
-that returns NO-MARKET short-circuits its probes and costs 12 calls instead.
-This is an upper-bound estimate for the new corridors, not a claim that their
-live request counts have been measured.
+Since #863 removed the per-rung slippage probe, each corridor makes twelve
+Horizon pathfinding calls. The six scheduled corridors therefore make **72
+Horizon calls per six-hour sweep**.
 
 Allowing roughly four counterparty requests per corridor and two
-reference-provider calls puts the whole sweep at no more than about **178
-upstream requests every six hours**. That remains a low average load for
-Horizon at this cadence.
+reference-provider calls puts the whole sweep at about **98 upstream requests
+every six hours**. This is an estimate, not a measured live count.
 
 The reference providers are hit roughly **once per run** rather than once per
 rung, because `refrate.Cached` collapses a ladder's twelve identical rate
