@@ -466,7 +466,7 @@ Query parameters:
 
 - `from` — send asset code; defaults to `USDC`.
 - `to` — receive asset code; defaults to `NGNC`.
-- `pretty` — optional boolean (`pretty=1`); formats the SVG output.
+- `pretty` — accepted for consistency with the JSON endpoints; it does not change the SVG.
 
 Response headers:
 
@@ -651,13 +651,13 @@ curl -s https://wayfare-cdb9.onrender.com/api/thresholds
 ```json
 {
   "verdict_thresholds": {
-    "good": "-0.015",
-    "fair": "-0.03",
-    "poor": "-0.05"
+    "good": "3",
+    "fair": "8",
+    "poor": "20"
   },
   "divergence_thresholds": {
-    "agree": "0.01",
-    "malfunction": "0.05"
+    "agree": "2",
+    "malfunction": "10"
   }
 }
 ```
