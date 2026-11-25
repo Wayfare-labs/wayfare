@@ -309,6 +309,49 @@ func TestSnapshotVersion0IsRefused(t *testing.T) {
 	}
 }
 
+// TestOldSnapshotVersion1StillLoads ensures backwards compatibility with version 1 snapshots.
+func TestOldSnapshotVersion1StillLoads(t *testing.T) {
+	dir, _ := recordAgainst(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "10")
+		_, _ = io.WriteString(w, `{}`)
+	}, "/paths/strict-send?source_amount=100")
+
+	path := filepath.Join(dir, ManifestFile)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var generic map[string]any
+	if err := json.Unmarshal(raw, &generic); err != nil {
+		t.Fatal(err)
+	}
+	generic["version"] = 1
+	edited, _ := json.Marshal(generic)
+	if err := os.WriteFile(path, edited, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := Load(dir)
+	if err != nil {
+		t.Fatalf("failed to load version 1 snapshot: %v", err)
+	}
+	if m.Version != 1 {
+		t.Errorf("loaded version = %d, want 1", m.Version)
+	}
+
+	// Verify headers replay
+	client := m.HTTPClient()
+	req, _ := http.NewRequest(http.MethodGet, "https://horizon.stellar.org/paths/strict-send?source_amount=100", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("replaying request: %v", err)
+	}
+	_ = resp.Body.Close()
+	if got := resp.Header.Get("Retry-After"); got != "10" {
+		t.Errorf("replayed Retry-After = %q, want %q", got, "10")
+	}
+}
+
 func TestRepeatedRequestsAreRecordedOnce(t *testing.T) {
 	// A ladder prices a size and then re-prices it as a slippage probe, so
 	// the same key genuinely recurs within one run.

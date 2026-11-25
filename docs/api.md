@@ -11,10 +11,12 @@ All endpoints are read-only. The service does not hold funds, issue tokens, sign
 |---|---|---|
 | `GET` | `/api/corridor` | Measure or retrieve one corridor |
 | `GET` | `/api/corridor/trend` | Read stored measurements for a corridor |
+| `GET` | `/api/corridor/image` | Render dynamic SVG social card preview for a corridor |
 | `GET` | `/api/chain-heads` | Publish the current hash-chain tip for each stored corridor |
 | `GET` | `/api/assets` | List verified assets configured in the binary |
 | `GET` | `/api/market-structure` | Identify shared issuer dependencies across corridors |
 | `GET` | `/api/thresholds` | Publish verdict and divergence band thresholds from code constants |
+| `GET` | `/og/corridor.svg` | Serve static social preview SVG card for open graph metadata |
 | `GET` | `/healthz` | Return service health |
 | `GET` | `/metrics` | Serve this process's operational counters |
 | `GET` | `/readyz` | Return whether traffic should be routed to this process |
@@ -456,6 +458,35 @@ curl -s "https://wayfare-cdb9.onrender.com/api/corridor/trend?to=NGNC&limit=7"
 }
 ```
 
+## `GET /api/corridor/image`
+
+Serves a corridor-specific SVG social preview card generated from the most recent stored measurement for the requested corridor. If no stored measurement exists for that corridor, returns `404` with `code: "no_corridor_data"`.
+
+Query parameters:
+
+- `from` — send asset code; defaults to `USDC`.
+- `to` — receive asset code; defaults to `NGNC`.
+- `pretty` — optional boolean (`pretty=1`); formats the SVG output.
+
+Response headers:
+
+- `Content-Type: image/svg+xml; charset=utf-8`
+- `Cache-Control: public, max-age=60, stale-while-revalidate=300`
+
+Errors:
+
+- `405 method_not_allowed` — when requested with a method other than `GET`.
+- `400 invalid_query` — when unknown query parameters are passed.
+- `400 unknown_send_asset` — when `from` asset is not in the verified asset registry.
+- `400 unknown_receive_asset` — when `to` asset is not in the verified asset registry.
+- `404 no_corridor_data` — when no recorded measurement exists for the requested corridor.
+
+**cURL:**
+
+```bash
+curl -s https://wayfare-cdb9.onrender.com/api/corridor/image?from=USDC&to=NGNC
+```
+
 ## `GET /api/chain-heads`
 
 Returns the current stored hash-chain tip for every corridor, sorted by
@@ -591,6 +622,77 @@ curl -s https://wayfare-cdb9.onrender.com/api/market-structure?pretty=1
 ```
 
 In the current registry, LinkIOIssuer (`GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6`) backs three corridors: NGNC (naira), GHSC (Ghanaian cedi), and KESC (Kenyan shilling). This concentration is a market-structure fact — if that issuer fails, all three corridors fail together.
+
+## `GET /api/thresholds`
+
+Publishes the verdict and divergence thresholds directly from code constants defined in the `route` and `refrate` packages. Clients should query this endpoint instead of hard-coding threshold values.
+
+Query parameters:
+
+- `pretty` — optional boolean (`pretty=1`); indents the JSON response.
+
+Response headers:
+
+- `Content-Type: application/json; charset=utf-8`
+
+A successful response contains:
+
+- `verdict_thresholds` — object with `good`, `fair`, `poor` loss percentage thresholds as decimal strings.
+- `divergence_thresholds` — object with `agree` and `malfunction` percentage thresholds as decimal strings.
+
+**cURL:**
+
+```bash
+curl -s https://wayfare-cdb9.onrender.com/api/thresholds
+```
+
+**Example Response (200 OK):**
+
+```json
+{
+  "verdict_thresholds": {
+    "good": "-0.015",
+    "fair": "-0.03",
+    "poor": "-0.05"
+  },
+  "divergence_thresholds": {
+    "agree": "0.01",
+    "malfunction": "0.05"
+  }
+}
+```
+
+Errors:
+
+- `405 method_not_allowed` — when requested with a method other than `GET`.
+- `400 invalid_query` — when unknown query parameters are passed.
+
+## `GET /og/corridor.svg`
+
+Serves a static Open Graph snapshot SVG card for social previews, displaying corridor integrity, floor loss percentage at floor size, and recording timestamp.
+
+Query parameters:
+
+- `from` — send asset code (optional, defaults to `USDC`).
+- `to` — receive asset code (e.g. `NGNC`).
+
+Response headers:
+
+- `Content-Type: image/svg+xml; charset=utf-8`
+- `Cache-Control: public, max-age=300`
+
+Errors:
+
+- `405 method_not_allowed` — when requested with a method other than `GET`.
+- `400 invalid_query` — when unknown query parameters or unrecognised corridor assets are supplied.
+- `404 Not Found` — when the run store is absent or has no recorded data for the corridor.
+- `500 store_read_error` — when reading from the run store encounters an error.
+
+**cURL:**
+
+```bash
+curl -s "https://wayfare-cdb9.onrender.com/og/corridor.svg?from=USDC&to=NGNC"
+```
 
 ## `GET /healthz`
 
