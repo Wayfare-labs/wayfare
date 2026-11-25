@@ -341,7 +341,7 @@ func TestOldSnapshotVersion1StillLoads(t *testing.T) {
 
 	// Verify headers replay
 	client := m.HTTPClient()
-	req, _ := http.NewRequest(http.MethodGet, "https://horizon.stellar.org/paths/strict-send?source_amount=100", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://horizon.stellar.org/paths/strict-send?source_amount=100", nil)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("replaying request: %v", err)

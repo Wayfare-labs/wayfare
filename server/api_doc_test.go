@@ -2,7 +2,6 @@ package server
 
 import (
 	"bufio"
-	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -80,7 +79,7 @@ func TestAPIDocRoutesParity(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1580.00")
 
 	for _, path := range expectedRoutes {
-		resp, err := http.Get(srv.URL + path)
+		resp, err := httpGet(srv.URL + path)
 		if err != nil {
 			t.Errorf("probing registered route %s: %v", path, err)
 			continue
