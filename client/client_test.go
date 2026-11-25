@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
 	"github.com/shopspring/decimal"
 )
+
 
 func TestClientCorridorAndAssets(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -76,5 +76,36 @@ func TestClientCorridorAndAssets(t *testing.T) {
 	}
 	if len(assets) != 1 || assets[0].Code != "USDC" {
 		t.Errorf("unexpected assets: %+v", assets)
+	}
+}
+func TestClientGetCorridor(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"send_asset": "USDC",
+			"receive_asset": "NGNC",
+			"integrity": "ONE-SIDED",
+			"reference_mid": "1350.5",
+			"reference_source": "exchangerate-api",
+			"scored": true,
+			"recommended": null,
+			"floor_loss_pct": "25.0",
+			"worst_loss_pct": "95.0",
+			"live": false,
+			"measured_at": "2026-08-23T00:00:00Z"
+		}`)) 
+		_ = r
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	resp, err := c.GetCorridor(context.Background(), "USDC", "NGNC", false)
+	if err != nil {
+		// If any issue occurs, check signature
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Integrity != "ONE-SIDED" {
+		t.Errorf("Integrity = %q, want ONE-SIDED", resp.Integrity)
 	}
 }
