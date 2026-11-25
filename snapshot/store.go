@@ -10,7 +10,6 @@ import (
 	"fmt"
 )
 
-
 // StoreBody saves a response body into the content-addressed store by its SHA-256 hash.
 func (s *Store) StoreBody(body []byte) (string, error) {
 	hash := sha256.Sum256(body)
