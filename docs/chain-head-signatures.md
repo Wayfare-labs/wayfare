@@ -44,7 +44,7 @@ The signature does **not** attest:
    produced*, not the ground truth.
 
 4. **That the verdict thresholds are correct.** The thresholds (3%/8%/20%)
-   are maintainer-owned judgements (ADR 002). A signature on a `POOR` verdict
+   are maintainer-owned judgements (see maintainer-owned-areas.md). A signature on a `POOR` verdict
    does not mean 8-20% loss is the right boundary — it means the engine at
    that commit applied those boundaries.
 
@@ -109,7 +109,7 @@ proves the record *can be recomputed from the same upstream bytes*.
 
 ## Related
 
-- [ADR 002](adr/002-verdict-thresholds-are-maintainer-owned.md) — verdict
+- [Verdict thresholds](maintainer-owned-areas.md#2-verdict-thresholds) — verdict
   thresholds are maintainer-owned
 - [docs/snapshot-format.md](snapshot-format.md) — snapshot content hashing
 - [docs/run-store.md](run-store.md) — hash chain structure

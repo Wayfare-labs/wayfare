@@ -187,9 +187,9 @@ func exportChainHeads(store runstore.Store, w io.Writer, logger *slog.Logger) in
 	}
 
 	type chainHead struct {
-		Corridor string `json:"corridor"`
-		Seq      int64  `json:"seq"`
-		Hash     string `json:"hash"`
+		Corridor   string `json:"corridor"`
+		Seq        int64  `json:"seq"`
+		Hash       string `json:"hash"`
 		RecordedAt string `json:"recorded_at"`
 	}
 
