@@ -13,12 +13,6 @@ import (
 
 
 
-func New(baseURL string) *Client {
-	return &Client{
-		BaseURL: baseURL,
-		HTTPClient: &http.Client{Timeout: 15 * time.Second},
-	}
-}
 type StaleInfo struct {
 	RecordedAt  string `json:"recorded_at"`
 	AgeSeconds  int64  `json:"age_seconds"`
@@ -128,9 +122,6 @@ func (c *Client) Assets(ctx context.Context) ([]AssetInfo, error) {
 	return body.Assets, nil
 }
 
-func (c *Client) Do(req *http.Request) (*http.Response, error) {
-	return c.client().Do(req)
-}
 // Client is a typed Go client for the Wayfare API.
 type Client struct {
 	BaseURL    string
@@ -138,12 +129,22 @@ type Client struct {
 }
 
 // New creates a new API client.
+func New(baseURL string) *Client {
+	return &Client{
+		BaseURL: baseURL,
+		HTTPClient: &http.Client{Timeout: 15 * time.Second},
+	}
+}
 
 func (c *Client) client() *http.Client {
 	if c.HTTPClient != nil {
 		return c.HTTPClient
 	}
 	return http.DefaultClient
+}
+
+func (c *Client) Do(req *http.Request) (*http.Response, error) {
+	return c.client().Do(req)
 }
 
 // CorridorResponse represents the response from GET /api/corridor.
