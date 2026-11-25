@@ -57,15 +57,15 @@ type Server struct {
 	HistoryFirst bool
 
 	// Timeout bounds a single corridor measurement. One Horizon call per
-	// rung, plus a two-call slippage probe on each rung above the probe
-	// threshold, so the count scales with route.DefaultSizes rather than
-	// staying a fixed dozen; this is still generous by HTTP standards.
-	// It is the ceiling: the budget a request actually gets is derived from
-	// its rung count (see budgetFor) and never exceeds this.
+	// rung — twelve with route.DefaultSizes, with the thin-liquidity warning
+	// derived from those rungs — so the count scales with route.DefaultSizes;
+	// this is still generous by HTTP standards. It is the ceiling: the budget
+	// a request actually gets is derived from its rung count (see budgetFor)
+	// and never exceeds this.
 	Timeout time.Duration
 
 	// Limiter bounds what each client can cost the service (issue #320). A
-	// live measurement is a dozen Horizon round trips, more with sizes=, and
+	// live measurement is twelve Horizon round trips, more with sizes=, and
 	// the free deployment has no platform rate limiting in front of it. Nil
 	// disables limiting, which keeps the zero-value Server's behaviour
 	// unchanged; wayfared installs one by default and -rate-limit=0 removes

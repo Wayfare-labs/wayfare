@@ -305,12 +305,11 @@ hours.
 
 ## Load on upstreams
 
-One sweep is roughly sixty-eight Horizon calls across the three corridors —
-NGNC and GHSC each run twelve rungs with pathfinding plus a slippage probe on
-rungs above the probe threshold (28 calls each); KESC short-circuits as
-NO-MARKET after twelve pathfinding calls (12) — plus about twelve counterparty
-requests and two reference-provider calls, near eighty requests every six
-hours. That is negligible for Horizon at this cadence.
+One sweep is roughly thirty-six Horizon calls across the three corridors —
+twelve pathfinding calls per corridor, with the thin-liquidity warning derived
+from those rungs instead of a separate probe on every rung above 10 — plus
+about twelve counterparty requests and two reference-provider calls, near
+fifty requests every six hours. That is negligible for Horizon at this cadence.
 
 The reference providers are hit roughly **once per run** rather than once per
 rung, because `refrate.Cached` collapses a ladder's twelve identical rate

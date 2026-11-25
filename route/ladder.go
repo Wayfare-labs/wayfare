@@ -105,6 +105,8 @@ type LadderResult struct {
 	Request LadderRequest
 	Rungs   []Rung
 
+	probeAmount decimal.Decimal
+
 	// Curve is the measured effective-rate relationship across priced and
 	// unpriced rungs. Unpriced rungs remain explicit holes; no interpolation
 	// or monotonicity assumption is applied.
@@ -342,8 +344,9 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].LessThan(sorted[j]) })
 
 	out := &LadderResult{
-		Request: req,
-		Rungs:   make([]Rung, len(sorted)),
+		Request:     req,
+		Rungs:       make([]Rung, len(sorted)),
+		probeAmount: e.slippageProbe(),
 	}
 	setUnmeasured := func(err error) {
 		for i, size := range sorted {
@@ -413,6 +416,7 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 				ReceiveAsset:   req.ReceiveAsset,
 				ReferenceBase:  req.ReferenceBase,
 				ReferenceQuote: req.ReferenceQuote,
+				skipSlippage:   true,
 			}, ref, parallel)
 			rung := Rung{SendAmount: size, Result: res, Err: err}
 			if err == nil {
@@ -530,6 +534,16 @@ func (l *LadderResult) computeMarginalCosts() {
 	}
 }
 
+func rungRate(q Quote) decimal.Decimal {
+	if q.EffectiveRate.IsPositive() {
+		return q.EffectiveRate
+	}
+	if q.SendAmount.IsZero() {
+		return decimal.Zero
+	}
+	return q.ReceiveAmount.Div(q.SendAmount)
+}
+
 func (l *LadderResult) summarise() {
 	var (
 		anyPriced   bool
@@ -539,6 +553,20 @@ func (l *LadderResult) summarise() {
 		chainMap    = map[string]DependencyNode{}
 		firstErr    error
 	)
+
+	probeRate := decimal.Zero
+	for i := range l.Rungs {
+		r := &l.Rungs[i]
+		if !r.Priced() || !r.SendAmount.Equal(l.probeAmount) {
+			continue
+		}
+		q := r.Result.Quotes[0]
+		if !q.SendAmount.IsZero() {
+			probeRate = rungRate(q)
+		}
+		break
+	}
+	probePriced := probeRate.IsPositive()
 
 	for i := range l.Rungs {
 		r := l.Rungs[i]
@@ -594,20 +622,27 @@ func (l *LadderResult) summarise() {
 		anyPriced = true
 		q := r.Result.Quotes[0]
 
-		if l.Reference.Scorable() {
-			// The decomposition answers "where did the money go" for this
-			// size — the per-quote component breakdown behind the single loss
-			// percentage, computed against the corridor's reference mid.
-			l.Rungs[i].Decomposition = Decompose(q, l.ReferenceMid)
+		if probePriced && r.SendAmount.GreaterThan(l.probeAmount) {
+			pct := pctWorse(probeRate, rungRate(q))
+			if pct.GreaterThan(thinLiquidityThreshold) {
+				l.Rungs[i].Result.Quotes[0].Warnings = append(
+					l.Rungs[i].Result.Quotes[0].Warnings,
+					thinLiquidityWarning(pct, l.probeAmount, l.Request.SendAsset.Code))
+			}
+		}
 
-			if l.FloorSize.IsZero() {
-				l.Floor = q.LossPct
-				l.FloorSize = r.SendAmount
-				l.FloorEffectiveRate = q.EffectiveRate
-			}
-			if q.LossPct.GreaterThanOrEqual(l.WorstLoss) {
-				l.WorstLoss, l.WorstSize = q.LossPct, r.SendAmount
-			}
+		// The decomposition answers "where did the money go" for this
+		// size — the per-quote component breakdown behind the single loss
+		// percentage, computed against the corridor's reference mid.
+		l.Rungs[i].Decomposition = Decompose(q, l.ReferenceMid)
+
+		if l.FloorSize.IsZero() {
+			l.Floor = q.LossPct
+			l.FloorSize = r.SendAmount
+			l.FloorEffectiveRate = q.EffectiveRate
+		}
+		if q.LossPct.GreaterThanOrEqual(l.WorstLoss) {
+			l.WorstLoss, l.WorstSize = q.LossPct, r.SendAmount
 		}
 
 		// The first acceptable quote on an ascending ladder is also the
