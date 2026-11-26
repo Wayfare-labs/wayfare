@@ -80,3 +80,5 @@ remembered.
 - `server/api.go` — the server, imports nothing from `monitor`
 - `importgraph_test.go` — the test that enforces this graph
 - `README.md` — "The scheduler does not depend on the server" section
+
+| `client` | `github.com/shopspring/decimal` |

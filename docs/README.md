@@ -116,8 +116,8 @@ exactly once; the grouping reflects who is most likely to need it first.
 | [research-BRL.md](research-BRL.md) | Research: USDC → BRL (Brazilian Real) — NO-MARKET |
 | [research-ZAR.md](research-ZAR.md) | Research: USDC → ZAR (South African Rand) — NO-MARKET |
 | [research-GHS.md](research-GHS.md) | Research: USDC → GHS (Ghanaian Cedi) — UNUSABLE |
-| [research-tzs.md](research-tzs.md) | Research: USDC → TZS (Tanzanian Shilling) — withdrawn, pending re-measurement |
-| [research-egp.md](research-egp.md) | Research: USDC → EGP (Egyptian Pound) — withdrawn, pending re-measurement |
+| [research-tzs.md](research-tzs.md) | Research: USDC → TZS (Tanzanian Shilling) — NO-MARKET |
+| [research-egp.md](research-egp.md) | Research: USDC → EGP (Egyptian Pound) — NO-MARKET |
 | [corridor-research-ugx.md](corridor-research-ugx.md) | Research: USDC → UGX (Ugandan Shilling) |
 | [corridor-research-xof-xaf.md](corridor-research-xof-xaf.md) | Research: USDC → XOF / XAF (CFA Franc) |
 | [reverse-corridor-research.md](reverse-corridor-research.md) | Reverse corridors: the exit leg as a first-class measurement |
@@ -219,3 +219,7 @@ exactly once; the grouping reflects who is most likely to need it first.
 | [schemas/runstore-v4.json](schemas/runstore-v4.json) | Run-store JSON schema v4 |
 | [schemas/runstore-v5.json](schemas/runstore-v5.json) | Run-store JSON schema v5 |
 | [schemas/runstore-v6.json](schemas/runstore-v6.json) | Run-store JSON schema v6 |
+
+- [011-one-sided-integrity-state.md](adr/011-one-sided-integrity-state.md) — One-sided corridor integrity state taxonomy
+
+- [ngnc-peg-maintenance.md](ngnc-peg-maintenance.md) — Research into how NGNC's peg is maintained
