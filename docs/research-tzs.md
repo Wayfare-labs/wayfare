@@ -1,5 +1,21 @@
 # Research: does a usable TZS (Tanzanian Shilling) issuer exist on Stellar?
 
+> **Correction, 2026-11-25: the finding below is withdrawn pending
+> re-measurement.** Horizon lists 22 TZS issuers. One,
+> `GA2MSSZKJOU6RNL3EJKH3S5TB5CDYTFQFWRYFGUJVIN5I6AOIRTLUHTO`
+> (`connect.clickpesa.com`), has 5,952 authorised holders, order-book offers,
+> liquidity pools and USDC paths; several others also have USDC paths. So
+> "zero paths", "no orderbook offers" and "no liquidity pools" are not correct
+> on that date. No `lobstr.co` issuer was listed. This does not make the
+> corridor usable: 1 USDC returned 47,747 TZS against the ~2,660 reference mid
+> quoted below, and no entry was read from the issuer's `stellar.toml`.
+>
+> Sources: Horizon `/assets`, `/order_book` (against USDC and XLM),
+> `/liquidity_pools`, `/offers` and `/paths/strict-send` (0.1 and 100 USDC; also 1 for ClickPesa),
+> read 2026-11-25 for each issuer. Counts are capped by the page sizes
+> requested. These reads postdate the original, so they do not show
+> what Horizon returned on 2026-11-23.
+
 **Status: completed. 2026-11-23. Finding: NO-MARKET.** No credible Tanzanian
 anchor exists on Stellar. A Horizon asset search for `TZS` returns a handful of
 tokens, but none is issued by a recognisable Tanzanian financial institution,

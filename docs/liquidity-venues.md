@@ -128,10 +128,11 @@ An AMM-inclusive depth or spread metric would therefore need one of:
   direct spread reading, so the resulting figure is `pathfinding` venue, not
   a book venue.
 
-Pool reserve inspection for classic AMM pools appearing on route paths is
-implemented via the `amm.pool-reserves` metric (`/liquidity_pools/{id}`),
-reporting decimal reserves and pool fees with evidence, and reporting
-undetermined when recorded path responses do not expose pool IDs.
+The `amm.pool-reserves` metric (`/liquidity_pools/{id}`) reports how many
+classic AMM pools it read, with each pool's fee and per-asset reserves as
+evidence. It reads only pool IDs its caller supplies, and is not among the
+metrics a corridor measurement runs today. It is undetermined when no pool IDs
+are supplied or when any pool's data is incomplete.
 
 ---
 

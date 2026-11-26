@@ -3,6 +3,7 @@ package checks
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -26,11 +27,20 @@ func (AmmPoolReservesMetric) Describe() Descriptor {
 		Cost:  CostExpensive,
 		Venue: VenuePathfinding,
 		Title: "Reserves of classic AMM liquidity pools on route paths",
-		CanDetermine: "Reserves as decimal strings, pool ID, and fee for classic liquidity " +
-			"pools that appear on the corridor's route paths.",
+		CanDetermine: "How many classic liquidity pools were read, with each pool's ID, fee and " +
+			"per-asset reserves as evidence. Reserves are never summed across assets.",
 		CannotDetermine: "Whether pool liquidity will be executed or bypassed by order-book " +
 			"depth at settlement time, or pool behavior under large price slippage.",
 	}
+}
+
+// poolURL is the URL the DEX client requests for a pool, for evidence.
+func (m AmmPoolReservesMetric) poolURL(id string) string {
+	base := m.DEX.HorizonURL
+	if base == "" {
+		base = dex.DefaultHorizonURL
+	}
+	return strings.TrimRight(base, "/") + "/liquidity_pools/" + url.PathEscape(id)
 }
 
 // Run implements Metric.
@@ -49,7 +59,6 @@ func (m AmmPoolReservesMetric) Run(ctx context.Context, s Subject) MetricResult 
 	}
 
 	var evidence []Evidence
-	var totalReserves decimal.Decimal
 	var summaries []string
 
 	for _, poolID := range m.PoolIDs {
@@ -58,25 +67,27 @@ func (m AmmPoolReservesMetric) Run(ctx context.Context, s Subject) MetricResult 
 			return MetricUndetermined(d, s, fmt.Sprintf("fetching liquidity pool %s: %v", poolID, err))
 		}
 
+		if len(pool.Reserves) != 2 {
+			return MetricUndetermined(d, s, fmt.Sprintf("liquidity pool %s reports %d reserves, want 2", poolID, len(pool.Reserves)), evidence...)
+		}
 		var reserveStrs []string
 		for _, r := range pool.Reserves {
-			amt, parseErr := decimal.NewFromString(r.Amount)
-			if parseErr == nil {
-				totalReserves = totalReserves.Add(amt)
+			if _, err := decimal.NewFromString(r.Amount); err != nil || r.Asset == "" {
+				return MetricUndetermined(d, s, fmt.Sprintf("liquidity pool %s has an unreadable reserve %q=%q", poolID, r.Asset, r.Amount), evidence...)
 			}
 			reserveStrs = append(reserveStrs, fmt.Sprintf("%s=%s", r.Asset, r.Amount))
 		}
 
 		obs := fmt.Sprintf("pool_id=%s fee_bp=%d reserves=[%s]", pool.ID, pool.FeeBP, strings.Join(reserveStrs, ", "))
 		evidence = append(evidence, Evidence{
-			Source:     fmt.Sprintf("%s/liquidity_pools/%s", m.DEX.HorizonURL, pool.ID),
+			Source:     m.poolURL(poolID),
 			Observed:   obs,
 			ObservedAt: at,
 		})
 		summaries = append(summaries, fmt.Sprintf("%s (fee_bp=%d, %s)", pool.ID, pool.FeeBP, strings.Join(reserveStrs, ", ")))
 	}
 
-	return MetricValue(d, s, totalReserves, UnitAmount,
+	return MetricValue(d, s, decimal.NewFromInt(int64(len(m.PoolIDs))), UnitCount,
 		fmt.Sprintf("%d classic AMM pool(s) on route: %s", len(m.PoolIDs), strings.Join(summaries, "; ")),
 		evidence...)
 }
