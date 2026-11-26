@@ -133,6 +133,15 @@ jobs:
           version: v2.15.0
           install-mode: goinstall
 
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: shellcheck
+        run: shellcheck scripts/smoke-check.sh docs/qa/browser/servers.sh
+
   # Every test is meant to run from recorded bytes. snapshot.Replayer returns
   # ErrNotRecorded rather than falling through to the network, so a test that
   # reaches out fails instead of passing intermittently — but that only holds
