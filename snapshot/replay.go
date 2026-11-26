@@ -83,9 +83,8 @@ func (r *Replayer) RoundTrip(req *http.Request) (*http.Response, error) {
 	header.Set("Content-Type", contentType)
 	if matchedIn != nil && len(matchedIn.Header) > 0 {
 		for k, vals := range matchedIn.Header {
-			for _, v := range vals {
-				header.Add(k, v)
-			}
+			// Replace, so a recorded Content-Type does not join the fallback.
+			header[http.CanonicalHeaderKey(k)] = append([]string(nil), vals...)
 		}
 	}
 

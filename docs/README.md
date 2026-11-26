@@ -116,8 +116,8 @@ exactly once; the grouping reflects who is most likely to need it first.
 | [research-BRL.md](research-BRL.md) | Research: USDC → BRL (Brazilian Real) — NO-MARKET |
 | [research-ZAR.md](research-ZAR.md) | Research: USDC → ZAR (South African Rand) — NO-MARKET |
 | [research-GHS.md](research-GHS.md) | Research: USDC → GHS (Ghanaian Cedi) — UNUSABLE |
-| [research-tzs.md](research-tzs.md) | Research: USDC → TZS (Tanzanian Shilling) — NO-MARKET |
-| [research-egp.md](research-egp.md) | Research: USDC → EGP (Egyptian Pound) — NO-MARKET |
+| [research-tzs.md](research-tzs.md) | Research: USDC → TZS (Tanzanian Shilling) — withdrawn, pending re-measurement |
+| [research-egp.md](research-egp.md) | Research: USDC → EGP (Egyptian Pound) — withdrawn, pending re-measurement |
 | [corridor-research-ugx.md](corridor-research-ugx.md) | Research: USDC → UGX (Ugandan Shilling) |
 | [corridor-research-xof-xaf.md](corridor-research-xof-xaf.md) | Research: USDC → XOF / XAF (CFA Franc) |
 | [reverse-corridor-research.md](reverse-corridor-research.md) | Reverse corridors: the exit leg as a first-class measurement |
