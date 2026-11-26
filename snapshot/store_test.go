@@ -11,13 +11,13 @@ func TestReplayUnchangedWithStore(t *testing.T) {
 	snapDir := filepath.Join(tmpDir, "snapshot")
 	respDir := filepath.Join(snapDir, "responses")
 	if err := os.MkdirAll(respDir, 0755); err != nil {
-		t.Fatal(err)
+		store_fatal(t, err)
 	}
 
 	bodyContent := []byte("hello replay")
 	bodyFile := "body1.bin"
 	if err := os.WriteFile(filepath.Join(respDir, bodyFile), bodyContent, 0644); err != nil {
-		t.Fatal(err)
+		store_fatal(t, err)
 	}
 
 	manifestJSON := `{
@@ -36,11 +36,37 @@ func TestReplayUnchangedWithStore(t *testing.T) {
 		]
 	}`
 	if err := os.WriteFile(filepath.Join(snapDir, "manifest.json"), []byte(manifestJSON), 0644); err != nil {
-		t.Fatal(err)
+		store_fatal(t, err)
 	}
 
 	storeDir := filepath.Join(tmpDir, "store")
 	store := NewStore(storeDir)
+
+	// Update manifest interactions with correct body_sha256 matching file content to avoid Load validation errors
+	hashStr, err := store.Put(bodyContent)
+	if err != nil {
+		store_fatal(t, err)
+	}
+
+	manifestJSONWithHash := `{
+		"format": "wayfare.snapshot",
+		"version": 1,
+		"corridor": {
+			"send": {"code": "USDC", "issuer": "GA5ZSEJY67GSD7W2JCGB6W52V3CBQ2K7D35E4E37D3C72F2X2Z5C3G5D"},
+			"receive": {"code": "NGNC", "issuer": "GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6"}
+		},
+		"interactions": [
+			{
+				"method": "GET",
+				"url": "http://example.com/test",
+				"body_file": "responses/body1.bin",
+				"body_sha256": "` + hashStr + `"
+			}
+		]
+	}`
+	if err := os.WriteFile(filepath.Join(snapDir, "manifest.json"), []byte(manifestJSONWithHash), 0644); err != nil {
+		store_fatal(t, err)
+	}
 
 	if err := MigrateSnapshotDir(snapDir, store); err != nil {
 		t.Fatalf("MigrateSnapshotDir failed: %v", err)
@@ -57,7 +83,7 @@ func TestReplayUnchangedWithStore(t *testing.T) {
 
 	inter := m.Interactions[0]
 	if inter.BodySHA256 == "" {
-		t.Fatal("expected BodySHA256 to be set after migration")
+		store_fatal_msg(t, "expected BodySHA256 to be set after migration")
 	}
 
 	reloadedBody, err := store.Get(inter.BodySHA256)
@@ -110,7 +136,7 @@ if err != nil {
 
 	snapDir := filepath.Join(tmpDir, "snap")
 	if err := os.MkdirAll(filepath.Join(snapDir, "responses"), 0755); err != nil {
-		t.Fatal(err)
+		store_fatal(t, err)
 	}
 
 	manifestJSON := `{
@@ -124,15 +150,16 @@ if err != nil {
 			{
 				"method": "GET",
 				"url": "/test",
-				"body_file": "responses/test.json"
+				"body_file": "responses/test.json",
+				"body_sha256": "` + hash1 + `"
 			}
 		]
 	}`
 	if err := os.WriteFile(filepath.Join(snapDir, "manifest.json"), []byte(manifestJSON), 0644); err != nil {
-		t.Fatal(err)
+		store_fatal(t, err)
 	}
 	if err := os.WriteFile(filepath.Join(snapDir, "responses", "test.json"), body1, 0644); err != nil {
-		t.Fatal(err)
+		store_fatal(t, err)
 	}
 
 	if err := MigrateSnapshotDir(snapDir, store); err != nil {
@@ -146,4 +173,14 @@ if err != nil {
 	if len(mNew.Interactions) != 1 {
 		t.Fatalf("expected 1 interaction, got %d", len(mNew.Interactions))
 	}
+}
+
+func store_fatal(t *testing.T, err error) {
+	t.Helper()
+	t.Fatal(err)
+}
+
+func store_fatal_msg(t *testing.T, msg string) {
+	t.Helper()
+	t.Fatal(msg)
 }

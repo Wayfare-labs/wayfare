@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 )
 
+
 // StoreBody saves a response body into the content-addressed store by its SHA-256 hash.
 func (s *Store) StoreBody(body []byte) (string, error) {
 	hash := sha256.Sum256(body)
@@ -113,7 +114,6 @@ func MigrateSnapshot(snapDir string, store *Store) error {
 	_ = os.RemoveAll(filepath.Join(snapDir, "responses"))
 	return nil
 }
-// MigrateSnapshot is handled via MigrateSnapshotDir in migrate.go.
 type Store struct {
 	Dir string
 }
@@ -146,6 +146,7 @@ func (s *Store) Put(data []byte) (string, error) {
 
 	return hashStr, nil
 	}
+
 func (s *Store) Get(hash string) ([]byte, error) {
 	objPath := filepath.Join(s.objectsDir(), hash)
 	return os.ReadFile(objPath)

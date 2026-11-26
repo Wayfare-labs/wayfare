@@ -1,13 +1,12 @@
 package snapshot
 
 import (
-	"os"
-	"path/filepath"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 )
-
 
 // CleanSnapshotDir cleans response headers in an existing snapshot directory's manifest.json
 // while preserving the original bodies and their hashes.
@@ -60,6 +59,7 @@ func mapOfHeader(h http.Header) map[string][]string {
 	}
 	return m
 }
+
 func MigrateSnapshotDir(snapshotDir string, store *Store) error {
 	manifestPath := filepath.Join(snapshotDir, "manifest.json")
 	m, err := Load(snapshotDir)
