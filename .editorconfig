@@ -1,0 +1,32 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Go uses tabs — enforced by gofmt
+[*.go]
+indent_style = tab
+
+# HTML (the served UI page)
+[*.html]
+indent_style = space
+indent_size = 2
+
+# Markdown — trailing spaces are significant (line break), so do not trim them
+[*.md]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false
+
+# YAML (CI workflows, golangci config, issue templates)
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# NDJSON (embedded corridor history — one JSON object per line)
+[*.ndjson]
+indent_style = space
+indent_size = 2
