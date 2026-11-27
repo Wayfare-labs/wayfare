@@ -192,6 +192,23 @@ If a pull request changes a public wire contract or run-store record shape,
 add a dated entry to [CHANGELOG.md](CHANGELOG.md) describing the consumer-visible
 change and any compatibility implications.
 
+## Issue closing rule
+
+**An issue is closed only when every acceptance criterion stated in it has been
+verified on `main` — not at merge time.**
+
+Auto-merge closes issues by reference, but reference alone does not confirm
+the work is correct. Before a PR can close an issue, the PR description must
+include an **Acceptance criteria** section that maps each criterion from the
+issue to the exact test name, `make` target, or command that proves it, along
+with the output or result that was observed.
+
+If a criterion cannot be verified mechanically, state why and name the
+maintainer who confirmed it manually.
+
+A PR that omits this section or leaves a criterion unmapped routes to
+`needs-maintainer-review` regardless of CI status.
+
 ## Opening an issue
 
 Issues should follow the templates in [.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/)

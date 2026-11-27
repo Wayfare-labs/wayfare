@@ -60,6 +60,13 @@ const (
 	CostExpectedFailure CostComponent = "expected_failure"
 )
 
+// ExpectedFailureUndeterminedReason is why expected failure cost carries no
+// figure. Estimating it needs observed route failures, and none have been
+// accumulated; reporting zero instead would claim a corridor never fails, a
+// far stronger statement than "not yet known" (issue #167). It is a named
+// constant so every surface states the same reason and a test can pin it.
+const ExpectedFailureUndeterminedReason = "no failure history exists yet; runstore is collecting but has not accumulated enough observations"
+
 // CostPart is one component of the effective transfer cost.
 type CostPart struct {
 	Component  CostComponent
@@ -143,13 +150,13 @@ func Decompose(q Quote, mid decimal.Decimal) CostDecomposition {
 		Reason:     "single quote available; slippage requires a comparison across sizes",
 	})
 
-	// Expected failure cost: explicitly unknown.
+	// Expected failure cost: explicitly unknown, and the reason says why.
 	parts = append(parts, CostPart{
 		Component:  CostExpectedFailure,
 		Amount:     decimal.Zero,
 		Pct:        decimal.Zero,
 		Determined: false,
-		Reason:     "no failure history exists yet; runstore is collecting but has not accumulated enough observations",
+		Reason:     ExpectedFailureUndeterminedReason,
 	})
 
 	return CostDecomposition{
