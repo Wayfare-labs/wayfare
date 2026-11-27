@@ -46,25 +46,25 @@ func (c Corridor) Key() string {
 	return runstore.CorridorKey(c.Send.Code, c.Receive.Code)
 }
 
-// DefaultCorridors are every registered corridor destination.
-//
-// The sweep covers the whole registry so that no verified corridor is
-// measured in one place and served in another: a destination registered in
-// asset is a destination the monitor prices. The case-study trio (USDC-NGNC
-// DIRECT, USDC-GHSC DERIVATIVE, USDC-KESC NO-MARKET) still exercises each
-// integrity state, and the remaining registered corridors extend the same
-// coverage to every verified destination token.
+// DefaultCorridors derives the sweep from the verified asset registry.
+// Every registered fiat destination is measured, including pending assets:
+// their declared status is part of the finding, not a reason to hide them.
+// USD-pegged destinations are deliberately excluded until the USD-to-USD
+// measurement semantics are decided in issue #671.
 func DefaultCorridors() []Corridor {
-	return []Corridor{
-		{Send: asset.USDC(), Receive: asset.NGNC(), ReferenceBase: "USD", ReferenceQuote: "NGN"},
-		{Send: asset.USDC(), Receive: asset.GHSC(), ReferenceBase: "USD", ReferenceQuote: "GHS"},
-		{Send: asset.USDC(), Receive: asset.KESC(), ReferenceBase: "USD", ReferenceQuote: "KES"},
-		{Send: asset.USDC(), Receive: asset.NGNT(), ReferenceBase: "USD", ReferenceQuote: "NGN"},
-		{Send: asset.USDC(), Receive: asset.USDZ(), ReferenceBase: "USD", ReferenceQuote: "USD"},
-		{Send: asset.USDC(), Receive: asset.ZARZ(), ReferenceBase: "USD", ReferenceQuote: "ZAR"},
-		{Send: asset.USDC(), Receive: asset.EURMTL(), ReferenceBase: "USD", ReferenceQuote: "EUR"},
-		{Send: asset.USDC(), Receive: asset.PYUSD(), ReferenceBase: "USD", ReferenceQuote: "USD"},
+	corridors := make([]Corridor, 0)
+	for _, entry := range asset.Registry() {
+		if entry.Peg == "" || entry.Peg == "USD" {
+			continue
+		}
+		corridors = append(corridors, Corridor{
+			Send:           asset.USDC(),
+			Receive:        asset.Stellar(entry.Code, entry.Issuer),
+			ReferenceBase:  "USD",
+			ReferenceQuote: entry.Peg,
+		})
 	}
+	return corridors
 }
 
 // DefaultInterval is how often corridors are measured.
@@ -72,9 +72,8 @@ func DefaultCorridors() []Corridor {
 // Six hours. The corridors measured so far move on the scale of days — the
 // 2026-08-04 and 2026-08-08 runs differ by about a percent — so a shorter
 // interval would buy resolution nobody needs while multiplying load on a
-// shared public service. One run is roughly three dozen Horizon calls per
-// corridor; at this cadence that is negligible for Horizon and comfortably
-// inside both rate providers' free tiers once refrate.Cached is in the stack.
+// shared public service. The deployment guide documents the aggregate
+// Horizon request ceiling for the registry-derived sweep.
 const DefaultInterval = 6 * time.Hour
 
 // DefaultJitter is the maximum random delay added to each scheduled interval.

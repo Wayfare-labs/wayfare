@@ -305,11 +305,17 @@ hours.
 
 ## Load on upstreams
 
-One sweep is roughly thirty-six Horizon calls across the three corridors —
-twelve pathfinding calls per corridor, with the thin-liquidity warning derived
-from those rungs instead of a separate probe on every rung above 10 — plus
-about twelve counterparty requests and two reference-provider calls, near
-fifty requests every six hours. That is negligible for Horizon at this cadence.
+The registry currently yields six scheduled corridors: NGNC, GHSC,
+KESC, NGNT, ZARZ and EURMTL. USDZ and PYUSD are USD-pegged swaps and remain
+out until issue #671 defines a meaningful USD-to-USD reference.
+
+Since #863 removed the per-rung slippage probe, each corridor makes twelve
+Horizon pathfinding calls. The six scheduled corridors therefore make **72
+Horizon calls per six-hour sweep**.
+
+Allowing roughly four counterparty requests per corridor and two
+reference-provider calls puts the whole sweep at about **98 upstream requests
+every six hours**. These figures are estimates, not measured live counts.
 
 The reference providers are hit roughly **once per run** rather than once per
 rung, because `refrate.Cached` collapses a ladder's twelve identical rate

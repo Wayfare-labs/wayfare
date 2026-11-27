@@ -751,30 +751,33 @@ func TestSchedulerNeedsAnEngine(t *testing.T) {
 	}
 }
 
-// TestDefaultCorridorsCoverEveryState documents why the sweep includes the
-// case-study trio: each corridor exercises a different integrity state, so a
-// deployment measuring them continuously exercises the whole taxonomy. The
-// sweep now covers every registered corridor destination; this test guards the
-// trio that anchors it.
-func TestDefaultCorridorsCoverEveryState(t *testing.T) {
+// TestDefaultCorridorsCoverEveryRegisteredFiatDestination verifies that the
+// default sweep includes every registered non-USD fiat-pegged destination.
+func TestDefaultCorridorsCoverEveryRegisteredFiatDestination(t *testing.T) {
 	got := DefaultCorridors()
-	if len(got) == 0 {
-		t.Fatal("no default corridors; the sweep must measure at least the case-study trio")
-	}
-	// The case-study trio is still the spine of the sweep: one corridor per
-	// integrity state (NGNC DIRECT, GHSC DERIVATIVE, KESC NO-MARKET).
-	wantKeys := map[string]bool{"USDC-NGNC": false, "USDC-GHSC": false, "USDC-KESC": false}
-	for _, c := range got {
-		if _, ok := wantKeys[c.Key()]; ok {
-			wantKeys[c.Key()] = true
+	gotKeys := make(map[string]bool, len(got))
+	for _, corridor := range got {
+		key := corridor.Key()
+		if gotKeys[key] {
+			t.Errorf("default corridors contain duplicate %s", key)
 		}
-		if c.ReferenceQuote == "" || c.ReferenceBase == "" {
-			t.Errorf("%s has no reference pair; it could not be scored", c.Key())
+		gotKeys[key] = true
+		if corridor.ReferenceBase != "USD" || corridor.ReferenceQuote == "" {
+			t.Errorf("%s has invalid reference pair %q/%q", key, corridor.ReferenceBase, corridor.ReferenceQuote)
 		}
 	}
-	for key, seen := range wantKeys {
-		if !seen {
-			t.Errorf("default corridors are missing %s", key)
+	// Pending assets remain included: their declared status is a finding.
+	for _, entry := range asset.Registry() {
+		if entry.Peg == "" || entry.Peg == "USD" {
+			continue // settlement asset or same-peg swap (issue #671)
 		}
+		key := "USDC-" + entry.Code
+		if !gotKeys[key] {
+			t.Errorf("default corridors omit registered fiat destination %s", key)
+		}
+		delete(gotKeys, key)
+	}
+	for unexpected := range gotKeys {
+		t.Errorf("default corridors include unregistered or excluded destination %s", unexpected)
 	}
 }

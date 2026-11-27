@@ -113,6 +113,13 @@ The fields do several crucial jobs:
 
 Lookup maps (`known`, `fiatPegs`, and `homeDomains`) are derived automatically from `registry` at startup.
 
+The scheduled monitor derives its sweep automatically from this registry. Any
+entry with a fiat Peg other than USD is paired with the USDC settlement asset
+and measured on the next sweep; pending entries are included so their declared
+status remains visible in the findings. There is no separate monitor list to
+update. USD-pegged destinations (such as USDZ and PYUSD) are excluded until the
+USD-to-USD measurement rule is settled in [issue #671](https://github.com/Wayfare-labs/wayfare/issues/671).
+
 **c. The constructor (optional).** Add a convenience constructor if the token is
 referenced directly across packages and tests:
 

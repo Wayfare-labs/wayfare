@@ -510,10 +510,11 @@ func TestRecordedGapIsVerifiable(t *testing.T) {
 
 // TestSweepCoversEveryRegisteredCorridor pins the sweep set to the registry.
 //
-// Every verified corridor destination in asset must appear in
+// Every registered non-USD fiat-pegged destination in asset must appear in
 // DefaultCorridors(), so a newly registered corridor cannot be measured in
-// asset and silently skipped by the monitor. Removing a corridor from the
-// sweep makes this test fail.
+// asset and silently skipped by the monitor. USD-pegged destinations remain
+// excluded pending issue #671. Removing a corridor from the sweep makes this
+// test fail.
 func TestSweepCoversEveryRegisteredCorridor(t *testing.T) {
 	sweep := make(map[string]Corridor)
 	for _, c := range DefaultCorridors() {
@@ -521,9 +522,10 @@ func TestSweepCoversEveryRegisteredCorridor(t *testing.T) {
 	}
 
 	for _, e := range asset.Registry() {
-		if e.Code == "USDC" || e.Peg == "" {
-			// USDC is the settlement asset; every other registered entry
-			// with a peg is a corridor destination.
+		if e.Code == "USDC" || e.Peg == "" || e.Peg == "USD" {
+			// USDC is the settlement asset. USD-pegged destinations are
+			// intentionally excluded until issue #671 defines USD-to-USD
+			// measurement semantics; other fiat-pegged entries are swept.
 			continue
 		}
 		key := e.Code + ":" + e.Issuer
@@ -574,9 +576,9 @@ func TestSweepSetEqualsRegistrySet(t *testing.T) {
 
 	registered := make(map[string]asset.Entry, len(swept))
 	for _, e := range asset.Registry() {
-		// USDC is the settlement asset every corridor starts from, not a
-		// destination; an entry with no peg is not a corridor either.
-		if e.Code == "USDC" || e.Peg == "" {
+		// USDC is the settlement asset, and USD-pegged destinations are
+		// excluded pending issue #671; only non-USD fiat pegs are swept.
+		if e.Code == "USDC" || e.Peg == "" || e.Peg == "USD" {
 			continue
 		}
 		registered[e.Code+":"+e.Issuer] = e
