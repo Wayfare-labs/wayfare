@@ -69,8 +69,8 @@ func TestAmmPoolReservesDeterminedWithEvidence(t *testing.T) {
 	if res.Venue != VenuePathfinding {
 		t.Errorf("Venue = %s, want %s", res.Venue, VenuePathfinding)
 	}
-	if res.Unit != UnitAmount {
-		t.Errorf("Unit = %s, want %s", res.Unit, UnitAmount)
+	if res.Unit != UnitCount || res.Value.String() != "1" {
+		t.Errorf("value = %s %s, want 1 %s; reserves of different assets must not be summed", res.Value, res.Unit, UnitCount)
 	}
 	if len(res.Evidence) != 1 {
 		t.Fatalf("len(Evidence) = %d, want 1", len(res.Evidence))
@@ -81,6 +81,26 @@ func TestAmmPoolReservesDeterminedWithEvidence(t *testing.T) {
 	}
 	if !strings.Contains(ev.Observed, "15000.5000000") || !strings.Contains(ev.Observed, "2500.2500000") {
 		t.Errorf("evidence missing decimal reserves: %s", ev.Observed)
+	}
+}
+
+// Incomplete pool data is unknown, never a partial or zero figure.
+func TestAmmPoolReservesUndeterminedWhenIncomplete(t *testing.T) {
+	for name, body := range map[string]string{
+		"unreadable reserve": `{"id":"p","fee_bp":30,"reserves":[{"asset":"native","amount":"10"},{"asset":"USDC:G","amount":"unavailable"}]}`,
+		"no reserves":        `{"id":"p","fee_bp":30}`,
+		"no fee":             `{"id":"p","reserves":[{"asset":"native","amount":"10"},{"asset":"USDC:G","amount":"5"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			defer srv.Close()
+			m := AmmPoolReservesMetric{DEX: &dex.Client{HorizonURL: srv.URL}, PoolIDs: []string{"p"}}
+			if res := m.Run(context.Background(), Subject{Send: asset.USDC(), Receive: asset.NGNC()}); res.Determined {
+				t.Errorf("determined %s %s from incomplete data", res.Value, res.Unit)
+			}
+		})
 	}
 }
 

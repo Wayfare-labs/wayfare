@@ -1,5 +1,19 @@
 # Research: does a usable EGP (Egyptian Pound) issuer exist on Stellar?
 
+> **Correction, 2026-11-25: the finding below is withdrawn pending
+> re-measurement.** Horizon lists 20 EGP issuers. Several have offers or USDC
+> paths bridged through other assets, and two have a liquidity pool, so "zero
+> paths", "no orderbook offers" and "no liquidity pools" are not correct on that
+> date. None had a direct USDC book. No `lobstr.co` or `egychain.com` issuer was
+> listed. The mid-2023 exchange rate below is disputed in review and carries no
+> source.
+>
+> Sources: Horizon `/assets`, `/order_book` (against USDC and XLM),
+> `/liquidity_pools`, `/offers` and `/paths/strict-send` (0.1 and 100 USDC),
+> read 2026-11-25 for each issuer. Counts are capped by the page sizes
+> requested. These reads postdate the original, so they do not show
+> what Horizon returned on 2026-11-23.
+
 **Status: completed. 2026-11-23. Finding: NO-MARKET.** No credible Egyptian
 anchor exists on Stellar. Horizon returns a small number of EGP-coded tokens,
 but none is issued by a recognisable Egyptian financial institution, none carries
