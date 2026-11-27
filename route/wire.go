@@ -120,6 +120,20 @@ type RungJSON struct {
 	// Ledger is the chain head observed right after this rung was priced.
 	// Omitted when unknown; never published as 0.
 	Ledger int64 `json:"ledger,omitempty"`
+
+	// Findings are counterparty facts about this rung's best path — whether
+	// an intermediate asset's issuer is in the verified registry. Omitted
+	// when there is nothing to report, so absence is not read as "checked,
+	// nothing found". These are exactly the shared check results the
+	// corridor-level findings block carries (checks.FindingsJSON) and carry
+	// no arithmetic weight: the rung's quote verdict and loss above are
+	// computed without them.
+	//
+	// Null on a stale replay: runstore.Rung stores the path's description
+	// string and has no home for its hop assets (widening the record is a
+	// schema migration), so a history-served rung cannot re-derive these.
+	// Null means "not recorded", never "no unverified issuers".
+	Findings *checks.FindingsJSON `json:"findings,omitempty"`
 }
 
 // LedgerRangeJSON is the span of ledgers a ladder's rungs were observed at.
@@ -602,6 +616,10 @@ func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) Corrid
 		}
 		if len(r.Decomposition.Parts) > 0 {
 			rj.Cost = ToCostBlockJSON(r.Decomposition)
+		}
+		if r.Findings != nil {
+			f := r.Findings.ToJSON()
+			rj.Findings = &f
 		}
 		out.Rungs = append(out.Rungs, rj)
 	}

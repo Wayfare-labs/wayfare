@@ -351,6 +351,25 @@ func TestImpostorSameCodeDifferentIssuerNotFound(t *testing.T) {
 	}
 }
 
+// TestIsVerifiedIssuer pins the issuer-scoped registry lookup. Every
+// registered entry's issuer is verified; a lookalike account reusing a known
+// code is not, and an empty issuer is never verified by default.
+func TestIsVerifiedIssuer(t *testing.T) {
+	for _, e := range Registry() {
+		if !IsVerifiedIssuer(e.Issuer) {
+			t.Errorf("IsVerifiedIssuer(%q) = false for registered %s", e.Issuer, e.Code)
+		}
+	}
+
+	impostor := "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF5"
+	if IsVerifiedIssuer(impostor) {
+		t.Errorf("IsVerifiedIssuer(%q) = true for an unregistered account", impostor)
+	}
+	if IsVerifiedIssuer("") {
+		t.Error("IsVerifiedIssuer(\"\") = true; an absent issuer has not been verified")
+	}
+}
+
 // TestIssuerConcentration verifies that the shared issuer behind NGNC, GHSC,
 // and KESC is identified as a concentration. LinkIOIssuer backs three
 // corridors; all other issuers in the registry back at most one corridor

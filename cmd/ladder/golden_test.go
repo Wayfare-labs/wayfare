@@ -81,6 +81,21 @@ func replayGoldenLadder(t *testing.T) *route.LadderResult {
 	if failed := erroredRungs(result); len(failed) > 0 {
 		t.Fatalf("replay errored at sizes %v; the snapshot no longer answers every request", failed)
 	}
+	// Per-rung findings stamp the wall clock as they are derived; pin them as
+	// goldenFindings pins the corridor-level block.
+	at := goldenClock.Add(-90 * time.Second)
+	for i := range result.Rungs {
+		f := result.Rungs[i].Findings
+		if f == nil {
+			continue
+		}
+		for j := range f.Checks {
+			f.Checks[j].At = at
+			for k := range f.Checks[j].Evidence {
+				f.Checks[j].Evidence[k].ObservedAt = at
+			}
+		}
+	}
 	return result
 }
 

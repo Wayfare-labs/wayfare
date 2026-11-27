@@ -298,6 +298,14 @@ var (
 	fiatPegs    = make(map[string]string)
 	homeDomains = make(map[string]string)
 	entries     = make(map[string]Entry)
+
+	// verifiedIssuers is the set of issuing accounts named by the registry.
+	// It answers a different question from entries: not "is this exact
+	// code-and-issuer pair registered?" but "is this account one Wayfare
+	// has verified at all?". A path can route through an unregistered code
+	// issued by a verified issuer, and a lookalike code from an unknown
+	// account is the case the registry exists to catch.
+	verifiedIssuers = make(map[string]struct{})
 )
 
 func init() {
@@ -314,6 +322,7 @@ func init() {
 			homeDomains[e.Issuer] = e.HomeDomain
 		}
 		entries[e.Code+":"+e.Issuer] = e
+		verifiedIssuers[e.Issuer] = struct{}{}
 	}
 }
 
@@ -375,6 +384,23 @@ func PYUSD() Asset { return Stellar("PYUSD", PaxosIssuer) }
 func Lookup(code string) (Asset, bool) {
 	a, ok := known[strings.ToUpper(strings.TrimSpace(code))]
 	return a, ok
+}
+
+// IsVerifiedIssuer reports whether an issuing account appears in the verified
+// registry.
+//
+// It is deliberately issuer-scoped rather than pair-scoped. A path can route
+// through a registered issuer's asset whose code is not itself registered
+// (the registry names a fixed set of tokens, not everything an account may
+// issue), and the counterparty risk a hop carries is the issuer's, not the
+// code's. An unknown or empty issuer is never verified rather than guessed
+// from a code — anyone can issue a token called "USDC".
+func IsVerifiedIssuer(issuer string) bool {
+	if issuer == "" {
+		return false
+	}
+	_, ok := verifiedIssuers[issuer]
+	return ok
 }
 
 // LookupEntry returns the registration record for a given asset.

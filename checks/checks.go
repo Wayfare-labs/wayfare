@@ -204,6 +204,18 @@ type Subject struct {
 	// say so explicitly in its evidence; the substitution is never silent.
 	Underlying asset.Asset
 
+	// Intermediates are the intermediate assets of one priced path, in
+	// execution order, when the caller is examining that path rather than
+	// the corridor or a single asset. They exclude Send and Receive: the
+	// endpoints are the corridor under test, while the hops between them
+	// are the parties a route silently depends on.
+	//
+	// Empty means no path was recorded, which is genuinely different from a
+	// path with no intermediate assets (a direct market). A check that
+	// needs hops reports undetermined on the empty slice rather than
+	// treating "no path" as "nothing to report".
+	Intermediates []asset.Asset
+
 	// ReferenceAgreement records how two reference providers related on the
 	// pair that would score this corridor. "MALFUNCTION" means the two
 	// disagreed so far apart that neither is trustworthy, and no derived

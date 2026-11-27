@@ -10,6 +10,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
 )
@@ -65,6 +66,19 @@ type Rung struct {
 	// rung failed before it was priced, or the lookup failed — and is never
 	// rendered as ledger 0.
 	Ledger int64
+
+	// Findings are counterparty facts observed on this rung's best path:
+	// today, that an intermediate asset's issuer is not in the verified
+	// registry. They are derived from the hop data already present on the
+	// priced path, cost no upstream request, and are attached after the quote
+	// has been scored. Nil when every intermediate is native or issued by a
+	// verified account, so an absent block means "nothing to report" rather
+	// than "checked, nothing found".
+	//
+	// They never move the rung's verdict, loss or integrity: those are
+	// computed from pathfinding and the reference rate without reference to
+	// any check, and nothing here can reach them (ADR 002).
+	Findings *checks.Findings
 }
 
 // LedgerRange is the span of ledgers a ladder's rungs were observed at.
@@ -631,6 +645,12 @@ func (l *LadderResult) summarise() {
 			}
 		}
 
+		// The best path's intermediate issuers are a counterparty fact about
+		// this rung. Computed from hop data already returned by pathfinding,
+		// and deliberately after scoring: no check result can influence the
+		// verdict it is reported beside.
+		l.Rungs[i].Findings = rungFindings(q)
+
 		// The decomposition answers "where did the money go" for this
 		// size — the per-quote component breakdown behind the single loss
 		// percentage, computed against the corridor's reference mid.
@@ -682,6 +702,32 @@ func (l *LadderResult) summarise() {
 	l.Curve = l.buildCurve()
 	l.computeMarginalCosts()
 	l.Finding = l.finding(anyPriced, firstErr)
+}
+
+// rungFindings reports counterparty facts about a priced path's intermediate
+// assets, or nil when there is nothing to report.
+//
+// Only a determined failure is attached. A pass and an undetermined result are
+// dropped rather than published as an empty findings block: every rung of every
+// corridor would otherwise grow a block saying nothing was found, which reads
+// as a claim in its own right and would bury the rungs that do have a fact.
+// The check itself is still exercised directly by the checks package tests.
+func rungFindings(q Quote) *checks.Findings {
+	if len(q.Hops) == 0 {
+		return nil
+	}
+	s := checks.Subject{
+		Send:          q.SendAsset,
+		Receive:       q.ReceiveAsset,
+		Intermediates: q.Hops,
+	}
+	res := checks.Run(context.Background(), checks.UnverifiedIntermediates{}, s)
+	if !res.Failed() {
+		return nil
+	}
+	f := &checks.Findings{}
+	f.Add(res)
+	return f
 }
 
 // finding states what the ladder shows, in the terms a reader needs.
