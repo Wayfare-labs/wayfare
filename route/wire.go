@@ -5,6 +5,7 @@ import (
 
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/checks"
+	"github.com/Wayfare-labs/wayfare/refrate"
 )
 
 // Wire types for a measured corridor. These are the single JSON contract
@@ -169,7 +170,8 @@ type CorridorJSON struct {
 	// corridor such as USDC -> PYUSD, benchmarked USD/USD = 1 with no
 	// provider consulted. A client must not present a definitional mid as a
 	// market observation; loss against it is deviation from par. See
-	// docs/adr-same-peg-corridors.md.
+	// docs/adr-same-peg-corridors.md. It is "unknown" when no reference was
+	// obtained.
 	ReferenceKind string `json:"reference_kind"`
 
 	// The cross-check between reference providers.
@@ -485,6 +487,16 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 // the caller. It exists so a producer with an injectable clock (cmd/ladder's
 // golden test, issue #668) can render the exact bytes it ships without the
 // wall clock leaking into them; every other field is identical.
+// ReferenceKindOf names how reference_mid was obtained. A ladder that
+// obtained no reference has no source, and its kind is unknown rather than
+// defaulting to observed.
+func ReferenceKindOf(source string, kind refrate.Kind) string {
+	if source == "" {
+		return "unknown"
+	}
+	return kind.String()
+}
+
 func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) CorridorJSON {
 	out := CorridorJSON{
 		SendAsset:          ToAssetJSON(l.Request.SendAsset),
@@ -494,7 +506,7 @@ func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) Corrid
 		ReferenceMid:       l.ReferenceMid.String(),
 		ReferenceSource:    l.ReferenceSource,
 		ReferencePair:      pair,
-		ReferenceKind:      l.Reference.Kind.String(),
+		ReferenceKind:      ReferenceKindOf(l.Reference.Source, l.Reference.Kind),
 		ReferenceAgreement: l.Reference.Agreement.String(),
 		ReferenceNote:      l.Reference.Note,
 		Scored:             l.Reference.Scorable(),

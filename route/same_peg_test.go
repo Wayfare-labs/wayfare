@@ -160,8 +160,13 @@ func TestSamePegWireNamesTheReferenceKind(t *testing.T) {
 		t.Error("reference_note is empty; a client needs the reason the mid is 1")
 	}
 
-	fx := ToCorridorJSON(&LadderResult{}, "USD/NGN")
+	// No reference was obtained, so its kind is unknown, not observed.
+	none := ToCorridorJSON(&LadderResult{}, "USD/NGN")
+	if none.ReferenceKind != "unknown" {
+		t.Errorf("reference_kind with no reference = %q, want unknown", none.ReferenceKind)
+	}
+	fx := ToCorridorJSON(&LadderResult{Reference: refrate.Rate{Source: "exchangerate-api"}}, "USD/NGN")
 	if fx.ReferenceKind != "observed" {
-		t.Errorf("default reference_kind = %q, want observed", fx.ReferenceKind)
+		t.Errorf("provider reference_kind = %q, want observed", fx.ReferenceKind)
 	}
 }
