@@ -141,7 +141,9 @@ func (r *Runner) metrics(c Corridor) []Metric {
 //
 // PriceImpactMetric and DepthMetric.RunExecutable are excluded on purpose: both
 // sweep pathfinding at every probed size, and repeating a ladder that was just
-// priced is a cost a caller should opt into rather than inherit.
+// priced is a cost a caller should opt into rather than inherit. Exit
+// liquidity is included: it prices two reverse rungs and is the one extra
+// upstream cost a sender should always see attached to the forward corridor.
 func (r *Runner) DefaultMetrics(c Corridor) []Metric {
 	d := r.dex()
 	return []Metric{
@@ -149,10 +151,12 @@ func (r *Runner) DefaultMetrics(c Corridor) []Metric {
 		ConcentrationMetric{DEX: d},
 		DepthMetric{DEX: d},
 		DeviationMetric{DEX: d, Reference: c.Reference},
+		ImbalanceMetric{DEX: d, Reference: c.Reference},
 		FloorLossMetric{
 			Size: c.FloorSize, EffectiveRate: c.FloorEffectiveRate,
 			Reference: c.Reference,
 		},
+		ExitLiquidityMetric{DEX: d, Reference: c.Reference},
 	}
 }
 

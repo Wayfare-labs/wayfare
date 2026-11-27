@@ -1,6 +1,6 @@
 # Docs index
 
-154 documents in `docs/`, grouped by primary audience. Every file is listed
+155 documents in `docs/`, grouped by primary audience. Every file is listed
 exactly once; the grouping reflects who is most likely to need it first.
 
 ---
@@ -43,6 +43,7 @@ exactly once; the grouping reflects who is most likely to need it first.
 | [snapshot-format.md](snapshot-format.md) | On-disk snapshot format |
 | [run-store.md](run-store.md) | The run store: how measurements are persisted |
 | [verify-store.md](verify-store.md) | How to verify a stored run-chain |
+| [chain-head-signatures.md](chain-head-signatures.md) | Sigstore signatures over exported chain heads and how to verify them |
 | [embedded-history.md](embedded-history.md) | The embedded history bundle shipped with the binary |
 | [upstream-failures.md](upstream-failures.md) | Upstream failure shapes and what each one means |
 | [live-measurement-failures.md](live-measurement-failures.md) | When a live measurement fails locally |

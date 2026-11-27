@@ -172,6 +172,57 @@ func csvRow(r *runstore.Record) []string {
 	}
 }
 
+// exportChainHeads exports the current chain head for each corridor as JSON.
+func exportChainHeads(store runstore.Store, w io.Writer, logger *slog.Logger) int {
+	if store == nil {
+		logger.Error("-export-chain-heads requires a store; none is configured")
+		return 2
+	}
+
+	ctx := context.Background()
+	corridors, err := store.Corridors(ctx)
+	if err != nil {
+		logger.Error("listing corridors", "error", err)
+		return 1
+	}
+
+	type chainHead struct {
+		Corridor   string `json:"corridor"`
+		Seq        int64  `json:"seq"`
+		Hash       string `json:"hash"`
+		RecordedAt string `json:"recorded_at"`
+	}
+
+	var heads []chainHead
+	for _, c := range corridors {
+		latest, err := store.Latest(ctx, c)
+		if err != nil {
+			logger.Error("reading latest record", "corridor", c, "error", err)
+			return 1
+		}
+		if latest == nil {
+			continue
+		}
+		heads = append(heads, chainHead{
+			Corridor:   latest.Corridor,
+			Seq:        latest.Seq,
+			Hash:       latest.Hash,
+			RecordedAt: latest.RecordedAt.UTC().Format(time.RFC3339),
+		})
+	}
+
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(heads); err != nil {
+		logger.Error("encoding chain heads", "error", err)
+		return 1
+	}
+
+	logger.Info("exported chain heads", "corridors", len(heads))
+	return 0
+}
+
 // exportStaticSnapshot writes a static corridors.json snapshot of all corridors
 // to the given file path. This is the wire shape for the corridors.json file
 // published on every sweep (issue #691).
