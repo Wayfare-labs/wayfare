@@ -411,7 +411,7 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 		return nil, fmt.Errorf("route: send amount must be positive, got %s", req.SendAmount)
 	}
 
-	ref, err := e.RefRate.Rate(ctx, req.ReferenceBase, req.ReferenceQuote)
+	ref, err := e.reference(ctx, req.ReferenceBase, req.ReferenceQuote)
 	if err != nil {
 		return nil, fmt.Errorf("route: reference rate unavailable: %w", err)
 	}
@@ -513,11 +513,29 @@ func (e *Engine) quoteWith(ctx context.Context, req Request, ref refrate.Rate, p
 	return res, nil
 }
 
+// reference selects the benchmark for a request.
+//
+// A same-peg pair (USD/USD for USDC -> PYUSD) is answered with the
+// definitional identity rate and no provider is consulted: there is no FX
+// market between a currency and itself to observe, and a feed's echo of its
+// own base currency would be labelled as an observation it is not. Loss on
+// such a corridor is therefore deviation from par. Every other pair goes to
+// the configured provider exactly as before. The decision and the rejected
+// alternatives are recorded in docs/adr-same-peg-corridors.md.
+func (e *Engine) reference(ctx context.Context, base, quote string) (refrate.Rate, error) {
+	if refrate.SamePeg(base, quote) {
+		return refrate.Identity(base, quote)
+	}
+	return e.RefRate.Rate(ctx, base, quote)
+}
+
 // parallelAgainst fetches the optional parallel reference exactly once for a
 // quote or ladder. A failed parallel provider is represented in the result,
 // never promoted into a failure of the official measurement.
 func (e *Engine) parallelAgainst(ctx context.Context, ref refrate.Rate) *refrate.Parallel {
-	if e.Parallel == nil {
+	// A parallel market for a currency against itself does not exist, so the
+	// dimension is left off rather than reported as a failed lookup.
+	if e.Parallel == nil || ref.Definitional() {
 		return nil
 	}
 	p := refrate.ParallelAgainst(ctx, e.Parallel, ref)

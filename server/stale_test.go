@@ -660,3 +660,24 @@ func TestUIRendersMetrics(t *testing.T) {
 		t.Error("the UI does not say that metrics carry no threshold")
 	}
 }
+
+// TestStaleJSONRecoversDefinitionalReferenceKind pins that a stored same-peg
+// reading, which carries no kind field, reads back as definitional rather
+// than being presented as an observed market rate.
+func TestStaleJSONRecoversDefinitionalReferenceKind(t *testing.T) {
+	rec := runstore.Record{
+		Corridor: "USDC->PYUSD", Integrity: "DIRECT",
+		FloorLossPct: "0.00", FloorSize: "0.1",
+		WorstLossPct: "0.00", WorstSize: "5000",
+		Finding: "Par.", Rungs: []runstore.Rung{},
+		Reference: runstore.Reference{Mid: "1", Source: refrate.DefinitionalSource},
+	}
+	if got := staleJSON(&rec, "USD/USD", time.Now().UTC()).ReferenceKind; got != "definitional" {
+		t.Errorf("reference_kind = %q, want definitional", got)
+	}
+
+	rec.Reference = runstore.Reference{Mid: "1350.2568", Source: "currency-api"}
+	if got := staleJSON(&rec, "USD/NGN", time.Now().UTC()).ReferenceKind; got != "observed" {
+		t.Errorf("reference_kind = %q, want observed", got)
+	}
+}

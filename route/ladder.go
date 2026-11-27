@@ -383,7 +383,7 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 		out.summarise()
 		return out, nil
 	}
-	ref, err := e.RefRate.Rate(ctx, req.ReferenceBase, req.ReferenceQuote)
+	ref, err := e.reference(ctx, req.ReferenceBase, req.ReferenceQuote)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			setUnmeasured(ctxErr)

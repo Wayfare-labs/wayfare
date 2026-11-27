@@ -5,6 +5,7 @@ import (
 
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/checks"
+	"github.com/Wayfare-labs/wayfare/refrate"
 )
 
 // Wire types for a measured corridor. These are the single JSON contract
@@ -163,6 +164,15 @@ type CorridorJSON struct {
 	ReferenceMid    string `json:"reference_mid"`
 	ReferenceSource string `json:"reference_source"`
 	ReferencePair   string `json:"reference_pair"`
+
+	// ReferenceKind is "observed" when reference_mid was read from a
+	// provider, and "definitional" when it holds by definition: a same-peg
+	// corridor such as USDC -> PYUSD, benchmarked USD/USD = 1 with no
+	// provider consulted. A client must not present a definitional mid as a
+	// market observation; loss against it is deviation from par. See
+	// docs/adr-same-peg-corridors.md. It is "unknown" when no reference was
+	// obtained.
+	ReferenceKind string `json:"reference_kind"`
 
 	// The cross-check between reference providers.
 	//
@@ -482,6 +492,16 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 	return ToCorridorJSONAt(l, pair, time.Now())
 }
 
+// ReferenceKindOf names how reference_mid was obtained. A ladder that
+// obtained no reference has no source, and its kind is unknown rather than
+// defaulting to observed.
+func ReferenceKindOf(source string, kind refrate.Kind) string {
+	if source == "" {
+		return "unknown"
+	}
+	return kind.String()
+}
+
 // ToCorridorJSONAt is ToCorridorJSON with the measured_at instant supplied by
 // the caller. It exists so a producer with an injectable clock (cmd/ladder's
 // golden test, issue #668) can render the exact bytes it ships without the
@@ -495,6 +515,7 @@ func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) Corrid
 		ReferenceMid:       l.ReferenceMid.String(),
 		ReferenceSource:    l.ReferenceSource,
 		ReferencePair:      pair,
+		ReferenceKind:      ReferenceKindOf(l.Reference.Source, l.Reference.Kind),
 		ReferenceAgreement: l.Reference.Agreement.String(),
 		ReferenceNote:      l.Reference.Note,
 		Scored:             l.Reference.Scorable(),

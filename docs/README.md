@@ -1,6 +1,6 @@
 # Docs index
 
-154 documents in `docs/`, grouped by primary audience. Every file is listed
+157 documents in `docs/`, grouped by primary audience. Every file is listed
 exactly once; the grouping reflects who is most likely to need it first.
 
 ---
@@ -141,6 +141,9 @@ exactly once; the grouping reflects who is most likely to need it first.
 | [account-level-concentration-research.md](account-level-concentration-research.md) | Can account-level concentration be measured at all? |
 | [ecosystem-mapping.md](ecosystem-mapping.md) | Mapping the Stellar ecosystem projects Wayfare could inform |
 | [research-measurement-noise.md](research-measurement-noise.md) | How much does a rung move between back-to-back measurements? |
+| [research-EURMTL.md](research-EURMTL.md) | Corridor research: USDC → EURMTL (euro) |
+| [research-ARS.md](research-ARS.md) | Corridor research: USDC → ARS (Argentine peso) |
+| [adr-same-peg-corridors.md](adr-same-peg-corridors.md) | ADR: what a USD→USD corridor measures |
 | [spike-measured-intervals.md](spike-measured-intervals.md) | Spike: representing a measured figure with an interval |
 | [research-remittance-benchmark.md](research-remittance-benchmark.md) | Research: Wayfare loss versus published remittance prices |
 | [research-moneygram-cashout-observability.md](research-moneygram-cashout-observability.md) | Research: MoneyGram Stellar cash-out observability |
