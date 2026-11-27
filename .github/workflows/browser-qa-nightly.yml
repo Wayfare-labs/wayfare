@@ -1,0 +1,97 @@
+# Run the full browser QA matrix nightly (issue #644).
+#
+# Covers every harness script: error-paths, cross-browser, mobile,
+# color-schemes, error-preservation, and state-legibility.
+# The accessibility and contrast audits are handled by qa-accessibility.yml.
+#
+# No live network is used: all three server instances run against embedded
+# history or a closed/black-holed port, never a real Horizon node.
+
+name: browser-qa-nightly
+
+on:
+  schedule:
+    # Run nightly at 02:00 UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.22"
+  NODE_VERSION: "22"
+
+jobs:
+  browser-qa-full:
+    name: Browser QA full matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: docs/qa/browser/package-lock.json
+
+      - name: install browser dependencies
+        run: |
+          cd docs/qa/browser
+          npm ci
+          npx playwright install --with-deps
+
+      - name: start test servers
+        run: |
+          ./docs/qa/browser/servers.sh start
+
+      - name: run error-paths
+        run: |
+          cd docs/qa/browser
+          npm run error-paths
+
+      - name: run cross-browser
+        run: |
+          cd docs/qa/browser
+          npm run cross-browser
+
+      - name: run mobile
+        run: |
+          cd docs/qa/browser
+          npm run mobile
+
+      - name: run color-schemes
+        run: |
+          cd docs/qa/browser
+          npm run color-schemes
+
+      - name: run error-preservation
+        run: |
+          cd docs/qa/browser
+          npm run error-preservation
+
+      - name: run state-legibility
+        run: |
+          cd docs/qa/browser
+          npm run state-legibility
+
+      - name: stop test servers
+        if: always()
+        run: |
+          ./docs/qa/browser/servers.sh stop
+
+      - name: upload screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-qa-nightly-results-${{ github.run_id }}
+          path: docs/qa/browser/results/
+          retention-days: 30
+          if-no-files-found: ignore
