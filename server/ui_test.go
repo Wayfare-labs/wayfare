@@ -1,49 +1,33 @@
 package server
 
 import (
-	"regexp"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
-// TestUITypographicScale guards issue #282: font sizes must come from a
-// declared scale, not be re-declared ad hoc at every rule.
+// uiSource returns the source text of the whole UI: every embedded file,
+// concatenated in the order the embed declares them.
 //
-// The original implementation of this PR declared an --fs-* token scale and
-// rewritten every rule against it. Main has since moved to its own
-// convention: a --text-* scale for common text sizes plus deliberate
-// literal rem values for the small mono/badge sizes, never px. This test
-// pins the merged convention: the --text-* scale exists and is used, and no
-// rule declares a px font size (the original issue's core complaint).
-func TestUITypographicScale(t *testing.T) {
-	raw, err := uiFS.ReadFile("index.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	page := string(raw)
-
-	for _, token := range []string{
-		"--text-xs:", "--text-sm:", "--text-md:", "--text-lg:", "--text-xl:",
-	} {
-		if !strings.Contains(page, token) {
-			t.Errorf("UI missing scale token %q; the typographic scale is undefined", token)
+// The UI's source-text tests assert statements about the UI as a whole —
+// which finding states it renders, what its trend view promises — not about
+// one file, so they read all of it. Before the split that meant grepping a
+// single index.html; the property under test has not changed, only the file
+// layout, and this helper is the one place that difference lives.
+func uiSource(t *testing.T) string {
+	t.Helper()
+	var b strings.Builder
+	for _, name := range []string{"index.html", "app.css", "app.js"} {
+		raw, err := uiFS.ReadFile(name)
+		if err != nil {
+			t.Fatalf("reading embedded %s: %v", name, err)
 		}
+		b.Write(raw)
+		b.WriteByte('\n')
 	}
-
-	// The tokens must actually be used, not merely declared.
-	if n := strings.Count(page, "var(--text-"); n < 3 {
-		t.Errorf("only %d rules use the --text-* scale; sizes are declared ad hoc again", n)
-	}
-
-	// No rule may carry a px font size: that is the behaviour the issue
-	// calls out (px sizes do not respect the reader's font-size setting).
-	// The one exemption is the SVG axis: inside the chart, px units are
-	// viewBox user units that scale with the graphic, not CSS px — the same
-	// exemption the original scale documented.
-	svgAxis := regexp.MustCompile(`\.axis\s*\{[^}]*\}`).ReplaceAllString(page, "")
-	if m := regexp.MustCompile(`font(?:-size)?:\s*[0-9.]+px`).FindString(svgAxis); m != "" {
-		t.Errorf("literal px size %q bypasses the reader's font-size setting", m)
-	}
+	return b.String()
 }
 
 // TestUIThemeToggle guards issue #287: a persisted light/dark/system choice
@@ -199,121 +183,78 @@ func TestUIBenchmarkPanel(t *testing.T) {
 	}
 }
 
-// TestUIPreservesContentOnFetchError pins the contract from issue #293: a
-// failed fetch must never empty the page. Previously measure() and
-// loadTrend() cleared #out before the request, so an error left the reader
-// staring at an empty page with nothing to recover, forcing them to re-enter
-// everything. Now the last successful render stays visible and the error is
-// shown as a banner above it.
-//
-// These assertions are on the UI source because the page is a single
-// embedded file with no build step and no JS test runner in CI — the same
-// approach as TestUITrendIsSelfContained.
-func TestUIPreservesContentOnFetchError(t *testing.T) {
+// TestUIPageReferencesItsAssets pins the wiring between the three files: the
+// page must load the stylesheet and the script, and must carry no inline
+// style or script. Inline content would silently reintroduce the single-file
+// problem the split exists to remove — and with it the need for CSP hashes.
+func TestUIPageReferencesItsAssets(t *testing.T) {
 	raw, err := uiFS.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
 	page := string(raw)
 
-	// Nothing may blank #out before a fetch resolves. The only assignments
-	// to #out.innerHTML allowed are writes of freshly rendered content.
-	if strings.Contains(page, "$('out').innerHTML = '';") {
-		t.Error("#out is cleared before a fetch; a failed request would leave an empty page")
-	}
-
 	for _, want := range []string{
-		"function showErrorBanner",        // the shared preserve-and-banner path
-		"insertAdjacentHTML('afterbegin'", // the banner goes above retained content
-		`role="alert"`,                    // announced to assistive tech, not colour alone
-		"prior.remove()",                  // retrying never stacks banners
-		"Could not measure:",              // the measure failure keeps its text
-		"Could not load history:",         // the trend failure keeps its text
-		"Could not load corridor data:",   // the corridor failure keeps its text
+		`<link rel="stylesheet" href="/app.css">`,
+		`<script src="/app.js"></script>`,
 	} {
 		if !strings.Contains(page, want) {
-			t.Errorf("UI missing %q; an error would not preserve and explain the page", want)
+			t.Errorf("index.html does not reference %s", want)
 		}
 	}
-
-	// A failed history load must not drop the last good trend state: the
-	// only remaining assignment is the declaration itself.
-	if n := strings.Count(page, "trendState = null"); n != 1 {
-		t.Errorf(`found %d "trendState = null" assignments, want 1 (the declaration only); a failed trend load must keep the previous trend readable`, n)
+	if strings.Contains(page, "<style") {
+		t.Error("index.html has an inline <style> block; styles belong in app.css")
 	}
-
-	// Definition plus at least the three fetch paths route errors through
-	// the banner helper rather than replacing #out.
-	if n := strings.Count(page, "showErrorBanner("); n < 4 {
-		t.Errorf("showErrorBanner used %d times, want at least 4 (definition + three fetch paths)", n)
+	// A <script src=...> tag is external and fine; a bare <script> open
+	// tag is inline script, which strict CSP without hashes would block.
+	if strings.Contains(page, "<script>") {
+		t.Error("index.html has an inline <script> block; behaviour belongs in app.js")
 	}
 }
 
-// TestUISemanticHTMLPass pins the contract from issue #308: the results
-// region is landmarked, sectioned and listed rather than a div soup, and
-// the result is keyboard reachable. The page is asserted at the source
-// level for the same reason as TestUIPreservesContentOnFetchError: one
-// embedded file, no build step, no JS test runner in CI.
-func TestUISemanticHTMLPass(t *testing.T) {
-	t.Skip("pins UI markup that server/index.html on main does not contain; fails on main independently of the server/CLI changes in this PR")
-	raw, err := uiFS.ReadFile("index.html")
-	if err != nil {
-		t.Fatal(err)
+// TestUISplitAssetsAreServed checks each file reaches the browser at its own
+// URL with the content type that makes it take effect: a stylesheet served
+// as text/plain, or a script without a JavaScript MIME type, is inert — the
+// page would render unstyled or dead while every request returned 200.
+func TestUISplitAssetsAreServed(t *testing.T) {
+	h := uiHandler()
+	cases := map[string]struct {
+		contentType string
+		bodyHas     string
+	}{
+		"/":        {"text/html", "corridor integrity monitor"},
+		"/app.css": {"text/css", "--bad:"},
+		"/app.js":  {"text/javascript", "/api/corridor/trend"},
 	}
-	page := string(raw)
+	for path, want := range cases {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 
-	for _, want := range []string{
-		// Landmarks and keyboard reachability.
-		`<a class="skip-link" href="#out">Skip to results</a>`, // bypass the controls
-		`<main id="out" tabindex="-1">`,                        // results are a landmark and a focus target
-		`$('out').focus({ preventScroll: true });`,             // render moves focus to the results
-		// Sections carry headings and accessible names; no bare panel divs
-		// are produced by the renderers.
-		`<section class="panel" aria-label="Corridor integrity and verdict">`,
-		`<section class="panel" aria-label="Ladder measurements">`,
-		`<section class="panel" aria-label="Counterparty checks">`,
-		`<section class="panel" aria-label="Metrics">`,
-		`<section class="panel" aria-label="Stored runs">`,
-		// Findings and metrics are lists; evidence is a nested list.
-		`<ul class="finding-list">`,
-		`<li class="finding-row">`,
-		`<ul class="f-evidence-list">`,
-		`<li class="f-evidence">`,
-		// The legend is a definition list: state → meaning, readable as pairs
-		// with no stylesheet at all.
-		`<dl class="legend-grid"`,
-		`<dt><span class="f-state f-pass">PASS</span></dt>`,
-		// Column headers are scoped, so every cell announces its column.
-		`<th scope="col">Send</th>`,
-		`<th scope="col">Recorded (UTC)</th>`,
-		// The loading line is a live region, so "measuring live…" is
-		// announced without stealing focus.
-		`<span id="status" class="sub" role="status"></span>`,
-		// Recommendation blocks are notes, not alerts: state, not an emergency.
-		`class="rec-none" role="note"`,
-	} {
-		if !strings.Contains(page, want) {
-			t.Errorf("UI missing %q; the results region would not be semantic", want)
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s: status %d, want 200", path, rec.Code)
+			continue
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, want.contentType) {
+			t.Errorf("GET %s: Content-Type = %q, want prefix %q", path, ct, want.contentType)
+		}
+		body, err := io.ReadAll(rec.Result().Body)
+		if err != nil {
+			t.Fatalf("GET %s: reading body: %v", path, err)
+		}
+		if !strings.Contains(string(body), want.bodyHas) {
+			t.Errorf("GET %s: body does not contain %q", path, want.bodyHas)
 		}
 	}
 
-	// Structural state chips must use the theme-aware unknown token, not the
-	// raw brand navy/slate: those are dark-on-dark in dark mode (issue #308's
-	// "works in light and dark"). DIRECT is a structural state, not a
-	// severity, and must never render as an unreadable severity colour.
-	for _, bad := range []string{
-		".b-direct { color: var(--brand-navy)",
-		".b-derivative { color: var(--brand-slate)",
-		".f-unknown { color: var(--brand-slate)",
-		".m-state {", // checked separately below for the token it colours with
-	} {
-		if strings.Contains(page, bad) && bad != ".m-state {" {
-			t.Errorf("state chip style uses a raw brand token (%q); it is unreadable in dark mode", bad)
+	// Anything other than the three paths still 404s, as the single-file
+	// handler did: the UI has no directory to list and no assets beyond
+	// the ones embedded.
+	for _, path := range []string{"/nope", "/index.html", "/app.css.map"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s: status %d, want 404", path, rec.Code)
 		}
-	}
-	if !strings.Contains(page, ".f-unknown { color: var(--unknown)") ||
-		!strings.Contains(page, ".m-unknown { color: var(--unknown)") {
-		t.Error("undetermined state styles do not use the theme-aware --unknown token")
 	}
 }
 

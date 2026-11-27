@@ -220,7 +220,7 @@ deterministic measurements, and answers no on the evidence the repository has:
               ┌──────────────┴───────────────┐
               ▼                              ▼
      monitor.Scheduler                 server.Server
-     every 6h, headless                /api/corridor, single-file UI
+     every 6h, headless                /api/corridor, embedded UI
               │                              │ on failure: last stored run,
               ▼                              │ labelled live:false
      runstore ── hash-chained NDJSON ◀───────┘
@@ -455,7 +455,7 @@ What verification looks like — including broken-chain output: **[docs/verify-s
 | `runstore` | Hash-chained measurement history |
 | `monitor` | Scheduled measurement, independent of HTTP |
 | `snapshot` | Record and replay upstream responses |
-| `server` | HTTP surface and the embedded single-file UI |
+| `server` | HTTP surface and the embedded UI (index.html, app.css, app.js) |
 | `cmd/ladder` | Measurement CLI |
 | `cmd/wayfared` | Server and scheduler |
 | `examples/api-consumer` | Worked example of reading the API correctly |
@@ -519,6 +519,21 @@ Deployment, cost and backup: **[docs/deployment.md](docs/deployment.md)**
 
 ### HTTP API
 
+```
+GET /api/corridor?to=NGNC[&from=USDC][&sizes=1,10,100]
+GET /api/corridor/trend?to=NGNC[&from=USDC][&limit=100]
+GET /api/assets
+GET /healthz
+GET /                            embedded UI (index.html + app.css + app.js),
+                                 no build step
+GET /app.css                     UI stylesheet
+GET /app.js                      UI script
+```
+
+Beyond the contracts above, one field to know: **`live`** is on every response.
+`false` means the reading came from history because a live measurement failed,
+and `stale` then carries its age. With no stored run, the request errors —
+nothing is ever synthesised to fill the gap.
 - [GET /healthz](docs/api.md#get-healthz)
 - [GET /api/assets](docs/api.md#get-apiassets)
 - [GET /api/corridor](docs/api.md#get-apicorridor)
