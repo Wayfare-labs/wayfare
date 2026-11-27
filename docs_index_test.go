@@ -151,7 +151,7 @@ func TestDocsIndexDocCount(t *testing.T) {
 
 	// If this number is wrong after you added or removed a doc, update it
 	// and also update docs/README.md to list the new doc.
-	const wantCount = 154
+	const wantCount = 157
 	if got := len(paths); got != wantCount {
 		sort.Strings(paths)
 		t.Errorf("docs/ contains %d .md files (excluding README.md), want %d; "+

@@ -6,6 +6,31 @@
 
 All on-chain figures below were read live from Horizon (`https://horizon.stellar.org`) on **YYYY-MM-DD**. The reference mid was read from the project's existing rate provider the same day.
 
+## Using the research tool
+
+`cmd/corridor-research` pre-fills the evidence sections below automatically.
+Run it once to get a skeleton with every live fact, source URL and timestamp
+already in place:
+
+```sh
+go run ./cmd/corridor-research CODE ISSUER
+```
+
+For example:
+
+```sh
+go run ./cmd/corridor-research NGNC GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6
+```
+
+The tool fetches the issuer account from Horizon, resolves and verifies
+`stellar.toml`, probes SEP-10, SEP-24 and SEP-38, and measures strict-send
+paths at three sizes (1 / 100 / 1000 USDC) plus the direct order book.
+Redirect its output to a new file, then fill in **Finding & Conclusion** and
+**Recommendation** from the evidence it prints.
+
+The tool never decides the finding — it prints evidence. The researcher writes
+the conclusion.
+
 ---
 
 ## Why this matters
