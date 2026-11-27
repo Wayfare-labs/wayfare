@@ -63,14 +63,14 @@ func TestQuestionsDocQuotesTheCodeItRestsOn(t *testing.T) {
 			quote: "One Horizon call per rung — twelve with route.DefaultSizes, with the thin-liquidity warning derived from those rungs",
 		},
 		{
-			claim: "deployment.md puts a sweep at 'roughly thirty-six Horizon calls'",
+			claim: "deployment.md documents 72 Horizon calls per six-hour registry sweep",
 			file:  "docs/deployment.md",
-			quote: "One sweep is roughly thirty-six Horizon calls across the three corridors",
+			quote: "The six scheduled corridors therefore make **72 Horizon calls per six-hour sweep**",
 		},
 		{
-			claim: "deployment.md puts a sweep at 'near fifty requests every six hours'",
+			claim: "deployment.md estimates about 98 upstream requests every six hours",
 			file:  "docs/deployment.md",
-			quote: "near fifty requests every six hours",
+			quote: "puts the whole sweep at about **98 upstream requests every six hours**. These figures are estimates, not measured live counts.",
 		},
 		{
 			claim: "writeError publishes a machine-readable code alongside the prose",
