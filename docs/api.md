@@ -502,8 +502,9 @@ Errors:
 
 **cURL:**
 
+<!-- api-example: corridor-image -> - -->
 ```bash
-curl -s https://wayfare-cdb9.onrender.com/api/corridor/image?from=USDC&to=NGNC
+curl -s "https://wayfare-cdb9.onrender.com/api/corridor/image?from=USDC&to=NGNC"
 ```
 
 ## `GET /api/chain-heads`
@@ -664,6 +665,7 @@ A successful response contains:
 
 **cURL:**
 
+<!-- api-example: thresholds -> verdict_thresholds,divergence_thresholds -->
 ```bash
 curl -s https://wayfare-cdb9.onrender.com/api/thresholds
 ```
@@ -712,6 +714,7 @@ Errors:
 
 **cURL:**
 
+<!-- api-example: og-corridor-svg -> - -->
 ```bash
 curl -s "https://wayfare-cdb9.onrender.com/og/corridor.svg?from=USDC&to=NGNC"
 ```
@@ -809,6 +812,8 @@ family's label sets are sorted, so two scrapes of a process that observed nothin
 new are byte-identical.
 
 **cURL:**
+
+<!-- api-example: metrics -> - -->
 ```bash
 curl -s https://wayfare-cdb9.onrender.com/metrics
 ```
@@ -1044,6 +1049,8 @@ gates are reported separately because they fail for different reasons and a
 single boolean would hide which.
 
 **cURL:**
+
+<!-- api-example: readyz -> status,checks -->
 ```bash
 curl -s https://wayfare-cdb9.onrender.com/readyz
 ```

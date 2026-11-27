@@ -309,10 +309,17 @@ func newAPIDocsServer(t *testing.T) *httptest.Server {
 		}),
 	}
 
+	// OpenFS walks and verifies every embedded chain, so this records the
+	// same verdict cmd/wayfared records when it serves the embedded history;
+	// without it /readyz would answer 503 and its example could not run.
 	srv := httptest.NewServer((&server.Server{
 		Engine:       engine,
 		Store:        store,
 		HistoryFirst: true,
+		Verification: &server.Verification{
+			ChainVerified: true,
+			Note:          "embedded history verified at open",
+		},
 	}).Handler())
 	t.Cleanup(srv.Close)
 	return srv

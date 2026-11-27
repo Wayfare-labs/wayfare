@@ -40,6 +40,7 @@ monitor                 → asset, checks, failover, metrics, route, runstore, s
 refrate                 → transport
 route                   → asset, checks, dex, refrate, sep38
 runstore                → asset, checks, route, snapshot
+scripts/mutation        →
 scripts/walkthrough-ci  →
 sep38                   → asset
 server                  → analysis, asset, buildinfo, checks, failover, metrics, refrate, route, runstore, transport
@@ -51,6 +52,9 @@ transport               →
 may import from the graph above, and nothing in it may import them.
 `scripts/walkthrough-ci` is a standard-library-only leaf that extracts and
 runs the explicitly annotated offline commands in the first-15-minutes guide.
+`scripts/mutation` is a standard-library-only, `//go:build ignore` leaf that
+applies the pricing-path mutants catalogued for #667 and runs the test suite
+against each.
 
 Neither `monitor` nor `server` imports the other. Measurements pass between
 them only through the hash-chained history on disk. When both run in one
