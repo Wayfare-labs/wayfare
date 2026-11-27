@@ -631,18 +631,22 @@ func (l *LadderResult) summarise() {
 			}
 		}
 
-		// The decomposition answers "where did the money go" for this
-		// size — the per-quote component breakdown behind the single loss
-		// percentage, computed against the corridor's reference mid.
-		l.Rungs[i].Decomposition = Decompose(q, l.ReferenceMid)
+		// The decomposition, floor and worst loss are all measured against
+		// the reference mid, so an unscored benchmark leaves them unknown.
+		if l.Reference.Scorable() {
+			// The decomposition answers "where did the money go" for this
+			// size — the per-quote component breakdown behind the single loss
+			// percentage, computed against the corridor's reference mid.
+			l.Rungs[i].Decomposition = Decompose(q, l.ReferenceMid)
 
-		if l.FloorSize.IsZero() {
-			l.Floor = q.LossPct
-			l.FloorSize = r.SendAmount
-			l.FloorEffectiveRate = q.EffectiveRate
-		}
-		if q.LossPct.GreaterThanOrEqual(l.WorstLoss) {
-			l.WorstLoss, l.WorstSize = q.LossPct, r.SendAmount
+			if l.FloorSize.IsZero() {
+				l.Floor = q.LossPct
+				l.FloorSize = r.SendAmount
+				l.FloorEffectiveRate = q.EffectiveRate
+			}
+			if q.LossPct.GreaterThanOrEqual(l.WorstLoss) {
+				l.WorstLoss, l.WorstSize = q.LossPct, r.SendAmount
+			}
 		}
 
 		// The first acceptable quote on an ascending ladder is also the
