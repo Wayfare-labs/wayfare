@@ -1,0 +1,181 @@
+# Run the browser QA harness (Playwright) against the replay-backed server
+# (issue #644).
+#
+# PR job: smoke subset — error paths + state legibility on chromium only.
+# Nightly job: full matrix — all scripts across all engines.
+#
+# No live network is used: the servers start with -history-first (which serves
+# the embedded history store and answers all deterministic 400s without touching
+# Horizon) or against a closed/blackholed port (downstream-failure simulation).
+# servers.sh also sets up the upstream-down and upstream-slow instances, so the
+# whole state matrix is covered without egress.
+
+name: qa-browser
+
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+    branches: [main]
+  schedule:
+    # Full matrix nightly at 02:00 UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Which suite to run (smoke | full)"
+        required: false
+        default: "smoke"
+
+concurrency:
+  group: "qa-browser-${{ github.event.pull_request.number || github.ref }}"
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.27.4"
+  NODE_VERSION: "22"
+
+jobs:
+  smoke:
+    name: browser QA smoke
+    # Run on PRs and merge-queue entries; skip on the nightly schedule (which
+    # runs the full job below instead).
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || github.event.inputs.suite == 'smoke')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: docs/qa/browser/package-lock.json
+
+      - name: install Node dependencies
+        run: npm ci --prefix docs/qa/browser
+
+      # Cache the Playwright browser binaries so a cold runner does not spend
+      # the full browser download on every PR (the binaries are ~100 MB each).
+      - name: cache Playwright browsers
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('docs/qa/browser/package-lock.json') }}
+          restore-keys: playwright-${{ runner.os }}-
+
+      - name: install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+        working-directory: docs/qa/browser
+
+      - name: install Playwright OS dependencies (cached hit)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+        working-directory: docs/qa/browser
+
+      # Start three server instances against the embedded history store and
+      # simulated-failure addresses. No egress leaves the machine.
+      - name: start QA servers
+        run: ./docs/qa/browser/servers.sh start
+
+      # Smoke: error-paths and state-legibility on chromium only. Covers the
+      # most common regression surface without duplicating the nightly matrix.
+      - name: run error-paths (smoke)
+        run: node run-error-paths.mjs --engine=chromium
+        working-directory: docs/qa/browser
+
+      - name: run state-legibility (smoke)
+        run: node run-state-legibility.mjs --engine=chromium
+        working-directory: docs/qa/browser
+
+      - name: stop QA servers
+        if: always()
+        run: ./docs/qa/browser/servers.sh stop
+
+      - name: upload screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qa-browser-smoke-screenshots
+          path: docs/qa/browser/results/screenshots/
+          if-no-files-found: ignore
+
+  full:
+    name: browser QA full matrix
+    # Full matrix on the nightly schedule and manual workflow_dispatch.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.suite == 'full')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: docs/qa/browser/package-lock.json
+
+      - name: install Node dependencies
+        run: npm ci --prefix docs/qa/browser
+
+      - name: cache Playwright browsers
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('docs/qa/browser/package-lock.json') }}
+          restore-keys: playwright-${{ runner.os }}-
+
+      - name: install Playwright browsers (all engines)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps
+        working-directory: docs/qa/browser
+
+      - name: install Playwright OS dependencies (cached hit)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps
+        working-directory: docs/qa/browser
+
+      - name: start QA servers
+        run: ./docs/qa/browser/servers.sh start
+
+      - name: run full state matrix
+        run: npm run all
+        working-directory: docs/qa/browser
+
+      - name: stop QA servers
+        if: always()
+        run: ./docs/qa/browser/servers.sh stop
+
+      - name: upload screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qa-browser-full-screenshots
+          path: docs/qa/browser/results/screenshots/
+          if-no-files-found: ignore
+
+      - name: upload QA results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qa-browser-full-results
+          path: docs/qa/browser/results/
+          if-no-files-found: ignore
