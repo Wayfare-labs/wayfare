@@ -55,7 +55,8 @@ trust this document. Line numbers are at `74c1f17`.
 
 Asked in [#481](https://github.com/Wayfare-labs/wayfare/issues/481), 2026-09-24.
 **Fixed by [#863](https://github.com/Wayfare-labs/wayfare/issues/863).** The two
-places that disagreed now state the measured count:
+places that disagreed now describe the same per-ladder count and its
+sweep-scale estimate:
 
 `server/api.go:59-64` says:
 
@@ -66,7 +67,7 @@ places that disagreed now state the measured count:
 > // a request actually gets is derived from its rung count (see budgetFor)
 > // and never exceeds this.
 
-`docs/deployment.md:308-312` says:
+`docs/deployment.md:312-318` says:
 
 > The six scheduled corridors therefore make **72 Horizon calls per six-hour sweep**.
 > Allowing roughly four counterparty requests per corridor and two reference-provider calls puts the whole sweep at about **98 upstream requests every six hours**. These figures are estimates, not measured live counts.
