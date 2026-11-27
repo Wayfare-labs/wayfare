@@ -21,6 +21,7 @@ type trendSeed struct {
 	source    string
 	loss      string
 	verdict   string
+	unscored  bool
 
 	// divergencePct is the reference cross-check divergence to store, left
 	// empty for the common case (a SINGLE-provider run has none to report).
@@ -45,7 +46,6 @@ func seedTrendStore(t *testing.T, seeds []trendSeed) runstore.Store {
 				Mid:           s.mid,
 				Source:        s.source,
 				AsOf:          s.at.UTC().Format(time.RFC3339),
-				ScoredAgainst: s.source,
 				DivergencePct: s.divergencePct,
 			},
 			FloorLossPct: s.loss, FloorSize: "0.1",
@@ -57,6 +57,9 @@ func seedTrendStore(t *testing.T, seeds []trendSeed) runstore.Store {
 				ReceiveAmount: "100", EffectiveRate: "1000",
 				LossPct: s.loss, Verdict: s.verdict, Path: "USDC -> NGNC",
 			}},
+		}
+		if !s.unscored {
+			rec.Reference.ScoredAgainst = s.source
 		}
 		if err := st.Append(context.Background(), rec); err != nil {
 			t.Fatalf("seeding run %d: %v", i, err)
@@ -131,6 +134,75 @@ func TestTrendServesHistoryOldestFirst(t *testing.T) {
 		rung := rungs[0].(map[string]any)
 		if rung["send_amount"] != "0.1" || rung["loss_pct"] != seeds[i].loss {
 			t.Errorf("run %d rung = %v, want 0.1 at %s%%", i, rung, seeds[i].loss)
+		}
+	}
+}
+
+func TestTrendOmitsLossesForUnscoredStoredRuns(t *testing.T) {
+	at := time.Date(2026, 11, 25, 1, 0, 0, 0, time.UTC)
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &runstore.Record{
+		RecordedAt:   at,
+		Corridor:     "USDC-NGNC",
+		Integrity:    "DIRECT",
+		DependsOn:    []string{"KESC"},
+		FloorLossPct: "0.00",
+		FloorSize:    "0.1",
+		WorstLossPct: "0.00",
+		WorstSize:    "5000",
+		Reference: runstore.Reference{
+			Mid: "1350", Source: "primary",
+			SecondaryMid: "135", SecondarySource: "secondary",
+			DivergencePct: "900", ScoredAgainst: "primary",
+		},
+		Finding: "No usable size. Loss against the USD/NGN mid is 0.00%. Every size tested is graded Unusable, so nothing is recommended.",
+		Rungs: []runstore.Rung{{
+			SendAmount: "0.1", Priced: true, Integrity: "DIRECT",
+			LossPct: "0", Verdict: "UNKNOWN",
+		}},
+	}
+	if err := st.Append(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	srv := trendServer(t, st)
+
+	status, body := getJSON(t, srv.URL+"/api/corridor/trend?to=NGNC")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %v", status, body)
+	}
+	runs, _ := body["runs"].([]any)
+	if len(runs) != 1 {
+		t.Fatalf("runs = %v, want one run", body["runs"])
+	}
+	run, _ := runs[0].(map[string]any)
+	for _, field := range []string{
+		"floor_loss_pct", "floor_size", "worst_loss_pct", "worst_size",
+		"recommended_size",
+	} {
+		if _, ok := run[field]; ok {
+			t.Errorf("unscored trend run contains %q: %v", field, run[field])
+		}
+	}
+	ref, _ := run["reference"].(map[string]any)
+	if _, ok := ref["scored_against"]; ok {
+		t.Errorf("unscored trend reference contains scored_against: %v", ref)
+	}
+	finding, _ := run["finding"].(string)
+	if strings.Contains(finding, "Unusable") || strings.Contains(finding, "Loss against") ||
+		!strings.Contains(finding, "No verdict") || !strings.Contains(finding, "Depends on KESC") {
+		t.Errorf("legacy unscored trend finding is not safely reconstructed: %q", finding)
+		rungs, _ := run["rungs"].([]any)
+		if len(rungs) != 1 {
+			t.Fatalf("trend rungs = %v, want one rung", run["rungs"])
+		}
+		rung, _ := rungs[0].(map[string]any)
+		for _, field := range []string{"loss_pct", "verdict"} {
+			if _, ok := rung[field]; ok {
+				t.Errorf("unscored trend rung contains %q: %v", field, rung[field])
+			}
 		}
 	}
 }
@@ -727,6 +799,12 @@ func TestTrendDivergenceStatsSkipsRunsWithNoDivergence(t *testing.T) {
 	}
 	if stats["mean_pct"] != "2.0000" {
 		t.Errorf("mean_pct = %v, want 2.0000 (every divergence-bearing run reported 2.00)", stats["mean_pct"])
+	}
+	if stats["first_at"] != "2026-08-01T00:00:00Z" {
+		t.Errorf("first_at = %v, want first divergence timestamp", stats["first_at"])
+	}
+	if stats["last_at"] != "2026-08-08T06:00:00Z" {
+		t.Errorf("last_at = %v, want last divergence timestamp", stats["last_at"])
 	}
 }
 

@@ -100,6 +100,11 @@ Why Stellar-native and what the code uses: **[docs/why-stellar-native.md](docs/w
 Full figures, with timestamps and raw output:
 **[docs/corridor-measurements.md](docs/corridor-measurements.md)**
 
+Off-chain context:
+
+- [Remittance benchmark versus World Bank RPW](docs/research-remittance-benchmark.md)
+- [MoneyGram Stellar cash-out observability](docs/research-moneygram-cashout-observability.md)
+
 Measured live on 2026-08-08 against Horizon pathfinding, three corridors from
 one issuer, all within a 60-second window:
 
@@ -476,7 +481,16 @@ go run ./cmd/wayfared                       # serve + measure every 6h
 go run ./cmd/wayfared -serve=false          # scheduler only, no HTTP
 go run ./cmd/wayfared -verify-store -data ./data
 go run ./cmd/wayfared -export USDC-NGNC -format csv -data ./data > corridor.csv
+
+make build-stamped && ./bin/wayfared -version   # which build produced this
 ```
+
+`-version` names the code commit, the `data/` commit embedded at build time and
+the Go toolchain, each labelled with the source that supplied it, because a
+published figure can only be reproduced against a known build. A value no source
+recorded prints as `unknown` rather than as a guess, which is why the stamp comes
+from `make build-stamped`: `go run` records neither the release stamp nor VCS
+settings, so under `go run` both commits read `unknown (unstamped)`.
 
 `-export` verifies the corridor's hash chain first and refuses to write a CSV
 from a chain that does not reconcile; see
@@ -506,7 +520,7 @@ Deployment, cost and backup: **[docs/deployment.md](docs/deployment.md)**
 ### HTTP API
 
 - [GET /healthz](docs/api.md#get-healthz)
-- [GET /api/assets](docs/api.md#get-api-assets)
+- [GET /api/assets](docs/api.md#get-apiassets)
 - [GET /api/corridor](docs/api.md#get-apicorridor)
 - [GET /api/corridor/trend](docs/api.md#get-apicorridortrend)
 - [GET /api/chain-heads](docs/api.md#get-apichain-heads) — pin the current stored chain tips

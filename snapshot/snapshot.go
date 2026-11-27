@@ -1,4 +1,3 @@
-// Package snapshot records and replays the upstream responses behind one
 // ladder run, so a measurement can be re-read rather than re-taken.
 //
 // # Why raw bytes and not parsed structs
@@ -56,7 +55,7 @@ const Format = "wayfare.snapshot"
 // It is an integer, and a loader refuses any value it does not know rather
 // than parsing on a best-effort basis. The format will change; old snapshots
 // must fail loudly instead of misparsing.
-const Version = 1
+const Version = 2
 
 // ManifestFile is the manifest's name within a snapshot directory.
 const ManifestFile = "manifest.json"
@@ -206,7 +205,7 @@ func Load(dir string) (*Manifest, error) {
 		return nil, fmt.Errorf("snapshot: %s is not a %s directory (format %q)",
 			dir, Format, m.Format)
 	}
-	if m.Version != Version {
+	if m.Version < 1 || m.Version > Version {
 		return nil, fmt.Errorf(
 			"snapshot: %s is format version %d, but this build reads version %d; "+
 				"refusing to parse it rather than risk misreading a recorded measurement",

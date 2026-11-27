@@ -86,10 +86,10 @@ func TestUIThemeToggle(t *testing.T) {
 	}
 }
 
-// TestUIEvidenceDrawer guards issues #294 and #647: evidence is
+// TestUIEvidenceDrawer guards issues #294, #647 and #870: evidence is
 // progressively disclosed rather than dumped, provenance is stated next to
-// the headline, and every check says where its evidence came from and how old
-// the observation is.
+// the headline, every check says where its evidence came from and how old the
+// observation is, and a check without evidence renders no drawer at all.
 //
 // The original #294 implementation built a headline <details> drawer from
 // fields the server did not yet publish (reference_fetched_at,
@@ -129,6 +129,11 @@ func TestUIEvidenceDrawer(t *testing.T) {
 		// Links open with rel=noopener, and only http(s) sources become links.
 		`target="_blank" rel="noopener noreferrer"`,
 		"url.protocol !== 'https:' && url.protocol !== 'http:'",
+		// A check without evidence renders no drawer at all (issue #870):
+		// the whole block is gated on a non-empty evidence list, so an empty
+		// drawer can never claim "evidence exists and is empty".
+		"const evidenceBlock = evidence",
+		"${evidenceBlock}",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("UI missing %q; check evidence would not show its source and age", want)
@@ -322,5 +327,43 @@ func TestUIPrintableCorridorReport(t *testing.T) {
 
 	if strings.Contains(page, "@media print") && strings.Contains(page, "@media print {\n    @import") {
 		t.Error("print layout must not introduce print-time imports")
+	}
+}
+
+// TestComputeScriptHashesNormalizesCRLF guards issue #831: a Windows checkout
+// with core.autocrlf=true embeds CRLF bytes into index.html, while browsers
+// normalize CRLF/CR to LF before checking inline script-src SHA-256 hashes.
+func TestComputeScriptHashesNormalizesCRLF(t *testing.T) {
+	lfHTML := "<!doctype html><html><head><script>\nconst a = 1;\nconst b = 2;\n</script></head></html>"
+	crlfHTML := strings.ReplaceAll(lfHTML, "\n", "\r\n")
+	crHTML := strings.ReplaceAll(lfHTML, "\n", "\r")
+
+	lfHashes := computeScriptHashes([]byte(lfHTML))
+	crlfHashes := computeScriptHashes([]byte(crlfHTML))
+	crHashes := computeScriptHashes([]byte(crHTML))
+
+	if len(lfHashes) != 1 || len(crlfHashes) != 1 || len(crHashes) != 1 {
+		t.Fatalf("unexpected hash counts: lf=%d crlf=%d cr=%d", len(lfHashes), len(crlfHashes), len(crHashes))
+	}
+	if crlfHashes[0] != lfHashes[0] {
+		t.Errorf("CRLF hash %s != LF hash %s", crlfHashes[0], lfHashes[0])
+	}
+	if crHashes[0] != lfHashes[0] {
+		t.Errorf("CR hash %s != LF hash %s", crHashes[0], lfHashes[0])
+	}
+
+	// Also verify both inline <script> blocks in the embedded index.html when
+	// checked out with Windows CRLF line endings.
+	lfEmbedded := strings.ReplaceAll(strings.ReplaceAll(indexHTML(t), "\r\n", "\n"), "\r", "\n")
+	crlfEmbedded := strings.ReplaceAll(lfEmbedded, "\n", "\r\n")
+	gotLF := computeScriptHashes([]byte(lfEmbedded))
+	gotCRLF := computeScriptHashes([]byte(crlfEmbedded))
+	if len(gotLF) < 2 || len(gotCRLF) != len(gotLF) {
+		t.Fatalf("expected >=2 embedded script hashes, got lf=%d crlf=%d", len(gotLF), len(gotCRLF))
+	}
+	for i := range gotLF {
+		if gotCRLF[i] != gotLF[i] {
+			t.Errorf("embedded script[%d] CRLF hash %s != LF hash %s", i, gotCRLF[i], gotLF[i])
+		}
 	}
 }

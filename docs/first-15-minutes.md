@@ -4,10 +4,17 @@ Issue [#227](https://github.com/Wayfare-labs/wayfare/issues/227), backlog
 `#167`.
 
 From a fresh clone to a reproduced measurement in about fifteen minutes. Every
-step either needs no network at all or performs one live measurement, and the
-commands and expected output below were checked against the tree at `c9bfb75`
-on 2026-09-24. If a step's output does not look like what is shown, see
+step either needs no network at all or performs one live measurement. CI runs
+the offline commands explicitly marked `bash walkthrough-ci` below on every
+change; the live measurement remains a manual step. If a step's output does not
+look like what is shown, see
 [docs/troubleshooting.md](troubleshooting.md) before anything else.
+
+The fence info string must be exactly `bash walkthrough-ci`. The
+`scripts/walkthrough-ci` runner executes only its explicit offline command
+allowlist, in document order and without a shell. Unannotated blocks are
+ignored; malformed annotations, empty blocks, and unsupported commands fail.
+CI runs the runner inside the project's no-network test namespace.
 
 The short version: **the whole test suite runs offline from recorded bytes
 (step 2), the recorded store and snapshots reproduce on command (steps 3–4),
@@ -22,8 +29,8 @@ is built on Stellar primitives and what the code uses, see [docs/why-stellar-nat
 
 ## Before you start
 
-- Go 1.22 or later (nothing else is needed for the test suite; `go.mod` pins
-  `go 1.22.2`, CI runs Go 1.22 — `docs/contributor-faq.md`).
+- Go 1.27.4 (the version pinned by `go.mod` and used by CI; see
+  `docs/contributor-faq.md`).
 - Internet access, needed only for step 5 and the checks it runs. Steps 2–4
   are fully offline by design (`docs/offline-testing.md`).
 
@@ -45,7 +52,7 @@ along than the README assumes.
 
 ## Step 2 — run the test suite (offline, no network)
 
-```bash
+```bash walkthrough-ci
 make test
 ```
 
@@ -63,7 +70,7 @@ ok   github.com/Wayfare-labs/wayfare/route
 ```
 
 Nothing should reach out to the network (that would be a bug in the tree). If
-a test fails here, fix your Go version first — a missing `go 1.22` toolchain
+a test fails here, fix your Go version first — a missing pinned Go toolchain
 fails early with a language-version error, not a test failure.
 
 What you have just proven: the arithmetic, verdict thresholds, reference
@@ -73,7 +80,7 @@ bytes. That is the reproducibility claim stated in
 
 ## Step 3 — verify the recorded measurement history (offline)
 
-```bash
+```bash walkthrough-ci
 go run ./cmd/wayfared -verify-store -data ./data
 ```
 
@@ -85,6 +92,7 @@ store holds exactly one record per corridor, so the expected output is:
 ok   USDC-GHSC: 1 records, latest 2026-08-22T12:10:05Z
 ok   USDC-KESC: 1 records, latest 2026-08-22T12:10:09Z
 ok   USDC-NGNC: 1 records, latest 2026-08-22T12:09:59Z
+ok   USDC-NGNT: 1 records, latest 2026-10-17T23:36:46Z
 ```
 
 Exit code `0` means every chain is clean; `1` means a chain is broken and the
@@ -102,7 +110,7 @@ This is the shortest route from "clone" to "a number I re-derived myself".
 network — and derives the hop-composition finding published in
 [docs/native-xlm-routing.md](native-xlm-routing.md):
 
-```bash
+```bash walkthrough-ci
 go run ./cmd/hop-analysis -snapshots ./testdata/snapshots
 ```
 

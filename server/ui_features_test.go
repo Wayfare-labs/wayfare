@@ -1,6 +1,7 @@
 package server
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -109,6 +110,35 @@ func TestUIDownloadLadderCSVAndJSON(t *testing.T) {
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("UI missing download implementation detail %q", want)
+		}
+	}
+}
+
+// TestUINoInlineEventHandlers guards issue #862:
+// uiCSP() serves script-src 'self' 'sha256-...' without 'unsafe-hashes', so
+// any inline event-handler attribute (onclick=, onchange=, etc.) in index.html
+// is blocked by the browser's Content-Security-Policy.
+func TestUINoInlineEventHandlers(t *testing.T) {
+	page := uiHTML(t)
+	tagRe := regexp.MustCompile(`(?is)<[a-z][a-z0-9-]*\b[^>]*>`)
+	inlineAttrRe := regexp.MustCompile(`(?i)\s+on[a-z]+\s*=`)
+
+	for _, tag := range tagRe.FindAllString(page, -1) {
+		if loc := inlineAttrRe.FindString(tag); loc != "" {
+			t.Errorf("server/index.html contains inline event handler %q in tag %s; bind via addEventListener so uiCSP() permits execution",
+				strings.TrimSpace(loc), tag)
+		}
+	}
+
+	for _, want := range []string{
+		`data-action="copy-hash"`,
+		`data-hash="`,
+		`data-action="download-csv"`,
+		`data-action="download-json"`,
+		`$('out').addEventListener('click'`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("server/index.html missing delegated event wiring %q", want)
 		}
 	}
 }

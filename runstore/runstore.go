@@ -1,31 +1,3 @@
-// Package runstore keeps a tamper-evident history of corridor measurements.
-//
-// # Why a hash chain
-//
-// The project's central claim is of the form "measured live on 2026-08-08,
-// USDC to NGNC lost 25.02% at 0.1 USDC". A reader has to take two things on
-// trust: that the measurement happened, and that nobody adjusted it
-// afterwards. The first is what snapshots address. This package addresses the
-// second.
-//
-// Each record carries the hash of the one before it, so a stored history is a
-// chain rather than a pile. Editing any past record — a loss percentage, a
-// timestamp, an integrity state — changes its hash, which breaks every record
-// after it. Verify walks the chain and names the first record that does not
-// reconcile.
-//
-// This does not prove a measurement was correct. It proves the stored history
-// is the one that was written, which is the part a reader cannot otherwise
-// check. A monitor whose past can be quietly rewritten is a monitor whose
-// present cannot be trusted either.
-//
-// # What it is not
-//
-// Not a blockchain and not a distributed ledger. There is one writer and the
-// chain lives in a file. Someone with write access can rewrite the whole chain
-// from any point; what they cannot do is edit one record and leave the rest
-// intact, which is the realistic failure — a number quietly improved long
-// after it was published.
 package runstore
 
 import (
@@ -36,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/route"
@@ -108,6 +82,23 @@ type Reference struct {
 	DiagnosticOutlierDistancePct string `json:"diagnostic_outlier_distance_pct,omitempty"`
 	DiagnosticOtherDistancePct   string `json:"diagnostic_other_distance_pct,omitempty"`
 	DiagnosticReason             string `json:"diagnostic_reason,omitempty"`
+}
+
+// Scorable reports whether a stored reference can support the record's
+// verdicts. Older monitor versions recorded ScoredAgainst even when the
+// cross-check was MALFUNCTION, so the persisted divergence is authoritative
+// for that known-invalid case.
+func (r Reference) Scorable() bool {
+	if r.ScoredAgainst == "" {
+		return false
+	}
+	if r.SecondaryMid == "" && r.SecondarySource == "" {
+		return true
+	}
+	divergence, err := decimal.NewFromString(r.DivergencePct)
+	// Keep runstore independent from refrate (ADR 005). This is the
+	// persisted MALFUNCTION boundary from refrate.DivergenceMalfunction.
+	return err != nil || !divergence.GreaterThan(decimal.NewFromInt(10))
 }
 
 // Rung is one size's stored result.

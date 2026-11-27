@@ -64,6 +64,10 @@ func (s *Server) summaryFor(ctx context.Context) *uiSummary {
 	if err != nil || rec == nil {
 		return nil
 	}
+	floor, worst := rec.FloorLossPct, rec.WorstLossPct
+	if !staleScored(&rec.Reference) {
+		floor, worst = "not scored", "not scored"
+	}
 	age := time.Since(rec.RecordedAt)
 	if age < 0 {
 		age = 0
@@ -71,8 +75,8 @@ func (s *Server) summaryFor(ctx context.Context) *uiSummary {
 	return &uiSummary{
 		Corridor:     defaultCorridorKey,
 		Integrity:    rec.Integrity,
-		FloorLossPct: rec.FloorLossPct,
-		WorstLossPct: rec.WorstLossPct,
+		FloorLossPct: floor,
+		WorstLossPct: worst,
 		RecordedAt:   rec.RecordedAt.UTC().Format(time.RFC3339),
 		Age:          uiHumanAge(age),
 	}
@@ -132,7 +136,11 @@ func computeScriptHashes(html []byte) []string {
 		}
 		content := html[bodyStart : bodyStart+bodyEnd]
 		if len(bytes.TrimSpace(content)) > 0 {
-			h := sha256.Sum256(content)
+			// HTML5 preprocessing normalizes CRLF and CR to LF before hashing
+			// inline <script> text, so normalize before SHA-256 (#831).
+			normalized := bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
+			normalized = bytes.ReplaceAll(normalized, []byte("\r"), []byte("\n"))
+			h := sha256.Sum256(normalized)
 			hashes = append(hashes, fmt.Sprintf("'sha256-%s'", base64.StdEncoding.EncodeToString(h[:])))
 		}
 		idx = bodyStart + bodyEnd + len(closeTag)
@@ -153,6 +161,21 @@ func uiCSP() string {
 			return
 		}
 		hashes := computeScriptHashes(body)
+		var rendered bytes.Buffer
+		if err := uiTemplate.Execute(&rendered, uiPageData{}); err == nil {
+			for _, rh := range computeScriptHashes(rendered.Bytes()) {
+				found := false
+				for _, eh := range hashes {
+					if eh == rh {
+						found = true
+						break
+					}
+				}
+				if !found {
+					hashes = append(hashes, rh)
+				}
+			}
+		}
 		scriptSrc := "'self'"
 		if len(hashes) > 0 {
 			scriptSrc += " " + strings.Join(hashes, " ")
@@ -220,8 +243,14 @@ func socialMetadata(r *http.Request, store runstore.Store) string {
 	if store != nil {
 		record, err := store.Latest(r.Context(), key)
 		if err == nil && record != nil {
-			description = "Recorded " + record.Integrity + " integrity; floor loss " + record.FloorLossPct +
-				"% at " + record.FloorSize + " USDC. Recorded at " + record.RecordedAt.UTC().Format(time.RFC3339Nano) + "."
+			if !staleScored(&record.Reference) {
+				description = "Recorded " + record.Integrity +
+					" integrity; no scored floor loss is available. Recorded at " +
+					record.RecordedAt.UTC().Format(time.RFC3339Nano) + "."
+			} else {
+				description = "Recorded " + record.Integrity + " integrity; floor loss " + record.FloorLossPct +
+					"% at " + record.FloorSize + " USDC. Recorded at " + record.RecordedAt.UTC().Format(time.RFC3339Nano) + "."
+			}
 		}
 	}
 

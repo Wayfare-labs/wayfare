@@ -30,10 +30,20 @@ build-reproducible: ## Build wayfared reproducibly (CGO_ENABLED=0, -trimpath, -b
 
 build-stamped: ## Build all binaries with build provenance stamped via -ldflags
 	@mkdir -p $(BIN)
-	$(GO) build -o $(BIN)/ $(PKGS) \
+	@# Two things this recipe has to get right, and neither is checked by the
+	@# build succeeding:
+	@#  - the flags precede $(PKGS), because `go build` stops parsing flags at
+	@#    the first non-flag argument and would otherwise take -ldflags as an
+	@#    import path ("malformed import path", a non-zero exit);
+	@#  - the stamp values carry no quotes of their own. The whole -ldflags
+	@#    string is already double-quoted, and a shell keeps single quotes
+	@#    inside double quotes literally, so 'abc' would stamp the commit as
+	@#    `'abc'` — a value that matches nothing in `git log`.
+	$(GO) build \
 		-ldflags="-s -w \
-			-X github.com/Wayfare-labs/wayfare/server.codeCommit='$(shell git rev-parse HEAD)' \
-			-X github.com/Wayfare-labs/wayfare/server.dataCommit='$(shell git log -1 --format=%H -- data/)'"
+			-X github.com/Wayfare-labs/wayfare/buildinfo.codeCommit=$(shell git rev-parse HEAD) \
+			-X github.com/Wayfare-labs/wayfare/buildinfo.dataCommit=$(shell git log -1 --format=%H -- data/)" \
+		-o $(BIN)/ $(PKGS)
 
 test: ## Run tests
 	$(GO) test $(PKGS)

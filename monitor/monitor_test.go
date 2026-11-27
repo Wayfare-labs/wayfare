@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/dex"
+	"github.com/Wayfare-labs/wayfare/failover"
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
@@ -27,19 +29,25 @@ func quiet() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+type fixedReference struct {
+	name string
+	mid  string
+}
+
+func (r fixedReference) Name() string { return r.name }
+
+func (r fixedReference) Rate(_ context.Context, base, quote string) (refrate.Rate, error) {
+	return refrate.Rate{
+		Base: base, Quote: quote, Mid: decimal.RequireFromString(r.mid), Source: r.name,
+	}, nil
+}
+
 // schedulerOver builds a scheduler measuring one corridor from a snapshot, so
 // the whole test runs offline.
 func schedulerOver(t *testing.T, prefix string, recv asset.Asset, quote, mid string, store runstore.Store) *Scheduler {
 	t.Helper()
 
-	matches, err := filepath.Glob(filepath.Join("../testdata/snapshots", prefix+"-*"))
-	if err != nil || len(matches) == 0 {
-		t.Skipf("no snapshot matching %q", prefix)
-	}
-	snap, err := snapshot.Load(matches[0])
-	if err != nil {
-		t.Fatalf("loading snapshot: %v", err)
-	}
+	snap := loadSnapshotFixture(t, prefix)
 
 	return &Scheduler{
 		Engine: &route.Engine{
@@ -65,15 +73,7 @@ func schedulerOver(t *testing.T, prefix string, recv asset.Asset, quote, mid str
 // recording.
 func snapshotHTTPClient(t *testing.T, prefix string) *http.Client {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join("../testdata/snapshots", prefix+"-*"))
-	if err != nil || len(matches) == 0 {
-		t.Skipf("no snapshot matching %q", prefix)
-	}
-	snap, err := snapshot.Load(matches[0])
-	if err != nil {
-		t.Fatalf("loading snapshot: %v", err)
-	}
-	return snap.HTTPClient()
+	return loadSnapshotFixture(t, prefix).HTTPClient()
 }
 
 // TestRunOnceWritesOneRecordPerCorridor is the scheduler's basic contract.
@@ -109,6 +109,41 @@ func TestRunOnceWritesOneRecordPerCorridor(t *testing.T) {
 	}
 	if rec.Reference.ScoredAgainst == "" {
 		t.Error("the record must name which mid produced its verdicts")
+	}
+}
+
+func TestRunOnceDoesNotRecordUnscoredLossesOrScoringSource(t *testing.T) {
+	store, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := schedulerOver(t, "usdc-ngnc", asset.NGNC(), "NGN", "1350.2568", store)
+	s.Engine.RefRate = &refrate.Cross{
+		Primary:   fixedReference{"primary", "1350.2568"},
+		Secondary: fixedReference{"secondary", "135.02568"},
+	}
+
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	rec, err := store.Latest(context.Background(), "USDC-NGNC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec == nil {
+		t.Fatal("RunOnce wrote no record")
+	}
+	if rec.Reference.ScoredAgainst != "" {
+		t.Errorf("ScoredAgainst = %q, want empty for an unscored benchmark", rec.Reference.ScoredAgainst)
+	}
+	if rec.FloorLossPct != "" || rec.WorstLossPct != "" {
+		t.Errorf("unscored summary persisted loss values: floor=%q worst=%q",
+			rec.FloorLossPct, rec.WorstLossPct)
+	}
+	for i, rung := range rec.Rungs {
+		if rung.LossPct != "" || rung.Verdict != "UNKNOWN" {
+			t.Errorf("unscored rung %d persisted loss=%q verdict=%q", i, rung.LossPct, rung.Verdict)
+		}
 	}
 }
 
@@ -190,14 +225,7 @@ func TestRunOnceStoresSnapshotAndLinksItsHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	matches, err := filepath.Glob(filepath.Join("../testdata/snapshots", "usdc-ngnc-*"))
-	if err != nil || len(matches) == 0 {
-		t.Skip("no USDC-NGNC snapshot fixture")
-	}
-	snap, err := snapshot.Load(matches[0])
-	if err != nil {
-		t.Fatalf("loading snapshot: %v", err)
-	}
+	snap := loadSnapshotFixture(t, "usdc-ngnc")
 	artifactDir := t.TempDir()
 	s := schedulerOver(t, "usdc-ngnc", asset.NGNC(), "NGN", "1350.2568", store)
 	s.SnapshotDir = artifactDir
@@ -231,6 +259,205 @@ func TestRunOnceStoresSnapshotAndLinksItsHash(t *testing.T) {
 	if err := store.VerifySnapshots(context.Background(), "USDC-NGNC", artifactDir); err != nil {
 		t.Errorf("VerifySnapshots: %v", err)
 	}
+}
+
+// TestRunOnceRecordsTheAnsweringHorizon is issue #701's recording half. A sweep
+// answered by the fallback host has to publish the fallback's address: the
+// artifact is what a reader verifies a published figure against, and one that
+// names a host which never served the bytes is a dead end.
+//
+// Both branches are here because the same three lines of wiring are wrong if
+// either one misreports — a note on a healthy run would accuse a working
+// provider of an outage it did not have.
+func TestRunOnceRecordsTheAnsweringHorizon(t *testing.T) {
+	const configured = "https://horizon.stellar.org"
+
+	tests := []struct {
+		name        string
+		primaryDown bool
+	}{
+		{name: "the configured host is down", primaryDown: true},
+		{name: "the configured host answers", primaryDown: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := runstore.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture := loadSnapshotFixture(t, "usdc-ngnc")
+			failoverHost := replayHost(t, fixture.Replay())
+
+			tr, err := failover.New(configured, failoverHost.URL, outagedPrimary{
+				want:   configured,
+				down:   tc.primaryDown,
+				replay: fixture.Replay(),
+			})
+			if err != nil {
+				t.Fatalf("failover.New: %v", err)
+			}
+
+			artifactDir := t.TempDir()
+			s := schedulerOver(t, "usdc-ngnc", asset.NGNC(), "NGN", "1350.2568", store)
+			s.SnapshotDir = artifactDir
+			s.SnapshotSources = snapshot.Sources{
+				Horizon: snapshot.SourceRef{BaseURL: configured},
+			}
+			s.SnapshotNotes = []string{"configured primary: " + configured}
+			s.SnapshotEngineFactory = func(recorder *snapshot.Recorder) *route.Engine {
+				// Beneath the recorder, exactly as cmd/wayfared wires it: the
+				// archive must hold the bytes that answered and not the
+				// primary's discarded refusal.
+				recorder.Transport = tr
+				return &route.Engine{
+					DEX:     &dex.Client{HorizonURL: configured, HTTPClient: &http.Client{Transport: recorder}},
+					RefRate: refrate.NewStatic(map[string]decimal.Decimal{"USD/NGN": decimal.RequireFromString("1350.2568")}),
+				}
+			}
+
+			if err := s.RunOnce(context.Background()); err != nil {
+				t.Fatalf("RunOnce: %v", err)
+			}
+
+			rec, err := store.Latest(context.Background(), "USDC-NGNC")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rec == nil || !strings.HasPrefix(rec.Snapshot, "sha256:") {
+				t.Fatalf("run record snapshot = %q, want a content hash", rec.Snapshot)
+			}
+			manifest, err := snapshot.Load(filepath.Join(artifactDir, strings.TrimPrefix(rec.Snapshot, "sha256:")))
+			if err != nil {
+				t.Fatalf("loading the recorded manifest: %v", err)
+			}
+
+			wantHost := configured
+			if tc.primaryDown {
+				wantHost = failoverHost.URL
+			}
+			if got := manifest.Sources.Horizon.BaseURL; got != wantHost {
+				t.Errorf("manifest sources.horizon.base_url = %q, want %q", got, wantHost)
+			}
+
+			// The interaction URL is the other half of the same promise, and it
+			// is the one a body-level audit reads: a manifest that named the
+			// fallback host while each interaction still claimed the primary
+			// would describe a run that did not happen.
+			horizonCall, ok := manifest.FirstOfKind(snapshot.KindHorizon)
+			if !ok {
+				t.Fatal("the manifest recorded no Horizon interaction")
+			}
+			if !strings.HasPrefix(horizonCall.URL, wantHost) {
+				t.Errorf("recorded Horizon interaction URL = %q, want it aimed at %q", horizonCall.URL, wantHost)
+			}
+			// The refusal the failover exists to survive must not be archived as
+			// ground truth for the query the second host answered.
+			if horizonCall.Status != http.StatusOK {
+				t.Errorf("recorded Horizon interaction status = %d, want the answer that was kept", horizonCall.Status)
+			}
+
+			// Matched by its prefix rather than the whole sentence: the failure
+			// worth catching on a healthy run is a note that accuses some
+			// provider of an outage it did not have, and comparing one composed
+			// string against another would let a note naming the wrong host pass.
+			lines := notesWithPrefix(manifest.Notes, "answered by the Horizon failover host: ")
+			if !tc.primaryDown {
+				if len(lines) != 0 {
+					t.Errorf("a run the configured host answered recorded %v", lines)
+				}
+			} else if len(lines) != 1 || lines[0] != failoverHost.URL {
+				t.Errorf("failover notes = %v, want one naming %q (%v)", lines, failoverHost.URL, manifest.Notes)
+			}
+			// Per-corridor notes must not leak into the scheduler's shared set,
+			// which every later corridor in the same sweep reads.
+			if len(s.SnapshotNotes) != 1 {
+				t.Errorf("Scheduler.SnapshotNotes grew to %d entries: %v", len(s.SnapshotNotes), s.SnapshotNotes)
+			}
+		})
+	}
+}
+
+// notesWithPrefix returns what follows the prefix on each note carrying it, so
+// a test can assert on the host a note names instead of on a sentence it
+// composes itself.
+func notesWithPrefix(notes []string, prefix string) []string {
+	var out []string
+	for _, note := range notes {
+		if rest, found := strings.CutPrefix(note, prefix); found {
+			out = append(out, rest)
+		}
+	}
+	return out
+}
+
+// loadSnapshotFixture reads the recorded run a schedulerOver call replays.
+func loadSnapshotFixture(t *testing.T, prefix string) *snapshot.Manifest {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join("../testdata/snapshots", prefix+"-*"))
+	if err != nil || len(matches) == 0 {
+		t.Skipf("no snapshot matching %q", prefix)
+	}
+	snap, err := snapshot.Load(matches[0])
+	if err != nil {
+		t.Fatalf("loading snapshot: %v", err)
+	}
+	return snap
+}
+
+// replayHost serves a recorded snapshot's answers over real HTTP on a loopback
+// address, so a test can put a second Horizon behind an address without any
+// fixture knowing it. Replay matches on method, path and query alone, which is
+// what makes the same bytes answer from a different host.
+func replayHost(t *testing.T, replayer http.RoundTripper) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp, err := replayer.RoundTrip(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "" {
+			w.Header().Set("Content-Type", ct)
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// outagedPrimary is the configured Horizon as the failover transport meets it.
+// It answers from the recording rather than dialling the address it pretends to
+// own, because a healthy primary that reaches the real network would make an
+// offline suite depend on a public provider being up. Requests for any other
+// origin belong to the failover host, which is a loopback address this test
+// started, and go to the real transport.
+type outagedPrimary struct {
+	want   string
+	down   bool
+	replay http.RoundTripper
+}
+
+func (o outagedPrimary) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Scheme+"://"+req.URL.Host != o.want {
+		return http.DefaultTransport.RoundTrip(req)
+	}
+	if !o.down {
+		return o.replay.RoundTrip(req)
+	}
+	return &http.Response{
+		StatusCode: http.StatusServiceUnavailable,
+		Header:     http.Header{"Content-Type": []string{"text/plain"}},
+		Body:       io.NopCloser(strings.NewReader("horizon is down")),
+		Request:    req,
+	}, nil
 }
 
 // TestRunOnceIsIdempotentUnderReRun checks that running twice appends two

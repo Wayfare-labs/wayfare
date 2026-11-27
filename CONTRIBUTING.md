@@ -194,6 +194,27 @@ In the pull request, describe what changed and why. If it touches pricing,
 say how you verified correctness — and if you measured something live,
 include the raw figures and the timestamp.
 
+If a pull request changes a public wire contract or run-store record shape,
+add a dated entry to [CHANGELOG.md](CHANGELOG.md) describing the consumer-visible
+change and any compatibility implications.
+
+## Issue closing rule
+
+**An issue is closed only when every acceptance criterion stated in it has been
+verified on `main` — not at merge time.**
+
+Auto-merge closes issues by reference, but reference alone does not confirm
+the work is correct. Before a PR can close an issue, the PR description must
+include an **Acceptance criteria** section that maps each criterion from the
+issue to the exact test name, `make` target, or command that proves it, along
+with the output or result that was observed.
+
+If a criterion cannot be verified mechanically, state why and name the
+maintainer who confirmed it manually.
+
+A PR that omits this section or leaves a criterion unmapped routes to
+`needs-maintainer-review` regardless of CI status.
+
 ## Opening an issue
 
 Issues should follow the templates in [.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/)
@@ -209,6 +230,23 @@ study. Open an issue with:
 - the reference pair you benchmarked against, and the source
 - raw `cmd/ladder` output, with its timestamp
 - the issuer's `stellar.toml` status for the asset
+
+## Required status checks and branch protection
+
+The `main` branch is protected by an active GitHub ruleset (`protecting my wayfare main`) that enforces branch integrity and quality gates:
+
+- **Branch protections:**
+  - Direct pushes to `main` are disabled; all changes must arrive through pull requests.
+  - Branch deletion and force-pushes (`non_fast_forward`) are prohibited.
+  - Linear git history is required (no merge bubbles; squash or rebase).
+  - Strict policy: branches must be up to date with `main` before merging.
+
+- **Required status checks:**
+  1. `build and test`: compiles all packages and binaries, checks formatting with `gofmt`, runs `go vet`, and runs `go test -race` with coverage across multiple timezone configurations to prevent platform or calendar drift.
+  2. `golangci-lint`: executes the static analysis suite enforcing Go idioms, style consistency, and catching common bugs.
+  3. `tests run with no network`: executes the entire test suite in an isolated network blackout environment to guarantee tests rely strictly on committed snapshots and never depend on live external networks.
+  4. `container image builds`: verifies the production Dockerfile compiles successfully, runs binary smoke tests inside the container, performs vulnerability scanning (Trivy/Grype), and generates an SBOM.
+  5. `Malware scan`: analyzes dependencies and action steps for security threats and supply-chain tampering.
 
 ## License
 

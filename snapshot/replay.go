@@ -67,18 +67,26 @@ func (r *Replayer) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	status, contentType := http.StatusOK, "application/json"
-	for _, in := range r.m.Interactions {
-		if in.Key == key {
-			status = in.Status
-			if in.ContentType != "" {
-				contentType = in.ContentType
+	var matchedIn *Interaction
+	for i := range r.m.Interactions {
+		if r.m.Interactions[i].Key == key {
+			status = r.m.Interactions[i].Status
+			if r.m.Interactions[i].ContentType != "" {
+				contentType = r.m.Interactions[i].ContentType
 			}
+			matchedIn = &r.m.Interactions[i]
 			break
 		}
 	}
 
 	header := make(http.Header)
 	header.Set("Content-Type", contentType)
+	if matchedIn != nil && len(matchedIn.Header) > 0 {
+		for k, vals := range matchedIn.Header {
+			// Replace, so a recorded Content-Type does not join the fallback.
+			header[http.CanonicalHeaderKey(k)] = append([]string(nil), vals...)
+		}
+	}
 
 	return &http.Response{
 		Status:        fmt.Sprintf("%d %s", status, http.StatusText(status)),

@@ -105,6 +105,8 @@ type LadderResult struct {
 	Request LadderRequest
 	Rungs   []Rung
 
+	probeAmount decimal.Decimal
+
 	// Curve is the measured effective-rate relationship across priced and
 	// unpriced rungs. Unpriced rungs remain explicit holes; no interpolation
 	// or monotonicity assumption is applied.
@@ -342,9 +344,61 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].LessThan(sorted[j]) })
 
 	out := &LadderResult{
-		Request: req,
-		Rungs:   make([]Rung, len(sorted)),
+		Request:     req,
+		Rungs:       make([]Rung, len(sorted)),
+		probeAmount: e.slippageProbe(),
 	}
+	setUnmeasured := func(err error) {
+		for i, size := range sorted {
+			out.Rungs[i] = Rung{SendAmount: size, Err: err}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		setUnmeasured(err)
+		return out, err
+	}
+
+	// A ladder is one measurement, so every size must be scored against the
+	// same benchmark. Fetch before starting any Horizon work: a missing
+	// reference fails the ladder without spending pathfinder requests.
+	if e.RefRate == nil {
+		err := fmt.Errorf("route: a reference rate provider is required; " +
+			"without one the engine can rank routes but cannot tell a good one from a bad one")
+		setUnmeasured(err)
+		out.summarise()
+		return out, nil
+	}
+	hasValidSize := false
+	for i, size := range sorted {
+		if size.IsZero() || size.IsNegative() {
+			out.Rungs[i] = Rung{
+				SendAmount: size,
+				Err:        fmt.Errorf("route: send amount must be positive, got %s", size),
+			}
+			continue
+		}
+		hasValidSize = true
+	}
+	if !hasValidSize {
+		out.summarise()
+		return out, nil
+	}
+	ref, err := e.RefRate.Rate(ctx, req.ReferenceBase, req.ReferenceQuote)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			setUnmeasured(ctxErr)
+			return out, ctxErr
+		}
+		err = fmt.Errorf("route: reference rate unavailable: %w", err)
+		setUnmeasured(err)
+		out.summarise()
+		return out, nil
+	}
+	if err := ctx.Err(); err != nil {
+		setUnmeasured(err)
+		return out, err
+	}
+	parallel := e.parallelAgainst(ctx, ref)
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, ladderConcurrency)
@@ -356,13 +410,14 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res, err := e.Quote(ctx, Request{
+			res, err := e.quoteWith(ctx, Request{
 				SendAsset:      req.SendAsset,
 				SendAmount:     size,
 				ReceiveAsset:   req.ReceiveAsset,
 				ReferenceBase:  req.ReferenceBase,
 				ReferenceQuote: req.ReferenceQuote,
-			})
+				skipSlippage:   true,
+			}, ref, parallel)
 			rung := Rung{SendAmount: size, Result: res, Err: err}
 			if err == nil {
 				rung.Ledger = e.observedLedger(ctx)
@@ -479,6 +534,16 @@ func (l *LadderResult) computeMarginalCosts() {
 	}
 }
 
+func rungRate(q Quote) decimal.Decimal {
+	if q.EffectiveRate.IsPositive() {
+		return q.EffectiveRate
+	}
+	if q.SendAmount.IsZero() {
+		return decimal.Zero
+	}
+	return q.ReceiveAmount.Div(q.SendAmount)
+}
+
 func (l *LadderResult) summarise() {
 	var (
 		anyPriced   bool
@@ -488,6 +553,20 @@ func (l *LadderResult) summarise() {
 		chainMap    = map[string]DependencyNode{}
 		firstErr    error
 	)
+
+	probeRate := decimal.Zero
+	for i := range l.Rungs {
+		r := &l.Rungs[i]
+		if !r.Priced() || !r.SendAmount.Equal(l.probeAmount) {
+			continue
+		}
+		q := r.Result.Quotes[0]
+		if !q.SendAmount.IsZero() {
+			probeRate = rungRate(q)
+		}
+		break
+	}
+	probePriced := probeRate.IsPositive()
 
 	for i := range l.Rungs {
 		r := l.Rungs[i]
@@ -543,18 +622,31 @@ func (l *LadderResult) summarise() {
 		anyPriced = true
 		q := r.Result.Quotes[0]
 
-		// The decomposition answers "where did the money go" for this
-		// size — the per-quote component breakdown behind the single loss
-		// percentage, computed against the corridor's reference mid.
-		l.Rungs[i].Decomposition = Decompose(q, l.ReferenceMid)
-
-		if l.FloorSize.IsZero() {
-			l.Floor = q.LossPct
-			l.FloorSize = r.SendAmount
-			l.FloorEffectiveRate = q.EffectiveRate
+		if probePriced && r.SendAmount.GreaterThan(l.probeAmount) {
+			pct := pctWorse(probeRate, rungRate(q))
+			if pct.GreaterThan(thinLiquidityThreshold) {
+				l.Rungs[i].Result.Quotes[0].Warnings = append(
+					l.Rungs[i].Result.Quotes[0].Warnings,
+					thinLiquidityWarning(pct, l.probeAmount, l.Request.SendAsset.Code))
+			}
 		}
-		if q.LossPct.GreaterThanOrEqual(l.WorstLoss) {
-			l.WorstLoss, l.WorstSize = q.LossPct, r.SendAmount
+
+		// The decomposition, floor and worst loss are all measured against
+		// the reference mid, so an unscored benchmark leaves them unknown.
+		if l.Reference.Scorable() {
+			// The decomposition answers "where did the money go" for this
+			// size — the per-quote component breakdown behind the single loss
+			// percentage, computed against the corridor's reference mid.
+			l.Rungs[i].Decomposition = Decompose(q, l.ReferenceMid)
+
+			if l.FloorSize.IsZero() {
+				l.Floor = q.LossPct
+				l.FloorSize = r.SendAmount
+				l.FloorEffectiveRate = q.EffectiveRate
+			}
+			if q.LossPct.GreaterThanOrEqual(l.WorstLoss) {
+				l.WorstLoss, l.WorstSize = q.LossPct, r.SendAmount
+			}
 		}
 
 		// The first acceptable quote on an ascending ladder is also the
@@ -592,7 +684,11 @@ func (l *LadderResult) summarise() {
 	}
 
 	l.Curve = l.buildCurve()
-	l.computeMarginalCosts()
+	if l.Reference.Scorable() {
+		l.computeMarginalCosts()
+	} else {
+		l.MarginalClassification = MarginalUndetermined
+	}
 	l.Finding = l.finding(anyPriced, firstErr)
 }
 
@@ -607,6 +703,28 @@ func (l *LadderResult) summarise() {
 // able to tell a full curve from a partial one.
 func (l *LadderResult) finding(anyPriced bool, firstErr error) string {
 	send, recv := l.Request.SendAsset.Code, l.Request.ReceiveAsset.Code
+
+	if !l.Reference.Scorable() {
+		priced := 0
+		for _, rung := range l.Rungs {
+			if rung.Priced() {
+				priced++
+			}
+		}
+		finding := fmt.Sprintf(
+			"No verdict or recommendation was derived for %s to %s. The ladder "+
+				"priced %d of %d sizes; integrity is %s.",
+			send, recv, priced, len(l.Rungs), l.Integrity)
+		if len(l.DependsOn) > 0 {
+			finding += " Depends on " + describeAssets(l.DependsOn) + "."
+		}
+		if l.Reference.Note != "" {
+			finding += " Reference cross-check: " + l.Reference.Note
+		} else {
+			finding += " Reference cross-check: " + l.Reference.Agreement.String() + "."
+		}
+		return finding
+	}
 
 	if l.Integrity == IntegrityNoMarket {
 		return fmt.Sprintf(

@@ -286,11 +286,17 @@
     button:hover:not(:disabled), select:hover:not(:disabled), input:hover:not(:disabled) {
       border-color: var(--accent); background: var(--panel-alt);
     }
+    .sizes-input:hover:not(:disabled) {
+      border-color: var(--accent); background: var(--panel-alt);
+    }
   }
   button:active:not(:disabled) {
     background: var(--panel-alt); box-shadow: var(--press-shadow);
   }
   button:focus-visible, select:focus-visible, input:focus-visible {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring);
+  }
+  .sizes-input:focus-visible {
     outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring);
   }
   /* Every focusable thing in the page carries the same indicator (issue
@@ -795,7 +801,8 @@
       {{if .Summary}}
       <p>Corridor <strong>{{.Summary.Corridor}}</strong> —
          integrity <strong>{{.Summary.Integrity}}</strong>.
-         Floor loss {{.Summary.FloorLossPct}}%, worst loss {{.Summary.WorstLossPct}}%.
+         Floor loss {{.Summary.FloorLossPct}}{{if ne .Summary.FloorLossPct "not scored"}}%{{end}},
+         worst loss {{.Summary.WorstLossPct}}{{if ne .Summary.WorstLossPct "not scored"}}%{{end}}.
          Recorded {{.Summary.RecordedAt}} ({{.Summary.Age}}).</p>
       <p>Enable JavaScript for the full ladder, the trend chart and a live measurement.</p>
       {{else}}
@@ -812,18 +819,11 @@
     <select id="to" aria-label="Select a corridor to measure">
       <option value="" disabled selected>Loading corridors…</option>
     </select>
-    <label for="sizes">Sizes</label>
-    <input id="sizes" name="sizes" type="text" inputmode="decimal"
-      autocomplete="off" spellcheck="false" class="sizes-input"
-      value="0.1,1,5,10,25,50,100,250,500,1000,2500,5000"
-      aria-label="Comma-separated send sizes in USDC; leave unchanged for the default ladder"
-      aria-describedby="sizes-help">
-    <span id="sizes-help" class="case">USDC, comma-separated</span>
     <span id="cs-detail" class="cs-info"></span>
     <label for="sizes">Send sizes (USDC, comma-separated)</label>
-    <input id="sizes" name="sizes" inputmode="decimal" autocomplete="off"
+    <input id="sizes" name="sizes" class="sizes-input" inputmode="decimal" autocomplete="off"
       placeholder="Default: 0.1 to 5000"
-      aria-describedby="sizes-help" spellcheck="false">
+      aria-describedby="sizes-help" aria-errormessage="status" spellcheck="false">
     <span id="sizes-help" class="cs-info" title="The engine sorts the chosen sizes ascending before pricing, and an unpriced size is reported as such — never as a zero.">Leave empty for the default ladder:
     0.1, 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500 and 5000. Why these sizes:
     the bottom rung isolates the corridor's spread, the top rung exposes exhaustion.</span>
@@ -1222,6 +1222,7 @@ async function loadAssets() {
 
 function buildSelector(data) {
   const sel = $('to');
+  const compareSel = $('compare-to');
   const all = data.assets || [];
   const assets = all.filter(a => a.can_be_destination);
   // The send side of every label is the settlement asset: the one entry the
@@ -1248,7 +1249,7 @@ function buildSelector(data) {
     return a.code.localeCompare(b.code);
   });
 
-  sel.innerHTML = assets.map((a, i) => {
+  const options = assets.map((a, i) => {
     // Destination from the entry's own code, the peg it reports beside it,
     // and the settlement asset found above: `USDC \u2192 NGNC (NGN)` built
     // entirely from the response. The optional bracketed note is the stored
@@ -1276,7 +1277,8 @@ function buildSelector(data) {
     // URL-first (issue #292): a corridor change is a navigation. The sizes
     // the reader typed carry over — they describe how to measure, not which
     // corridor — and the URL bar is updated through the shared path.
-    loadCorridor(sel.value);
+    navigationLive = false;
+    navigateTo();
   });
 }
 
@@ -1497,32 +1499,86 @@ function evidenceSource(source) {
 }
 
 let corridorRequest = 0;
+let navigationLive = false;
 
-// readSizes returns the trimmed input, or '' when it is empty. Validation is
-// deliberately server-side only: parseSizes is the contract, and the UI
-// showing the API's own error beats a second validator drifting from it.
+const DEFAULT_SIZES_STR = '0.1,1,5,10,25,50,100,250,500,1000,2500,5000';
+
+// corridorQuery is the one builder for measurement requests. The default
+// ladder is the API default, so spelling it out would only make shared URLs
+// longer and risk drifting from the server's canonical sizes.
+function corridorQuery(to, sizes, live = false) {
+  const q = new URLSearchParams({ to });
+  if (sizes && sizes.ok && sizes.norm !== DEFAULT_SIZES_STR) {
+    if (sizes.norm) q.set('sizes', sizes.norm);
+  }
+  if (live) q.set('live', '1');
+  return `/api/corridor?${q}`;
+}
+
+// readURLState restores only a corridor the loaded asset list actually offers.
+// A stale or hand-edited ?to= never silently selects an unverified asset.
+function readURLState() {
+  const params = new URLSearchParams(location.search);
+  const to = params.get('to');
+  const available = Array.from($('to').options).some(option => option.value === to && to);
+  if (!available) return null;
+  const sizes = params.get('sizes') || '';
+  $('to').value = to;
+  $('sizes').value = sizes;
+  navigationLive = params.get('live') === '1';
+  return { to, sizes, live: navigationLive };
+}
+
+// writeURLState keeps measurement state shareable without adding browser
+// history entries for every selector or size change.
+function writeURLState({ to, sizes = '', live = false }) {
+  const url = new URL(location.href);
+  const q = url.searchParams;
+  q.delete('to');
+  q.delete('sizes');
+  q.delete('live');
+  if (to) q.set('to', to);
+  if (sizes && sizes !== DEFAULT_SIZES_STR) q.set('sizes', sizes);
+  if (live) q.set('live', '1');
+  navigationLive = live;
+  const query = q.toString();
+  history.replaceState(null, '', `${url.pathname}${query ? `?${query}` : ''}${url.hash}`);
+}
+
+// readSizes returns the trimmed input, or '' when it is empty. The UI mirrors
+// the server's validation for immediate feedback; the server remains the
+// authoritative boundary for every request.
 function readSizes() {
   return $('sizes').value.trim();
 }
 
-// sizesValidation reports why the current input cannot be sent, or '' when it
-// can. Colour alone never carries this (the message text is the signal); the
-// invalid state is also mirrored onto the input via aria-invalid so screen
-// readers get it without a repaint.
-function sizesValidation(raw) {
-  if (raw === '') return '';
+// parseSizesInput mirrors the server's positive-decimal and 24-size limits.
+// Invalid values are explained before any request is sent.
+function parseSizesInput(raw) {
+  if (raw === '') return { ok: true, norm: '' };
   const parts = raw.split(',');
-  if (parts.length > MAX_SIZES)
-    return `At most ${MAX_SIZES} sizes can be measured in one request.`;
-  for (const p of parts) {
-    const t = p.trim();
-    if (t === '') continue;
-    if (!/^[+]?\d*\.?\d+([eE][+-]?\d+)?$/.test(t))
-      return `“${t}” is not a number the engine can measure.`;
-    if (!isDecimal(t) || compareDecimalStrings(t, '0') <= 0)
-      return 'Every size must be a positive amount.';
+  if (parts.length > MAX_SIZES) {
+    return { ok: false, norm: '', error: `At most ${MAX_SIZES} sizes can be measured in one request.` };
   }
-  return '';
+  for (const part of parts) {
+    const size = part.trim();
+    if (size === '') continue;
+    if (!isDecimal(size)) {
+      return { ok: false, norm: '', error: `“${size}” is not a decimal number.` };
+    }
+    if (compareDecimalStrings(size, '0') <= 0) {
+      return { ok: false, norm: '', error: 'Every size must be a positive amount.' };
+    }
+  }
+  const norm = parts.map(part => part.trim()).filter(Boolean).join(',');
+  return { ok: true, norm };
+}
+
+// sizesValidation reports why the current input cannot be sent, or '' when it
+// can. Kept as a small adapter for existing validation consumers.
+function sizesValidation(raw) {
+  const parsed = parseSizesInput(raw);
+  return parsed.ok ? '' : parsed.error;
 }
 
 // --- Measurement -------------------------------------------------------------
@@ -1539,22 +1595,20 @@ async function measure() {
     return;
   }
   const sizesRaw = readSizes();
-  const problem = sizesValidation(sizesRaw);
+  const sizes = parseSizesInput(sizesRaw);
   const sizesInput = $('sizes');
-  if (problem) {
+  if (!sizes.ok) {
     sizesInput.setAttribute('aria-invalid', 'true');
-    $('status').textContent = problem;
+    $('status').textContent = sizes.error;
     return;
   }
   sizesInput.removeAttribute('aria-invalid');
-  lastRequestedSizes = sizesRaw;
+  lastRequestedSizes = sizes.norm === DEFAULT_SIZES_STR ? '' : sizes.norm;
   const requestId = ++corridorRequest;
   $('run').disabled = true;
   $('status').textContent = 'measuring live — each size is its own round trip to Horizon, so more sizes take longer…';
   try {
-    const q = new URLSearchParams({ to });
-    if (sizesRaw !== '') q.set('sizes', sizesRaw);
-    const r = await fetch(`/api/corridor?${q}&live=1`);
+    const r = await fetch(corridorQuery(to, sizes, true));
     const data = await r.json();
     if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code });
     if (!validCorridorReading(data, to)) throw new Error('The corridor response was incomplete or invalid.');
@@ -1562,7 +1616,9 @@ async function measure() {
     if (requestId !== corridorRequest || $('to').value !== to) return;
     render(data);
     // Reflect the exact request that produced this reading.
-    writeURLState({ to, sizes: sizes.norm, live: true });
+    if (typeof writeURLState === 'function') {
+      writeURLState({ to, sizes: sizes.norm, live: true });
+    }
     $('status').textContent = '';
   } catch (e) {
     if (requestId !== corridorRequest || $('to').value !== to) return;
@@ -1744,7 +1800,7 @@ function renderChainHeadBlock(d) {
   return `<div class="chain-head-block" aria-label="Chain head verification">
     <span>Chain head:</span>
     <code class="chain-head-hash" title="${esc(fullHash)}">${esc(shortHash)}</code>
-    <button type="button" class="btn-copy" onclick="copyText('${esc(fullHash)}', this)">Copy hash</button>
+    <button type="button" class="btn-copy" data-action="copy-hash" data-hash="${esc(fullHash)}">Copy hash</button>
     <a href="docs/verify-store.md" target="_blank" rel="noopener">How to verify</a>
   </div>`;
 }
@@ -1878,8 +1934,8 @@ function render(d, options = {}) {
   }
 
   const downloadBar = `<div class="panel-actions">
-    <button id="download-csv" type="button" class="btn-download" onclick="downloadLadderCSV()">Download CSV</button>
-    <button id="download-json" type="button" class="btn-download" onclick="downloadLadderJSON()">Download JSON</button>
+    <button id="download-csv" type="button" class="btn-download" data-action="download-csv">Download CSV</button>
+    <button id="download-json" type="button" class="btn-download" data-action="download-json">Download JSON</button>
   </div>`;
 
   parts.push(`<div class="panel"><h2 id="measurements">Measurements</h2>${downloadBar}<div class="scroll">${table(d.rungs, d.scored)}</div></div>`);
@@ -1912,10 +1968,10 @@ function printReport(d, options) {
   const to = d.receive_asset?.code || 'Unknown';
   const recordedAt = d.stale?.recorded_at || options.recordedAt || d.measured_at || 'not supplied';
   const recordedLabel = options.cached || !d.live ? 'Recorded at' : 'Measured at';
-  const floor = d.floor ?? d.floor_loss_pct ?? 'not supplied';
-  const floorSize = d.floor_size || 'not supplied';
-  const worst = d.worst_loss ?? d.worst_loss_pct ?? 'not supplied';
-  const worstSize = d.worst_size || 'not supplied';
+  const floor = d.scored ? (d.floor ?? d.floor_loss_pct ?? 'not supplied') : 'not scored';
+  const floorSize = d.scored ? (d.floor_size || 'not supplied') : 'not scored';
+  const worst = d.scored ? (d.worst_loss ?? d.worst_loss_pct ?? 'not supplied') : 'not scored';
+  const worstSize = d.scored ? (d.worst_size || 'not supplied') : 'not scored';
   const dependencies = (d.depends_on || []).map(a => a.code || a).filter(Boolean).join(', ') || 'None recorded';
   const reference = `${d.reference_pair || 'Reference'} · ${d.reference_mid || 'not supplied'} · ${d.reference_source || 'provider not supplied'}`;
   const secondary = d.reference_secondary_mid
@@ -1931,9 +1987,9 @@ function printReport(d, options) {
     </div>
     <dl class="print-summary">
       <div><dt>Integrity</dt><dd>${esc(d.integrity || 'Not determined')}</dd></div>
-      <div><dt>Floor loss</dt><dd>${esc(floor)}%</dd></div>
-      <div><dt>Floor size</dt><dd>${esc(floorSize)} ${esc(from)}</dd></div>
-      <div><dt>Worst loss / size</dt><dd>${esc(worst)}% / ${esc(worstSize)} ${esc(from)}</dd></div>
+      <div><dt>Floor loss</dt><dd>${esc(floor)}${d.scored ? '%' : ''}</dd></div>
+      <div><dt>Floor size</dt><dd>${esc(floorSize)}${d.scored ? ` ${esc(from)}` : ''}</dd></div>
+      <div><dt>Worst loss / size</dt><dd>${esc(worst)}${d.scored ? `% / ${esc(worstSize)} ${esc(from)}` : ''}</dd></div>
       <div><dt>Depends on</dt><dd>${esc(dependencies)}</dd></div>
     </dl>
     <section class="print-provenance" aria-label="Reference and recorded time provenance">
@@ -2064,7 +2120,7 @@ async function compareCorridors() {
   $('compare-out').innerHTML = '';
   try {
     const responses = await Promise.all([first, second].map(async code => {
-      const r = await fetch(`/api/corridor?to=${encodeURIComponent(code)}`);
+      const r = await fetch(corridorQuery(code, parseSizesInput('')));
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       return data;
@@ -2355,7 +2411,7 @@ function table(rungs, scored, depends) {
       : (q && typeof q.path_count === 'number' && q.path_count > 0)
       ? String(q.path_count)
       : '&mdash;';
-    const decomp = costDecompositionBlock(r);
+    const decomp = scored ? costDecompositionBlock(r) : '';
     if (scored) {
       // The loss figure keeps its colour as a scanning aid, but the grade
       // beside it is what the row asserts — the number is the engine's, the
@@ -3045,17 +3101,18 @@ function runsTable(runs) {
     const src = ref.scored_against || ref.source || 'unknown';
     const div = ref.divergence_pct
       ? ` <span class="case">div ${esc(ref.divergence_pct)}%</span>` : '';
-    let floorCell = `${esc(r.floor_loss_pct)}%`;
-    let worstCell = `${esc(r.worst_loss_pct)}%`;
+    const scored = Boolean(ref.scored_against);
+    let floorCell = scored && r.floor_loss_pct ? `${esc(r.floor_loss_pct)}%` : 'not scored';
+    let worstCell = scored && r.worst_loss_pct ? `${esc(r.worst_loss_pct)}%` : 'not scored';
     let seqCell = String(r.seq);
 
-    if (r.correction && r.correction.corrected) {
+    if (scored && r.correction && r.correction.corrected) {
       seqCell = `${r.seq} <span class="case" style="color:var(--accent)" title="${esc(r.correction.reason)}">[corrected in #${r.correction.corrected_by_seq}]</span>`;
       floorCell = `<del style="opacity:0.6">${esc(r.correction.original_floor_loss_pct || r.floor_loss_pct)}%</del> <strong style="color:var(--accent)">${esc(r.correction.corrected_floor_loss_pct)}%</strong>`;
       if (r.correction.corrected_worst_loss_pct) {
         worstCell = `<del style="opacity:0.6">${esc(r.correction.original_worst_loss_pct || r.worst_loss_pct)}%</del> <strong style="color:var(--accent)">${esc(r.correction.corrected_worst_loss_pct)}%</strong>`;
       }
-    } else if (r.correction && r.correction.is_correction) {
+    } else if (scored && r.correction && r.correction.is_correction) {
       seqCell = `${r.seq} <span class="case" style="color:var(--accent)" title="${esc(r.correction.reason)}">[amends #${r.correction.target_seq}]</span>`;
       floorCell = `<strong style="color:var(--accent)">${esc(r.floor_loss_pct)}%</strong> <span class="case" title="${esc(r.correction.reason)}">(was <del>${esc(r.correction.original_floor_loss_pct)}%</del>)</span>`;
       if (r.correction.original_worst_loss_pct) {
@@ -3119,14 +3176,48 @@ function applyTheme(v) {
   }
 }
 
-$('theme').value = storedTheme();
-$('theme').addEventListener('change', (e) => applyTheme(e.target.value));
+const theme = $('theme');
+if (theme) {
+  theme.value = storedTheme();
+  theme.addEventListener('change', (e) => applyTheme(e.target.value));
+}
 $('compare').addEventListener('click', compareCorridors);
 if ($('market-structure')) {
   $('market-structure').addEventListener('click', loadMarketStructure);
 }
+$('out').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn || !$('out').contains(btn)) return;
+  const action = btn.dataset.action;
+  if (action === 'copy-hash') {
+    copyText(btn.dataset.hash || '', btn);
+  } else if (action === 'download-csv') {
+    downloadLadderCSV();
+  } else if (action === 'download-json') {
+    downloadLadderJSON();
+  }
+});
+
+async function navigateTo({ write = true } = {}) {
+  const to = $('to').value;
+  const sizes = parseSizesInput(readSizes());
+  if (!sizes.ok) {
+    $('sizes').setAttribute('aria-invalid', 'true');
+    $('status').textContent = sizes.error;
+    return;
+  }
+  $('sizes').removeAttribute('aria-invalid');
+  $('status').textContent = '';
+  if (write) writeURLState({ to, sizes: sizes.norm, live: navigationLive });
+  if (navigationLive) {
+    await measure();
+    return;
+  }
+  await loadCorridor(to);
+}
 
 async function loadCorridor(to) {
+  const sizes = parseSizesInput(readSizes());
   const requestId = ++corridorRequest;
   if (!to) {
     setOut(`<div class="panel">${emptyState({
@@ -3136,7 +3227,7 @@ async function loadCorridor(to) {
     return;
   }
   try {
-    const r = await fetch(`/api/corridor?to=${encodeURIComponent(to)}`);
+    const r = await fetch(corridorQuery(to, sizes));
     const data = await r.json();
     if (!r.ok) throw Object.assign(new Error(data.error || `HTTP ${r.status}`), { code: data.code });
     if (!validCorridorReading(data, to)) throw new Error('The corridor response was incomplete or invalid.');
@@ -3177,6 +3268,16 @@ async function loadCorridor(to) {
   }
 }
 
+window.addEventListener('popstate', () => {
+  const url = readURLState();
+  if (!url) {
+    navigationLive = false;
+    $('sizes').value = '';
+    $('to').selectedIndex = 0;
+  }
+  navigateTo({ write: false });
+});
+
 // On page load, populate the corridor selector from /api/assets first, then
 // fetch the corridor it selected from recorded history (no &live=1) so the
 // loading state disappears as soon as the server responds, whether this is a
@@ -3192,6 +3293,11 @@ async function loadCorridor(to) {
   fetchChainHeads();
   const ready = await loadAssets();
   if (!ready) return;
+  const url = readURLState();
+  if (url) {
+    await navigateTo();
+    return;
+  }
   await loadCorridor($('to').value);
 })();
 </script>
