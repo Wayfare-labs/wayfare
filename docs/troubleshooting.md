@@ -51,7 +51,7 @@ hour can exceed a free provider's daily allotment on their own.
    better (`README.md` "Freshness depends on the measure workflow").
 4. If a *provider*, not Horizon, is the one 429ing, the reference feeds are
    named per corridor in the run store record — check
-   `docs/monitor.md` for how each provider's budget is budgeted per run.
+   `docs/deployment.md` for how each provider's budget is budgeted per run.
 
 A 429 that never clears (same duration on every retry, hours apart) is
 different: that is an exhausted daily allotment, which no retry shortens. Wait
@@ -227,6 +227,6 @@ The usual causes:
   invariants and the pre-commit verify guard (§4)
 - [embedded-history.md](embedded-history.md) — how the deployed instance
   serves history and why `stale` is a normal state (§2)
-- [monitor.md](monitor.md) — the six-hour cadence and provider budgets (§1)
+- [deployment.md](deployment.md) — the six-hour cadence and provider budgets (§1)
 - [non-goals.md](non-goals.md) — why "not determined" never becomes a false
   (§3)

@@ -54,24 +54,25 @@ trust this document. Line numbers are at `74c1f17`.
 ### 1. "How many Horizon calls does one ladder actually make?"
 
 Asked in [#481](https://github.com/Wayfare-labs/wayfare/issues/481), 2026-09-24.
-**Still open.** Two places in the tree state a count and neither matches the
-other, let alone the measurement:
+**Fixed by [#863](https://github.com/Wayfare-labs/wayfare/issues/863).** The two
+places that disagreed now state the measured count:
 
-`server/api.go:54-57` says:
+`server/api.go:59-64` says:
 
 > // Timeout bounds a single corridor measurement. One Horizon call per
-> // rung, plus a two-call slippage probe on each rung above the probe
-> // threshold, so the count scales with route.DefaultSizes rather than
-> // staying a fixed dozen; this is still generous by HTTP standards.
+> // rung — twelve with route.DefaultSizes, with the thin-liquidity warning
+> // derived from those rungs — so the count scales with route.DefaultSizes;
+> // this is still generous by HTTP standards. It is the ceiling: the budget
+> // a request actually gets is derived from its rung count (see budgetFor)
+> // and never exceeds this.
 
-`docs/deployment.md:301-306` says:
+`docs/deployment.md:308-312` says:
 
-> One sweep is roughly sixty-eight Horizon calls across the three corridors —
-> NGNC and GHSC each run twelve rungs with pathfinding plus a slippage probe on
-> rungs above the probe threshold (28 calls each); KESC short-circuits as
-> NO-MARKET after twelve pathfinding calls (12) — plus about twelve counterparty
-> requests and two reference-provider calls, near eighty requests every six
-> hours.
+> One sweep is roughly thirty-six Horizon calls across the three corridors —
+> twelve pathfinding calls per corridor, with the thin-liquidity warning derived
+> from those rungs instead of a separate probe on every rung above 10 — plus
+> about twelve counterparty requests and two reference-provider calls, near
+> fifty requests every six hours.
 
 The reporter measured **28** calls for a priced corridor, not 12: twelve
 `/paths/strict-send` requests for the ladder, plus a two-call slippage probe
@@ -80,9 +81,10 @@ probe) on each rung above the probe threshold of 10 send units
 (`route/route.go:334`). Across the three corridors they counted 68, not 110,
 because a `NO-MARKET` corridor short-circuits before the probe.
 
-Both mechanisms described are real; the arithmetic in both places is not. This
-is a documentation defect with a measurement attached, and the measurement is
-reproducible with a counting proxy.
+The probe was real; the arithmetic in both places was not. #863 stops paying for
+it on ladder rungs and derives the warning from the rung already priced, so a
+default corridor makes **12** calls and a sweep makes **36**. A counting proxy
+over the recorded USDC/NGNC snapshot now pins that number.
 
 ### 2. "Why does a self-contained page carry a Cloudflare challenge script?"
 

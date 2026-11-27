@@ -59,6 +59,7 @@ The mapping today:
 | `concentration.liquidity`     | `order-book`  | `/order_book`                  |
 | `price-impact.size`           | `pathfinding` | `/paths/strict-send` (2 sizes) |
 | `deviation.book-vs-reference` | `order-book`  | `/order_book`                  |
+| `amm.pool-reserves`           | `pathfinding` | `/liquidity_pools/{id}`        |
 
 `depth.observed-executable` is the composite `Metric.Describe()` returned by
 `DepthMetric`. It declares `order-book` because `DepthMetric.Run` delegates
@@ -127,15 +128,17 @@ An AMM-inclusive depth or spread metric would therefore need one of:
   direct spread reading, so the resulting figure is `pathfinding` venue, not
   a book venue.
 
-Neither is a small change. The correct scope for this document is to record
-that neither is implemented today, and that a book metric labelled
-`order-book` is book-only by design.
+The `amm.pool-reserves` metric (`/liquidity_pools/{id}`) reports how many
+classic AMM pools it read, with each pool's fee and per-asset reserves as
+evidence. It reads only pool IDs its caller supplies, and is not among the
+metrics a corridor measurement runs today. It is undetermined when no pool IDs
+are supplied or when any pool's data is incomplete.
 
 ---
 
 ## What this document does not do
 
-It does not change any pricing arithmetic; it does not add a new metric; it
-does not decide which venue any future metric should observe. It writes down
-the venue every existing metric already has and states the reconciliation
-rule the engine has been silently relying on.
+It does not change any pricing arithmetic; it does not decide which venue any
+future metric should observe. It writes down the venue every existing metric
+already has and states the reconciliation rule the engine has been silently
+relying on.

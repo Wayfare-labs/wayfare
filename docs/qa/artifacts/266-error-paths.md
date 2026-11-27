@@ -130,4 +130,4 @@ panel. The panel text is the first row of the matrix.
 - This is the branch under test, not the deployed instance. The deployed
   instance is an older build: its errors carry no `code` field at all and it
   ignores unknown query parameters, so rows 9 and 10 of the matrix cannot occur
-  there. See [`docs/api.md`](../api.md).
+  there. See [`docs/api.md`](../../api.md).
