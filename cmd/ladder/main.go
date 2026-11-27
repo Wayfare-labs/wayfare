@@ -14,6 +14,8 @@
 //
 //	go run ./cmd/ladder -record testdata/snapshots   # also keep the bytes
 //
+//	go run ./cmd/ladder -version                     # which build produced this
+//
 // Recording is opt-in and writes the verbatim upstream responses to a new
 // directory under the given parent, named by the convention in
 // docs/snapshot-format.md.
@@ -35,6 +37,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/buildinfo"
 	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
@@ -81,15 +84,31 @@ func main() {
 		jsonOut = flag.Bool("json", false, "emit JSON on stdout instead of the text table")
 		record  = flag.String("record", "",
 			"record upstream responses as a snapshot in a new directory under this parent")
-		refName    = flag.String("ref", defaultRefProvider, refHelp())
+		refName   = flag.String("ref", "", refHelp())
+		refMaxAge = flag.Duration("ref-max-age", refrate.DefaultMaxAge,
+			"maximum allowed age of a reference rate (default: 72h)")
 		allowDirty = flag.Bool("allow-dirty", false,
 			"record even though the working tree is modified, marking the manifest dirty")
 		checksFlag = flag.Bool("checks", true,
 			"run counterparty checks (anchor toml, SEP-10/SEP-24, issuer flags) and "+
 				"attach the findings; set false to skip them (the JSON document then "+
 				"carries no findings block)")
+		version = flag.Bool("version", false,
+			"print the build provenance (code commit, embedded data commit, Go version) and exit")
 	)
 	flag.Parse()
+
+	// Version answers with no upstream call and no run store, so it works on a
+	// machine with no network and in a checkout with no data/ — the two places
+	// an operator most needs to know which binary they are holding.
+	if *version {
+		printVersion(os.Stdout, progName)
+		return
+	}
+	if *refMaxAge <= 0 {
+		fmt.Fprintln(os.Stderr, "-ref-max-age must be positive")
+		os.Exit(2)
+	}
 
 	run, err := resolveDirection(*from, *to)
 	if err != nil {
@@ -113,12 +132,14 @@ func main() {
 		httpClient *http.Client
 		recorder   *snapshot.Recorder
 	)
-	ref, err := referenceProvider(*refName)
+	// The benchmark is resolved before recording because a manifest names its
+	// source, and built after it because every provider must share the
+	// recording client. See referencePlan.
+	refPlan, err := planReference(*refName)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	refProvider := ref.provider
 	dexClient := &dex.Client{}
 
 	if *record != "" {
@@ -137,18 +158,23 @@ func main() {
 			Sizes: sizeStrings(sizes),
 			Sources: snapshot.Sources{
 				Horizon:   snapshot.SourceRef{BaseURL: dex.DefaultHorizonURL},
-				Reference: snapshot.SourceRef{Provider: refProvider.Name(), BaseURL: ref.baseURL},
+				Reference: refPlan.source,
 			},
+			Notes:       refPlan.notes,
 			GitRevision: gitRevision(),
 		}
 		httpClient = &http.Client{Transport: recorder, Timeout: 30 * time.Second}
 		dexClient.HTTPClient = httpClient
-		ref.setClient(httpClient)
+	}
+
+	refProvider, refWarning := refPlan.build(httpClient, *refMaxAge)
+	if refWarning != "" {
+		fmt.Fprintln(os.Stderr, refWarning)
 	}
 
 	eng := &route.Engine{
 		DEX:     dexClient,
-		RefRate: &refrate.Checked{Inner: refProvider},
+		RefRate: refProvider,
 		// Records the ledger range the ladder's rungs were priced across.
 		Ledgers: dexClient,
 	}
@@ -237,6 +263,10 @@ func main() {
 	if !result.Viable() {
 		os.Exit(1)
 	}
+}
+
+func checkedReferenceProvider(provider refrate.Provider, maxAge time.Duration) refrate.Provider {
+	return &refrate.Checked{Inner: provider, MaxAge: maxAge}
 }
 
 // corridorCodes returns the destination asset codes of all registered corridors
@@ -363,9 +393,93 @@ func refProviderNames() []string {
 	return names
 }
 
-// refHelp returns the help text for the -ref flag, listing all available providers.
+// refHelp returns the help text for the -ref flag.
+//
+// Empty is the default and means the server's own stack (refrate.DefaultStack):
+// two cross-checked providers plus a diagnostic. Naming a provider forces a
+// single-provider benchmark, which is uncorroborated by construction and
+// therefore only useful for isolating one feed.
 func refHelp() string {
-	return fmt.Sprintf("reference rate provider: %s", strings.Join(refProviderNames(), ", "))
+	return fmt.Sprintf(
+		"reference rate provider: empty uses the same cross-checked stack as wayfared; "+
+			"a name forces that provider alone (%s)",
+		strings.Join(refProviderNames(), ", "))
+}
+
+// referencePlan is what -ref resolves to before any recording client exists.
+//
+// It carries the manifest metadata (which provider a reader would find behind
+// the figures) separately from the provider itself, because the provider must
+// be built with the recording HTTP client so a snapshot captures every
+// reference request. It is a type rather than two inline branches in main so
+// the default and the override can be tested without running a measurement.
+type referencePlan struct {
+	single   bool
+	override refSource
+	source   snapshot.SourceRef
+	notes    []string
+}
+
+// planReference resolves the -ref flag.
+//
+// Empty means the server's stack: two scored providers and a diagnostic,
+// built by refrate.DefaultStack. A name means that provider alone, and the
+// result is uncorroborated by construction — the same figure the API would
+// cross-check becomes a single observation, which is a different and weaker
+// claim. That is allowed explicitly, never by default.
+func planReference(name string) (referencePlan, error) {
+	plan := referencePlan{
+		source: snapshot.SourceRef{
+			Provider: "exchangerate-api",
+			BaseURL:  refrate.DefaultExchangeRateAPI,
+		},
+		notes: []string{
+			"secondary reference provider: currency-api at " + refrate.DefaultCurrencyAPI,
+			"diagnostic reference provider: floatrates at " + refrate.DefaultFloatRates,
+		},
+	}
+
+	clean := strings.TrimSpace(name)
+	if clean == "" {
+		return plan, nil
+	}
+
+	src, err := referenceProvider(clean)
+	if err != nil {
+		return referencePlan{}, err
+	}
+	plan.single = true
+	plan.override = src
+	plan.source = snapshot.SourceRef{Provider: src.provider.Name(), BaseURL: src.baseURL}
+	plan.notes = []string{
+		"single-provider reference override (-ref " + src.provider.Name() +
+			"): the reference mid is uncorroborated by construction",
+	}
+	return plan, nil
+}
+
+// build constructs the provider a run scores against. client may be nil; when
+// it is set it is the recording client every provider must share. maxAge is
+// the absolute freshness bound, applied outside each cache so a stale source
+// degrades through Cross instead of being served as fresh.
+//
+// The returned warning is non-empty for a single-provider override and is
+// printed once to stderr, so a reproduced figure cannot be mistaken for one
+// the server would have corroborated.
+func (p referencePlan) build(client *http.Client, maxAge time.Duration) (provider refrate.Provider, warning string) {
+	if !p.single {
+		return refrate.DefaultStack(refrate.StackConfig{Client: client, MaxAge: maxAge}), ""
+	}
+	if client != nil {
+		p.override.setClient(client)
+	}
+	// Cached for the same reason the default stack is: a ladder is a dozen
+	// quotes, and an override should not turn that into a dozen fetches.
+	return checkedReferenceProvider(&refrate.Cached{Inner: p.override.provider}, maxAge), fmt.Sprintf(
+		"note: -ref %s scores against a single reference provider; the result is\n"+
+			"uncorroborated by construction. The default stack cross-checks exchangerate-api\n"+
+			"with currency-api and diagnoses disagreements with floatrates.",
+		p.override.provider.Name())
 }
 
 // referenceProvider resolves the -ref flag.
@@ -397,6 +511,17 @@ func sizeStrings(sizes []decimal.Decimal) []string {
 		out[i] = s.String()
 	}
 	return out
+}
+
+// progName labels the -version line with the binary that printed it. It is a
+// constant rather than os.Args[0] because a renamed or vendored copy should not
+// print a name a reader cannot match to a release.
+const progName = "ladder"
+
+// printVersion writes the one-line build provenance (issue #707). It takes the
+// writer so the line is checkable without running main.
+func printVersion(w io.Writer, prog string) {
+	fmt.Fprintln(w, buildinfo.Get().Line(prog))
 }
 
 // gitRevision records which build captured a snapshot, so a fixture that
@@ -479,6 +604,10 @@ func requireCleanTree(dir string, allowDirty bool) (dirty bool, err error) {
 		strings.Join(files, "\n  "))
 }
 
+// now is the clock -json mode stamps measured_at with. It is a variable only
+// so the golden test (issue #668) can pin it; production never reassigns it.
+var now = time.Now
+
 // printJSON writes the shared wire shape and nothing else to stdout, so
 // `go run ./cmd/ladder -to GHSC -json | jq` works.
 func printJSON(result *route.LadderResult, pair string, findings *checks.Findings) {
@@ -502,7 +631,7 @@ func printJSON(result *route.LadderResult, pair string, findings *checks.Finding
 // the server attaches them, through route.WithFindings — the one composition
 // point — so a corridor measured by either binary carries the same facts.
 func encodeCorridorJSON(w io.Writer, result *route.LadderResult, pair string, findings *checks.Findings) error {
-	out := route.ToCorridorJSON(result, pair)
+	out := route.ToCorridorJSONAt(result, pair, now())
 	out = route.WithFindings(out, findings)
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

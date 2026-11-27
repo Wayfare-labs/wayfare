@@ -1,10 +1,3 @@
-// Package runstore keeps a tamper-evident history of corridor measurements.
-//
-// This file implements benchmark-vs-corridor movement: comparing consecutive
-// stored runs so that "the benchmark moved" and "the corridor moved" stay
-// distinguishable afterwards. runstore.Reference records both mids
-// deliberately (see Reference and docs/run-store.md); this is the code that
-// finally reads them apart.
 package runstore
 
 import (

@@ -305,12 +305,11 @@ hours.
 
 ## Load on upstreams
 
-One sweep is roughly sixty-eight Horizon calls across the three corridors —
-NGNC and GHSC each run twelve rungs with pathfinding plus a slippage probe on
-rungs above the probe threshold (28 calls each); KESC short-circuits as
-NO-MARKET after twelve pathfinding calls (12) — plus about twelve counterparty
-requests and two reference-provider calls, near eighty requests every six
-hours. That is negligible for Horizon at this cadence.
+One sweep is roughly thirty-six Horizon calls across the three corridors —
+twelve pathfinding calls per corridor, with the thin-liquidity warning derived
+from those rungs instead of a separate probe on every rung above 10 — plus
+about twelve counterparty requests and two reference-provider calls, near
+fifty requests every six hours. That is negligible for Horizon at this cadence.
 
 The reference providers are hit roughly **once per run** rather than once per
 rung, because `refrate.Cached` collapses a ladder's twelve identical rate
@@ -331,6 +330,8 @@ put a secret into the deployment, and this service holds none.
 | `-data` | `WAYFARE_DATA_DIR` | none | Run store directory; empty disables history |
 | `-schedule` | | `6h` | Measurement interval; `0` disables the scheduler |
 | `-serve` | | `true` | Serve HTTP; `false` runs the scheduler alone |
+| `-horizon` | | mainnet | Horizon base URL for pathfinding and ledger reads; empty means `https://horizon.stellar.org` |
+| `-horizon-secondary` | | none | A second Horizon, used only when the first is down — no HTTP response at all, or a 5xx. A 4xx is the primary answering this particular request and a 429 is a quota, so neither moves: another host would only be a way to ignore them. One host serves one ladder, so a price curve never mixes two providers' books, and the host that answered is recorded in the snapshot and named in the log. Empty is one Horizon, which is the default because a stopgap nobody configured is worse than one nobody can use |
 | `-timeout` | | `90s` | Ceiling on a live measurement. Each request's budget is 10s plus 6s per rung, capped at this value, and is returned in the `X-Measurement-Budget` header. A timeout returns `504` with code `upstream_timeout`, the `budget`, and `rungs_completed`. |
 | `-shutdown-grace` | | `30s` | On SIGTERM, how long in-flight requests (a live ladder) get to finish before the server closes |
 | `-verify-store` | | | Walk every chain and exit |
@@ -341,6 +342,7 @@ put a secret into the deployment, and this service holds none.
 | `-check-fresh` | | | Report corridors whose newest record is older than `-max-age` (or missing) and exit |
 | `-max-age` | | `12h` | Staleness ceiling for `-check-fresh`; default is two missed sweeps |
 | `-log-level` | `WAYFARE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `-version` | | | Print the build provenance — code commit, embedded data commit, Go version, and which source supplied each — and exit. Answers with no network and no run store, so it works when the service will not start |
 
 No secrets. No credentials to rotate — the store rotates itself, trimming chains
 over the window ceiling; see [run-store.md](run-store.md#rotating-a-chain).
@@ -514,6 +516,27 @@ Startup, port binding, and maintenance commands emit lifecycle events:
 - `msg="serving embedded history (read-only)"`: `corridors`
 - `msg="scheduler starting"`: `interval`, `corridors`
 - Maintenance failures: `msg="opening run store"`, `msg="listing corridors"`, `msg="rotating store"`, `msg="-check-fresh requires a store; none is configured"`
+
+#### 5. Horizon failover (`failover/failover.go`)
+
+Only a deployment that sets `-horizon-secondary` can emit these, and a ladder
+that fails over writes one line, not one per rung:
+
+- `msg="switched to the horizon failover host"` (`info`): `path`, `from`, `to`.
+  The configured Horizon was unreachable or returned a 5xx, and the second host
+  priced this ladder. This is the event the flag exists to make visible — a
+  stopgap in silent use is a stopgap nobody replaces.
+- `msg="horizon failover host also failed"` (`error`): the same three, plus
+  `status` when the second host answered with a 5xx and `error` when it could not
+  be reached. Both providers are out for this ladder, which is the corridor-wide
+  UNKNOWN the flag was meant to prevent. Reading the first line on its own looks
+  like a recovery, so the second level is what distinguishes a working stopgap
+  from no Horizon at all.
+
+A switch is also durable evidence, not only a log line: the snapshot's
+`sources.horizon.base_url`, each recorded interaction URL, and a note naming the
+failover host all carry the answering provider, so a published figure can be
+traced to the host whose bytes produced it ([snapshot-format.md](snapshot-format.md)).
 
 ### Destination and retention on Render
 

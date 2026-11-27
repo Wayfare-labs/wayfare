@@ -63,9 +63,10 @@ type cacheEntry struct {
 	// with a non-nil ready waits on it rather than starting its own fetch.
 	ready chan struct{}
 
-	rate      Rate
-	err       error
-	fetchedAt time.Time
+	rate           Rate
+	err            error
+	fetchedAt      time.Time
+	callerCanceled bool
 }
 
 func (c *Cached) now() time.Time {
@@ -107,8 +108,9 @@ func (c *Cached) Rate(ctx context.Context, base, quote string) (Rate, error) {
 		// A completed entry inside the TTL is a hit.
 		if ok && e.ready == nil && c.now().Sub(e.fetchedAt) < c.ttl() {
 			rate := e.rate
+			fetchedAt := e.fetchedAt
 			c.mu.Unlock()
-			rate.FetchedAt = e.fetchedAt
+			rate.FetchedAt = fetchedAt
 			return rate, nil
 		}
 
@@ -119,7 +121,18 @@ func (c *Cached) Rate(ctx context.Context, base, quote string) (Rate, error) {
 			c.mu.Unlock()
 			select {
 			case <-ready:
-				continue // re-evaluate; the result may still be an error
+				// If the fetcher failed only because its own caller
+				// canceled its context while ours is still live, loop
+				// and run our own fetch instead of inheriting its cancel.
+				if e.callerCanceled && ctx.Err() == nil {
+					continue
+				}
+				if e.err != nil {
+					return Rate{}, e.err
+				}
+				rate := e.rate
+				rate.FetchedAt = e.fetchedAt
+				return rate, nil
 			case <-ctx.Done():
 				return Rate{}, ctx.Err()
 			}
@@ -131,18 +144,25 @@ func (c *Cached) Rate(ctx context.Context, base, quote string) (Rate, error) {
 		c.mu.Unlock()
 
 		rate, err := c.fetch(ctx, base, quote)
+		callerCanceled := err != nil && ctx.Err() != nil
 
 		c.mu.Lock()
 		e.rate, e.err = rate, err
 		e.fetchedAt = c.now()
+		e.callerCanceled = callerCanceled
 		ready := e.ready
 		e.ready = nil
 		if err != nil {
-			// A failed fetch is not cached. Caching it would turn one
-			// transient outage into a TTL-long refusal, and — worse — a
-			// later reader could not tell a provider that is down now
-			// from one that was down an hour ago.
-			delete(c.entries, key)
+			// A failed fetch is handed directly to goroutines that waited
+			// on this in-flight entry (via e.err once ready closes) so a
+			// concurrent burst makes one upstream call, then dropped from
+			// c.entries so later callers retry. Errors — including
+			// ErrRateLimited with RetryAfter — are never cached past the
+			// in-flight burst, preserving the rule that a transient outage
+			// or quota reset never becomes a cached refusal.
+			if c.entries[key] == e {
+				delete(c.entries, key)
+			}
 		}
 		c.mu.Unlock()
 		close(ready)

@@ -23,12 +23,19 @@ rather than an error. See
 ## Recording a snapshot
 
 ```bash
-go run ./cmd/ladder -to NGNC -ref currency-api -record testdata/snapshots
+go run ./cmd/ladder -to NGNC -record testdata/snapshots
 ```
 
 That is the entire command. The ladder measures USDC → NGNC against live
 mainnet, and `-record` writes the verbatim upstream responses to a new
 directory under `testdata/snapshots/`.
+
+The reference benchmark is the same stack the server scores against
+(`refrate.DefaultStack`): exchangerate-api cross-checked with currency-api, and
+floatrates for attribution when the two disagree. Every provider shares the
+recording HTTP client, so the snapshot carries all of them and replays offline
+into the same `reference_agreement`. `-ref NAME` still forces one provider, but
+the result is then uncorroborated by construction (issue #869).
 
 ### What the command does
 
@@ -60,7 +67,7 @@ directory under `testdata/snapshots/`.
 |:-----|:--------|:--------|
 | `-to` | `NGNC` | Destination asset code (NGNC, GHSC, KESC) |
 | `-sizes` | `0.1,1,5,10,...,5000` | Comma-separated send amounts in USDC |
-| `-ref` | `exchangerate-api` | Reference rate provider: `exchangerate-api` or `currency-api` |
+| `-ref` | (empty) | Empty scores against the server's cross-checked stack; `exchangerate-api` or `currency-api` forces that provider alone, marked uncorroborated |
 | `-record` | (empty) | Record upstream responses as a snapshot; value is the parent directory |
 | `-json` | `false` | Emit JSON on stdout instead of the text table |
 | `-allow-dirty` | `false` | Record even though the working tree is modified, marking the manifest dirty |
@@ -186,6 +193,21 @@ snapshot: usdc-ngnc-20260821T223040Z has no recorded response for
 
 ---
 
+## Recorded response headers
+
+Manifests recorded under version 2 store an explicit allowlist of upstream response headers for each interaction. During replay, `Replayer.RoundTrip` reconstructs these headers on the response so retry, rate-limiting, and error-handling code paths can be tested realistically without live networks.
+
+### Allowed headers
+
+The allowlist is filtered by `snapshot.CleanHeaders`:
+
+- Exact headers: `Date`, `Retry-After`, `X-Request-Id`
+- Header prefixes: `Content-Type`, `Content-Length`, `Cache-Control`, `ETag`, `Stellar-`, `X-Ratelimit-`
+
+All other headers (such as sensitive cookies or transient infrastructure headers) are stripped at record time. Old version 1 snapshots without header dictionaries continue to load and replay default headers (`Content-Type`).
+
+---
+
 ## The three committed snapshots
 
 | Corridor | State | Why it is a required fixture |
@@ -207,7 +229,7 @@ that parses upstream responses changes, or when the upstream format changes,
 the snapshot must be re-captured against live mainnet:
 
 ```bash
-go run ./cmd/ladder -to NGNC -ref currency-api -record testdata/snapshots
+go run ./cmd/ladder -to NGNC -record testdata/snapshots
 ```
 
 The new snapshot will have a new timestamp directory. Delete the old one

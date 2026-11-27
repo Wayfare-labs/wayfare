@@ -3,6 +3,7 @@ package analysis
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -13,8 +14,9 @@ import (
 // reads, at a given sequence number so ordering is easy to assert.
 func divRecord(seq int64, divergencePct string) *runstore.Record {
 	return &runstore.Record{
-		Seq:      seq,
-		Corridor: "USDC-NGNC",
+		Seq:        seq,
+		Corridor:   "USDC-NGNC",
+		RecordedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(seq-1) * 6 * time.Hour),
 		Reference: runstore.Reference{
 			DivergencePct: divergencePct,
 		},

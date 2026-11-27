@@ -26,6 +26,8 @@ classifications:
 | [Parallel status](#parallel-status) | Was a street-market rate available? | `refrate/parallel.go` |
 | [Quote kind](#quote-kind) | Which rail priced this quote — on-chain DEX or an anchor's own rate? | `route/route.go` |
 | [Divergence trend](#divergence-trend) | Are the two reference providers agreeing more or less over time? | `analysis/divergence.go` |
+| [Benchmark movement / Corridor movement](#benchmark-movement--corridor-movement) | Did the headline loss change because the benchmark moved, or because the corridor moved? | `runstore/movement.go` |
+| [Measurability](#measurability) | Did a scheduled sweep produce a priced ladder? | `runstore/measurability.go` |
 
 ---
 
@@ -354,6 +356,52 @@ reported alongside the corridor's history and never fed back into it.
 **Source:** `analysis/divergence.go` — `DivergencePctSeries()`,
 `DivergenceHistory()`. `server/trend.go` — `DivergenceStatsJSON`.
 Checked 2026-08-30.
+
+---
+
+## Benchmark movement / Corridor movement
+
+**Question:** Did the headline floor-loss change because the benchmark moved, or because the corridor moved?
+
+A loss figure can worsen in two completely different ways: the exchange rate offered by the corridor fell, or the independent mid used to score it rose. Without separating them, a corridor that is holding its rate looks broken when the benchmark moves against it. `runstore/movement.go` reads both mids already stored per run and attributes each change.
+
+| Field | Meaning |
+|:---|:---|
+| `benchmark_pct` | How much the benchmark's own mid moved: (mid₂ − mid₁) / mid₁ × 100. A positive value means the reference rate appreciated. |
+| `corridor_pct` | How much the corridor's own effective rate moved: (rate₂ − rate₁) / rate₁ × 100, measured against the corridor's earlier rate so a benchmark move cannot appear in it. |
+| `loss_pct_change` | The change in the headline floor loss between the two runs (loss₂ − loss₁). |
+
+A `loss_pct_change` that worsened while `corridor_pct` held at zero means the yardstick moved, not the corridor. A `corridor_pct` drop with a stable `benchmark_pct` means the corridor itself deteriorated.
+
+**An unknown is never zero.** An unpriced run carries no effective rate, so `corridor_pct` and `loss_pct_change` are left empty. A run whose benchmark was never scorable leaves `benchmark_pct` empty. A measured `"0"` (both runs priced, corridor genuinely still) is distinct from an empty field (no price to compare). `corridor_pct` is most often confused with `loss_pct_change` — the corridor's own rate can hold steady while the headline loss worsens because the benchmark appreciated.
+
+**Derived on read.** The comparison appends nothing to the run chain, so no record hash changes and no migration is required.
+
+**Source:** `runstore/movement.go` — `BenchmarkMoved()`, `BenchmarkMovement()`.
+Checked 2026-08-25.
+
+---
+
+## Measurability
+
+**Question:** Did a scheduled sweep produce a priced ladder?
+
+Uptime of the *measurement*, not of the service. A sweep can complete successfully and still produce no measurement — if Horizon returned no path, there is no price and no loss figure to analyse. Measurability tracks how often the corridor is *priceable*, distinct from how often the service is *reachable*.
+
+| State | `measurable` | Meaning |
+|:---|:---|:---|
+| **Measurable** | `true` | The sweep produced at least one priced rung. A ladder whose smaller sizes failed while larger ones answered is still measurable. |
+| **Not measurable** | `false` | The sweep ran and Horizon answered, but no priced rung was obtained — a `NO-MARKET` corridor, an `UNKNOWN` outage, or a ladder where every rung failed to price. |
+
+`uptime_pct` is the fraction of recorded runs that were measurable. With no recorded history it is absent (uptime unknown), never zero — a corridor that *was not measured* is not a corridor that was *never measurable*.
+
+**A `NO-MARKET` corridor is not measurable.** A service that is up while Horizon is down scores 100% HTTP uptime and 0% measurement uptime. The distinction is the point. Measurability is most often confused with [Integrity](#integrity): `DIRECT` means an independent market exists; *measurable* means a sweep priced it in this run. A `DIRECT` corridor that prices badly is measurable; a `NO-MARKET` corridor is not, regardless of its integrity state.
+
+**Derived on read.** No run-record field is added; the reader classifies existing records from their stored integrity string and rung data.
+
+**Source:** `runstore/measurability.go` — `Measurable()`, `MeasurabilityOf()`,
+`MeasurabilityHistory()`, `SummarizeMeasurability()`.
+Checked 2026-08-25.
 
 ---
 

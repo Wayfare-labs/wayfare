@@ -132,7 +132,11 @@ func computeScriptHashes(html []byte) []string {
 		}
 		content := html[bodyStart : bodyStart+bodyEnd]
 		if len(bytes.TrimSpace(content)) > 0 {
-			h := sha256.Sum256(content)
+			// HTML5 preprocessing normalizes CRLF and CR to LF before hashing
+			// inline <script> text, so normalize before SHA-256 (#831).
+			normalized := bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
+			normalized = bytes.ReplaceAll(normalized, []byte("\r"), []byte("\n"))
+			h := sha256.Sum256(normalized)
 			hashes = append(hashes, fmt.Sprintf("'sha256-%s'", base64.StdEncoding.EncodeToString(h[:])))
 		}
 		idx = bodyStart + bodyEnd + len(closeTag)
@@ -153,6 +157,21 @@ func uiCSP() string {
 			return
 		}
 		hashes := computeScriptHashes(body)
+		var rendered bytes.Buffer
+		if err := uiTemplate.Execute(&rendered, uiPageData{}); err == nil {
+			for _, rh := range computeScriptHashes(rendered.Bytes()) {
+				found := false
+				for _, eh := range hashes {
+					if eh == rh {
+						found = true
+						break
+					}
+				}
+				if !found {
+					hashes = append(hashes, rh)
+				}
+			}
+		}
 		scriptSrc := "'self'"
 		if len(hashes) > 0 {
 			scriptSrc += " " + strings.Join(hashes, " ")

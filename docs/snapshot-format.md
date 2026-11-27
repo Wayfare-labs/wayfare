@@ -7,7 +7,7 @@ This document is the contract. The `snapshot` package implements it, and
 issues #20 and #21 build on it — so it is written as a spec, not as a
 description of the code.
 
-**Format:** `wayfare.snapshot`, **version 1**.
+**Format:** `wayfare.snapshot`, **version 2** (version 1 supported for backwards compatibility).
 
 ---
 
@@ -97,6 +97,18 @@ caught by its hash.
 ```
 
 `dirty` appears only when true — see rule 9.
+
+### Which Horizon a snapshot came from
+
+`sources.horizon.base_url` and each interaction's `url` name the host whose
+bytes are in `responses/`, not the address the process was configured with.
+Normally they are the same. They differ when `-horizon-secondary` is set and the
+configured host was down: the failover transport sits under the recorder, so
+what gets archived is the second provider's answer and the primary's refusal is
+discarded rather than recorded as ground truth (docs/deployment.md#configuration).
+
+A run answered by the failover host carries a `notes` line naming it, so the
+provenance is readable without comparing URLs one by one.
 
 ---
 
@@ -197,8 +209,14 @@ manifest.
 ## Capturing
 
 ```bash
-go run ./cmd/ladder -to NGNC -ref currency-api -record testdata/snapshots
+go run ./cmd/ladder -to NGNC -record testdata/snapshots
 ```
+
+By default the run records the same reference stack the server scores against
+— exchangerate-api, currency-api and, on a disagreement, floatrates — because
+all three share the recording HTTP client. `-ref NAME` forces one provider; the
+manifest then names that provider alone and the run is uncorroborated by
+construction.
 
 `cmd/ladder` recording is **opt-in and off by default**. `wayfared` also
 records complete scheduled sweeps when a persistent data directory is

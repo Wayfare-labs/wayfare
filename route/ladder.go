@@ -119,6 +119,8 @@ type LadderResult struct {
 	Request LadderRequest
 	Rungs   []Rung
 
+	probeAmount decimal.Decimal
+
 	// Curve is the measured effective-rate relationship across priced and
 	// unpriced rungs. Unpriced rungs remain explicit holes; no interpolation
 	// or monotonicity assumption is applied.
@@ -356,9 +358,61 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].LessThan(sorted[j]) })
 
 	out := &LadderResult{
-		Request: req,
-		Rungs:   make([]Rung, len(sorted)),
+		Request:     req,
+		Rungs:       make([]Rung, len(sorted)),
+		probeAmount: e.slippageProbe(),
 	}
+	setUnmeasured := func(err error) {
+		for i, size := range sorted {
+			out.Rungs[i] = Rung{SendAmount: size, Err: err}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		setUnmeasured(err)
+		return out, err
+	}
+
+	// A ladder is one measurement, so every size must be scored against the
+	// same benchmark. Fetch before starting any Horizon work: a missing
+	// reference fails the ladder without spending pathfinder requests.
+	if e.RefRate == nil {
+		err := fmt.Errorf("route: a reference rate provider is required; " +
+			"without one the engine can rank routes but cannot tell a good one from a bad one")
+		setUnmeasured(err)
+		out.summarise()
+		return out, nil
+	}
+	hasValidSize := false
+	for i, size := range sorted {
+		if size.IsZero() || size.IsNegative() {
+			out.Rungs[i] = Rung{
+				SendAmount: size,
+				Err:        fmt.Errorf("route: send amount must be positive, got %s", size),
+			}
+			continue
+		}
+		hasValidSize = true
+	}
+	if !hasValidSize {
+		out.summarise()
+		return out, nil
+	}
+	ref, err := e.RefRate.Rate(ctx, req.ReferenceBase, req.ReferenceQuote)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			setUnmeasured(ctxErr)
+			return out, ctxErr
+		}
+		err = fmt.Errorf("route: reference rate unavailable: %w", err)
+		setUnmeasured(err)
+		out.summarise()
+		return out, nil
+	}
+	if err := ctx.Err(); err != nil {
+		setUnmeasured(err)
+		return out, err
+	}
+	parallel := e.parallelAgainst(ctx, ref)
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, ladderConcurrency)
@@ -370,13 +424,14 @@ func (e *Engine) Ladder(ctx context.Context, req LadderRequest) (*LadderResult, 
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res, err := e.Quote(ctx, Request{
+			res, err := e.quoteWith(ctx, Request{
 				SendAsset:      req.SendAsset,
 				SendAmount:     size,
 				ReceiveAsset:   req.ReceiveAsset,
 				ReferenceBase:  req.ReferenceBase,
 				ReferenceQuote: req.ReferenceQuote,
-			})
+				skipSlippage:   true,
+			}, ref, parallel)
 			rung := Rung{SendAmount: size, Result: res, Err: err}
 			if err == nil {
 				rung.Ledger = e.observedLedger(ctx)
@@ -493,6 +548,16 @@ func (l *LadderResult) computeMarginalCosts() {
 	}
 }
 
+func rungRate(q Quote) decimal.Decimal {
+	if q.EffectiveRate.IsPositive() {
+		return q.EffectiveRate
+	}
+	if q.SendAmount.IsZero() {
+		return decimal.Zero
+	}
+	return q.ReceiveAmount.Div(q.SendAmount)
+}
+
 func (l *LadderResult) summarise() {
 	var (
 		anyPriced   bool
@@ -502,6 +567,20 @@ func (l *LadderResult) summarise() {
 		chainMap    = map[string]DependencyNode{}
 		firstErr    error
 	)
+
+	probeRate := decimal.Zero
+	for i := range l.Rungs {
+		r := &l.Rungs[i]
+		if !r.Priced() || !r.SendAmount.Equal(l.probeAmount) {
+			continue
+		}
+		q := r.Result.Quotes[0]
+		if !q.SendAmount.IsZero() {
+			probeRate = rungRate(q)
+		}
+		break
+	}
+	probePriced := probeRate.IsPositive()
 
 	for i := range l.Rungs {
 		r := l.Rungs[i]
@@ -556,6 +635,15 @@ func (l *LadderResult) summarise() {
 		}
 		anyPriced = true
 		q := r.Result.Quotes[0]
+
+		if probePriced && r.SendAmount.GreaterThan(l.probeAmount) {
+			pct := pctWorse(probeRate, rungRate(q))
+			if pct.GreaterThan(thinLiquidityThreshold) {
+				l.Rungs[i].Result.Quotes[0].Warnings = append(
+					l.Rungs[i].Result.Quotes[0].Warnings,
+					thinLiquidityWarning(pct, l.probeAmount, l.Request.SendAsset.Code))
+			}
+		}
 
 		// The best path's intermediate issuers are a counterparty fact about
 		// this rung. Computed from hop data already returned by pathfinding,

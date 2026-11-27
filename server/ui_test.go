@@ -86,19 +86,20 @@ func TestUIThemeToggle(t *testing.T) {
 	}
 }
 
-// TestUIEvidenceDrawer guards issue #294: evidence is progressively
-// disclosed rather than dumped, and provenance is stated next to the
-// headline.
+// TestUIEvidenceDrawer guards issues #294, #647 and #870: evidence is
+// progressively disclosed rather than dumped, provenance is stated next to
+// the headline, every check says where its evidence came from and how old the
+// observation is, and a check without evidence renders no drawer at all.
 //
-// The original implementation built a headline <details> drawer from fields
-// the server did not yet publish (reference_fetched_at, reference_as_of).
-// Main's headline publishes provenance inline instead — pair, mid, provider
-// source and measurement time — which satisfies the issue without inventing
-// fields, and adds dual-provider provenance (reference_secondary_*). This
-// test pins main's headline provenance plus the per-check disclosure, and
-// requires every evidence line to carry source AND observation time.
+// The original #294 implementation built a headline <details> drawer from
+// fields the server did not yet publish (reference_fetched_at,
+// reference_as_of). Main's headline publishes provenance inline instead —
+// pair, mid, provider source and measurement time — which satisfies the issue
+// without inventing fields, and adds dual-provider provenance
+// (reference_secondary_*). This test pins that headline provenance plus the
+// per-check disclosure #647 added: each evidence line links its source when
+// it is a URL (opening with rel=noopener) and carries the observation's age.
 func TestUIEvidenceDrawer(t *testing.T) {
-	t.Skip("pins UI markup that server/index.html on main does not contain; fails on main independently of the server/CLI changes in this PR")
 	raw, err := uiFS.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
@@ -115,13 +116,27 @@ func TestUIEvidenceDrawer(t *testing.T) {
 		"d.reference_secondary_mid",
 		// Per-check evidence behind its own disclosure.
 		`<details class="f-ev">`,
-		// Each check evidence line carries source AND timestamp. This exact
-		// arrow form belongs to the checks renderer; metrics uses entities
-		// and already had timestamps.
-		"→ ${esc(e.observed)} · ${esc(e.observed_at)}",
+		// Each check evidence line carries its source (linked when it is a
+		// URL) AND the age of the observation; the check itself says when it
+		// ran. This exact arrow form belongs to the checks renderer.
+		"${evidenceSource(e.source)} → ${esc(e.observed)} · observed ${observationAge(e.observed_at)}",
+		"checked ${observationAge(c.observed_at)}",
+		// The age is relative, with the exact time kept machine-readable and
+		// on hover; a zero or missing time is never shown as fresh.
+		`<time class="f-age" datetime="${esc(iso)}"`,
+		"formatRelativeAge(iso)",
+		"time not recorded",
+		// Links open with rel=noopener, and only http(s) sources become links.
+		`target="_blank" rel="noopener noreferrer"`,
+		"url.protocol !== 'https:' && url.protocol !== 'http:'",
+		// A check without evidence renders no drawer at all (issue #870):
+		// the whole block is gated on a non-empty evidence list, so an empty
+		// drawer can never claim "evidence exists and is empty".
+		"const evidenceBlock = evidence",
+		"${evidenceBlock}",
 	} {
 		if !strings.Contains(page, want) {
-			t.Errorf("UI missing %q; evidence would not be disclosed progressively", want)
+			t.Errorf("UI missing %q; check evidence would not show its source and age", want)
 		}
 	}
 }
@@ -154,7 +169,7 @@ func TestUIBenchmarkPanel(t *testing.T) {
 		"chart-threshold",
 		"chart-point",
 		// The engine's own loss figure drives the geometry; nothing else.
-		"parseFloat(r.quote.loss_pct)",
+		"geometryNumber(r.quote.loss_pct)",
 		// Reference provenance printed with the headline (same figures the
 		// original bench panel printed).
 		"d.reference_mid",
@@ -312,5 +327,43 @@ func TestUIPrintableCorridorReport(t *testing.T) {
 
 	if strings.Contains(page, "@media print") && strings.Contains(page, "@media print {\n    @import") {
 		t.Error("print layout must not introduce print-time imports")
+	}
+}
+
+// TestComputeScriptHashesNormalizesCRLF guards issue #831: a Windows checkout
+// with core.autocrlf=true embeds CRLF bytes into index.html, while browsers
+// normalize CRLF/CR to LF before checking inline script-src SHA-256 hashes.
+func TestComputeScriptHashesNormalizesCRLF(t *testing.T) {
+	lfHTML := "<!doctype html><html><head><script>\nconst a = 1;\nconst b = 2;\n</script></head></html>"
+	crlfHTML := strings.ReplaceAll(lfHTML, "\n", "\r\n")
+	crHTML := strings.ReplaceAll(lfHTML, "\n", "\r")
+
+	lfHashes := computeScriptHashes([]byte(lfHTML))
+	crlfHashes := computeScriptHashes([]byte(crlfHTML))
+	crHashes := computeScriptHashes([]byte(crHTML))
+
+	if len(lfHashes) != 1 || len(crlfHashes) != 1 || len(crHashes) != 1 {
+		t.Fatalf("unexpected hash counts: lf=%d crlf=%d cr=%d", len(lfHashes), len(crlfHashes), len(crHashes))
+	}
+	if crlfHashes[0] != lfHashes[0] {
+		t.Errorf("CRLF hash %s != LF hash %s", crlfHashes[0], lfHashes[0])
+	}
+	if crHashes[0] != lfHashes[0] {
+		t.Errorf("CR hash %s != LF hash %s", crHashes[0], lfHashes[0])
+	}
+
+	// Also verify both inline <script> blocks in the embedded index.html when
+	// checked out with Windows CRLF line endings.
+	lfEmbedded := strings.ReplaceAll(strings.ReplaceAll(indexHTML(t), "\r\n", "\n"), "\r", "\n")
+	crlfEmbedded := strings.ReplaceAll(lfEmbedded, "\n", "\r\n")
+	gotLF := computeScriptHashes([]byte(lfEmbedded))
+	gotCRLF := computeScriptHashes([]byte(crlfEmbedded))
+	if len(gotLF) < 2 || len(gotCRLF) != len(gotLF) {
+		t.Fatalf("expected >=2 embedded script hashes, got lf=%d crlf=%d", len(gotLF), len(gotCRLF))
+	}
+	for i := range gotLF {
+		if gotCRLF[i] != gotLF[i] {
+			t.Errorf("embedded script[%d] CRLF hash %s != LF hash %s", i, gotCRLF[i], gotLF[i])
+		}
 	}
 }

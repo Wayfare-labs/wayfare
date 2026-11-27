@@ -1,4 +1,3 @@
-// Package route ranks the ways money can travel a corridor, and says plainly
 // when none of them are worth taking.
 //
 // # Why a verdict, and not just a ranking
@@ -73,6 +72,8 @@ var (
 	ThresholdGood = decimal.NewFromInt(3)
 	ThresholdFair = decimal.NewFromInt(8)
 	ThresholdPoor = decimal.NewFromInt(20)
+
+	thinLiquidityThreshold = decimal.NewFromInt(2)
 )
 
 func (v Verdict) String() string {
@@ -310,6 +311,8 @@ type Request struct {
 	// the tokens, since nobody publishes a mid-market rate for "USDC".
 	ReferenceBase  string
 	ReferenceQuote string
+
+	skipSlippage bool
 }
 
 // Result is the engine's full answer.
@@ -415,6 +418,19 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	return e.quoteWith(ctx, req, ref, e.parallelAgainst(ctx, ref))
+}
+
+// quoteWith prices one request against a reference snapshot already fetched
+// by its caller. Ladder uses this seam so every rung and its summary share the
+// same official and parallel observations.
+func (e *Engine) quoteWith(ctx context.Context, req Request, ref refrate.Rate, parallel *refrate.Parallel) (*Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if req.SendAmount.IsZero() || req.SendAmount.IsNegative() {
+		return nil, fmt.Errorf("route: send amount must be positive, got %s", req.SendAmount)
+	}
 
 	// A benchmark the providers cannot agree on is not a benchmark. Scoring
 	// against either mid would produce a loss figure whose value depends on
@@ -422,7 +438,7 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 	// so the corridor is reported with no verdict and the reason attached,
 	// rather than with a number that looks like a measurement.
 	if !ref.Scorable() {
-		return e.unscored(ctx, req, ref)
+		return e.unscored(ctx, req, ref, parallel)
 	}
 
 	res := &Result{
@@ -432,10 +448,7 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 		ReferenceAsOf:   ref.AsOf,
 		Reference:       ref,
 	}
-	if e.Parallel != nil {
-		p := refrate.ParallelAgainst(ctx, e.Parallel, ref)
-		res.Parallel = &p
-	}
+	res.Parallel = parallel
 
 	if e.DEX != nil {
 		d, err := e.quoteDEX(ctx, req, ref)
@@ -500,13 +513,24 @@ func (e *Engine) Quote(ctx context.Context, req Request) (*Result, error) {
 	return res, nil
 }
 
+// parallelAgainst fetches the optional parallel reference exactly once for a
+// quote or ladder. A failed parallel provider is represented in the result,
+// never promoted into a failure of the official measurement.
+func (e *Engine) parallelAgainst(ctx context.Context, ref refrate.Rate) *refrate.Parallel {
+	if e.Parallel == nil {
+		return nil
+	}
+	p := refrate.ParallelAgainst(ctx, e.Parallel, ref)
+	return &p
+}
+
 // unscored reports a corridor whose benchmark could not be trusted.
 //
 // The routes are still discovered and their structure still classified — that
 // part does not depend on the reference rate, and integrity is exactly the
 // thing worth reporting when pricing cannot be. What is withheld is every
 // verdict, the loss figures, and any recommendation.
-func (e *Engine) unscored(ctx context.Context, req Request, ref refrate.Rate) (*Result, error) {
+func (e *Engine) unscored(ctx context.Context, req Request, ref refrate.Rate, parallel *refrate.Parallel) (*Result, error) {
 	res := &Result{
 		Request:         req,
 		ReferenceMid:    ref.Mid,
@@ -514,10 +538,7 @@ func (e *Engine) unscored(ctx context.Context, req Request, ref refrate.Rate) (*
 		ReferenceAsOf:   ref.AsOf,
 		Reference:       ref,
 	}
-	if e.Parallel != nil {
-		p := refrate.ParallelAgainst(ctx, e.Parallel, ref)
-		res.Parallel = &p
-	}
+	res.Parallel = parallel
 
 	if e.DEX != nil {
 		if d, err := e.quoteDEX(ctx, req, ref); err == nil {
@@ -820,6 +841,26 @@ func allMeasured(nodes []DependencyNode) bool {
 	return true
 }
 
+func (e *Engine) slippageProbe() decimal.Decimal {
+	if e.ProbeAmount.IsZero() {
+		return decimal.NewFromInt(10)
+	}
+	return e.ProbeAmount
+}
+
+func pctWorse(probeRate, rate decimal.Decimal) decimal.Decimal {
+	if probeRate.IsZero() {
+		return decimal.Zero
+	}
+	return probeRate.Sub(rate).Div(probeRate).Mul(decimal.NewFromInt(100))
+}
+
+func thinLiquidityWarning(pct, probe decimal.Decimal, code string) string {
+	return fmt.Sprintf(
+		"thin liquidity: this size gets %s%% worse pricing than a %s %s trade",
+		pct.StringFixed(1), probe, code)
+}
+
 // quoteDEX prices the on-chain leg via Horizon pathfinding, and classifies
 // the corridor's structure from the same set of paths.
 func (e *Engine) quoteDEX(ctx context.Context, req Request, ref refrate.Rate) (*dexResult, error) {
@@ -896,16 +937,14 @@ func (e *Engine) quoteDEX(ctx context.Context, req Request, ref refrate.Rate) (*
 		}
 	}
 
-	probe := e.ProbeAmount
-	if probe.IsZero() {
-		probe = decimal.NewFromInt(10)
-	}
-	if req.SendAmount.GreaterThan(probe) {
-		if s, err := e.DEX.MeasureSlippage(ctx, req.SendAsset, req.SendAmount, req.ReceiveAsset, probe); err == nil {
-			if s.PctWorse.GreaterThan(decimal.NewFromInt(2)) {
-				q.Warnings = append(q.Warnings, fmt.Sprintf(
-					"thin liquidity: this size gets %s%% worse pricing than a %s %s trade",
-					s.PctWorse.StringFixed(1), probe, req.SendAsset.Code))
+	if !req.skipSlippage {
+		probe := e.slippageProbe()
+		if req.SendAmount.GreaterThan(probe) {
+			if s, err := e.DEX.MeasureSlippage(ctx, req.SendAsset, req.SendAmount, req.ReceiveAsset, probe); err == nil {
+				if s.PctWorse.GreaterThan(thinLiquidityThreshold) {
+					q.Warnings = append(q.Warnings, thinLiquidityWarning(
+						s.PctWorse, probe, req.SendAsset.Code))
+				}
 			}
 		}
 	}
