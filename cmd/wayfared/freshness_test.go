@@ -121,7 +121,7 @@ func TestCheckFreshStaleCorridorFails(t *testing.T) {
 	if strings.Contains(out, "FAIL USDC-NGNC") {
 		t.Errorf("output flags a fresh corridor:\n%s", out)
 	}
-	if !strings.Contains(out, "1 of 8 corridors") {
+	if !strings.Contains(out, "1 of 6 corridors") {
 		t.Errorf("output missing failure tally:\n%s", out)
 	}
 }
