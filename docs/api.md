@@ -51,7 +51,7 @@ A successful response contains:
 - `reference_agreement`, optional secondary mid/source/divergence/note, and `scored` — the two-provider benchmark cross-check.
 - `reference_diagnostic` — optional third-provider attribution of a `DISAGREE`: `source`, `mid`, optional `as_of`, `outlier`, the two relative distances, and optional `reason`. It is evidence only; `reference_mid`, `reference_source` and `scored` are chosen exactly as they would be without it. See [reference providers](reference-providers.md).
 - `reference_fetched_at` — when the benchmark was obtained, when available.
-- `floor_loss_pct`, `floor_size`, `worst_loss_pct`, `worst_size` — ladder summary values.
+- `floor_loss_pct`, `floor_size`, `worst_loss_pct`, `worst_size` — scored ladder summary values. These fields are omitted when `scored` is `false`; an untrusted reference does not produce a floor or worst-loss measurement.
 - `recommended` — the best acceptable quote, or JSON `null` when no size is recommendable.
 - `recommended_size` — the send size of the recommendation, when one exists.
 - `finding` — explanatory prose about the measurement.
@@ -73,6 +73,15 @@ Any rung that priced may also include `ledger`, the chain head observed right af
 The first valid priced rung has no marginal cost. Missing rungs are skipped, never treated as zero. The current marginal classification is available on the internal ladder result as `improving`, `flat`, `worsening`, or `undetermined`; fewer than two valid priced points are undetermined.
 
 A live measurement failure is served from the latest stored run when one exists, labelled `live: false`. If no stored run exists, the request returns an error rather than fabricating a reading.
+
+When `scored` is `false`, no verdict or loss was derived from the reference. The
+four ladder summary fields above are omitted, as are each rung's `loss_pct` and
+`loss_amount`, its `cost` decomposition, and reference-dependent marginal-cost
+fields. Clients must treat these fields as unknown when absent; they must not
+default them to `"0"` or `"0.00"`. Structural integrity, dependencies, quoted
+receive amounts and effective rates remain available. History and trend
+responses apply the same omission to unscored runs, including older stored
+runs whose original zero values were produced before this rule.
 
 On a history-first instance, a corridor with no stored run is answered before anything is measured:
 

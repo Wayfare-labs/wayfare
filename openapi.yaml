@@ -371,10 +371,6 @@ components:
         - reference_pair
         - reference_agreement
         - scored
-        - floor_loss_pct
-        - floor_size
-        - worst_loss_pct
-        - worst_size
         - live
         - rungs
         - measured_at
@@ -431,12 +427,16 @@ components:
           type: string
         floor_loss_pct:
           $ref: '#/components/schemas/Decimal'
+          description: Present only when scored is true; omitted when the reference is unscored.
         floor_size:
           $ref: '#/components/schemas/Decimal'
+          description: Present only when scored is true; omitted when the reference is unscored.
         worst_loss_pct:
           $ref: '#/components/schemas/Decimal'
+          description: Present only when scored is true; omitted when the reference is unscored.
         worst_size:
           $ref: '#/components/schemas/Decimal'
+          description: Present only when scored is true; omitted when the reference is unscored.
         recommended:
           $ref: '#/components/schemas/Quote'
           nullable: true
@@ -493,6 +493,7 @@ components:
           type: integer
         cost:
           type: object
+          description: Present only when a scored cost decomposition is available.
     Quote:
       type: object
       properties:
@@ -508,6 +509,7 @@ components:
           $ref: '#/components/schemas/Decimal'
         loss_pct:
           $ref: '#/components/schemas/Decimal'
+          description: Omitted when the quote has no derived verdict.
         verdict:
           type: string
           enum: [GOOD, FAIR, POOR, UNUSABLE, UNKNOWN]
@@ -588,14 +590,19 @@ components:
             $ref: '#/components/schemas/Asset'
         reference:
           type: object
+          description: The scored_against property is omitted when the stored reference was unscored.
         floor_loss_pct:
           $ref: '#/components/schemas/Decimal'
+          description: Omitted when the stored run was unscored.
         floor_size:
           $ref: '#/components/schemas/Decimal'
+          description: Omitted when the stored run was unscored.
         worst_loss_pct:
           $ref: '#/components/schemas/Decimal'
+          description: Omitted when the stored run was unscored.
         worst_size:
           $ref: '#/components/schemas/Decimal'
+          description: Omitted when the stored run was unscored.
         finding:
           type: string
         rungs:

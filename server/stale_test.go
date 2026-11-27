@@ -120,6 +120,71 @@ func TestStaleReadingIsLabelled(t *testing.T) {
 	}
 }
 
+func TestStaleUnscoredReadingOmitsLegacyZeroMeasurements(t *testing.T) {
+	st, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &runstore.Record{
+		RecordedAt: time.Date(2026, 11, 25, 1, 0, 0, 0, time.UTC),
+		Corridor:   "USDC-NGNC",
+		Integrity:  "DIRECT",
+		Reference: runstore.Reference{
+			Mid: "1350.2568", Source: "primary",
+			SecondaryMid: "135.02568", SecondarySource: "secondary",
+			DivergencePct: "900", ScoredAgainst: "primary",
+		},
+		FloorLossPct: "0.00", FloorSize: "0.1",
+		WorstLossPct: "0.00", WorstSize: "5000",
+		Finding: "No usable size. Loss against the USD/NGN mid is 0.00%. Every size tested is graded Unusable, so nothing is recommended.",
+		Rungs: []runstore.Rung{{
+			SendAmount: "0.1", Priced: true, Integrity: "DIRECT",
+			ReceiveAmount: "100", EffectiveRate: "1000",
+			LossPct: "0", Verdict: "UNKNOWN", Path: "USDC -> NGNC",
+		}},
+	}
+	if err := st.Append(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+
+	status, body := getJSON(t, deadServer(t, st).URL+"/api/corridor?to=NGNC&sizes=100")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %v", status, body)
+	}
+	if body["scored"] != false || body["reference_agreement"] != "MALFUNCTION" {
+		t.Errorf("reference state = scored %v, agreement %v; want false/MALFUNCTION",
+			body["scored"], body["reference_agreement"])
+	}
+	for _, field := range []string{"floor_loss_pct", "floor_size", "worst_loss_pct", "worst_size"} {
+		if _, ok := body[field]; ok {
+			t.Errorf("unscored stale response contains %q: %v", field, body[field])
+		}
+	}
+	finding, _ := body["finding"].(string)
+	for _, forbidden := range []string{"Unusable", "0.00%", "Loss against"} {
+		if strings.Contains(finding, forbidden) {
+			t.Errorf("stale finding contains %q: %s", forbidden, finding)
+		}
+	}
+	if !strings.Contains(finding, "No verdict") {
+		t.Errorf("stale finding does not identify the absent verdict: %s", finding)
+	}
+	rungs, _ := body["rungs"].([]any)
+	if len(rungs) != 1 {
+		t.Fatalf("rungs = %v, want one rung", body["rungs"])
+	}
+	rung, _ := rungs[0].(map[string]any)
+	quote, _ := rung["quote"].(map[string]any)
+	if quote["verdict"] != "UNKNOWN" {
+		t.Errorf("stale unscored verdict = %v, want UNKNOWN", quote["verdict"])
+	}
+	for _, field := range []string{"loss_pct", "loss_amount"} {
+		if _, ok := quote[field]; ok {
+			t.Errorf("unscored stale quote contains %q: %v", field, quote[field])
+		}
+	}
+}
+
 // TestStaleHTTPServesStoredFindings covers the full history response path for
 // issue #112. It is not enough for staleJSON to reconstruct findings in
 // isolation: the record conversion and HTTP fallback must preserve the block

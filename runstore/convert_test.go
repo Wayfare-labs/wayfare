@@ -187,3 +187,52 @@ func TestFromCorridorJSONUnscoredHasNoScoredAgainst(t *testing.T) {
 		t.Errorf("Reference.ScoredAgainst = %q, want empty for an unscorable rate", r.Reference.ScoredAgainst)
 	}
 }
+
+func TestFromCorridorJSONUnscoredDoesNotPersistLossZeroes(t *testing.T) {
+	c := route.CorridorJSON{
+		SendAsset:       route.AssetJSON{Code: "USDC"},
+		ReceiveAsset:    route.AssetJSON{Code: "NGNC"},
+		Scored:          false,
+		Floor:           "0.00",
+		FloorSize:       "0.1",
+		WorstLoss:       "0.00",
+		WorstSize:       "100",
+		RecommendedSize: "0.1",
+		Finding:         "No verdict was derived.",
+		Rungs: []route.RungJSON{{
+			SendAmount: "0.1",
+			Priced:     true,
+			Integrity:  "DIRECT",
+			Quote: &route.QuoteJSON{
+				ReceiveAmount: "100",
+				EffectiveRate: "1000",
+				LossPct:       "0",
+				Verdict:       "UNUSABLE",
+				Description:   "USDC -> NGNC",
+			},
+		}},
+		Recommended: &route.QuoteJSON{
+			ReceiveAmount: "100",
+			EffectiveRate: "1000",
+			LossPct:       "0",
+			Verdict:       "UNUSABLE",
+		},
+	}
+
+	record := FromCorridorJSON(c)
+	if record.FloorLossPct != "" || record.FloorSize != "" ||
+		record.WorstLossPct != "" || record.WorstSize != "" {
+		t.Errorf("unscored summary persisted measurements: floor=%q/%q worst=%q/%q",
+			record.FloorLossPct, record.FloorSize, record.WorstLossPct, record.WorstSize)
+	}
+	if record.Recommended != nil || record.RecommendedSize != "" {
+		t.Error("unscored corridor persisted a recommendation")
+	}
+	if len(record.Rungs) != 1 || record.Rungs[0].LossPct != "" ||
+		record.Rungs[0].Verdict != "UNKNOWN" {
+		t.Errorf("unscored rung persisted a loss or grade: %+v", record.Rungs)
+	}
+	if record.Finding != c.Finding {
+		t.Errorf("finding = %q, want the unscored finding %q", record.Finding, c.Finding)
+	}
+}

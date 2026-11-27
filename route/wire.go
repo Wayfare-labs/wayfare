@@ -61,7 +61,7 @@ type QuoteJSON struct {
 	Source        string   `json:"source"`
 	ReceiveAmount string   `json:"receive_amount"`
 	EffectiveRate string   `json:"effective_rate"`
-	LossPct       string   `json:"loss_pct"`
+	LossPct       string   `json:"loss_pct,omitempty"`
 	LossAmount    string   `json:"loss_amount,omitempty"`
 	Verdict       string   `json:"verdict"`
 	PathCount     int      `json:"path_count,omitempty"`
@@ -220,10 +220,10 @@ type CorridorJSON struct {
 	ParallelGapPct string `json:"parallel_gap_pct,omitempty"`
 	ParallelReason string `json:"parallel_reason,omitempty"`
 
-	Floor     string `json:"floor_loss_pct"`
-	FloorSize string `json:"floor_size"`
-	WorstLoss string `json:"worst_loss_pct"`
-	WorstSize string `json:"worst_size"`
+	Floor     string `json:"floor_loss_pct,omitempty"`
+	FloorSize string `json:"floor_size,omitempty"`
+	WorstLoss string `json:"worst_loss_pct,omitempty"`
+	WorstSize string `json:"worst_size,omitempty"`
 
 	Recommended     *QuoteJSON `json:"recommended"`
 	RecommendedSize string     `json:"recommended_size,omitempty"`
@@ -424,6 +424,15 @@ func ToQuoteJSON(q *Quote) *QuoteJSON {
 	}
 }
 
+func quoteJSONForScoring(q *Quote, scored bool) *QuoteJSON {
+	out := ToQuoteJSON(q)
+	if out != nil && !scored {
+		out.LossPct = ""
+		out.LossAmount = ""
+	}
+	return out
+}
+
 // hopsJSON renders the quote's path as structured hops in execution order:
 // the send asset, every intermediate, the receive asset — the same sequence
 // Description draws its codes from.
@@ -510,15 +519,17 @@ func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) Corrid
 		ReferenceAgreement: l.Reference.Agreement.String(),
 		ReferenceNote:      l.Reference.Note,
 		Scored:             l.Reference.Scorable(),
-		Floor:              l.Floor.StringFixed(2),
-		FloorSize:          l.FloorSize.String(),
-		WorstLoss:          l.WorstLoss.StringFixed(2),
-		WorstSize:          l.WorstSize.String(),
-		Recommended:        ToQuoteJSON(l.Recommended),
 		Live:               true,
 		Finding:            l.Finding,
 		Rungs:              make([]RungJSON, 0, len(l.Rungs)),
 		MeasuredAt:         measuredAt.UTC().Format(time.RFC3339),
+	}
+	if out.Scored {
+		out.Recommended = ToQuoteJSON(l.Recommended)
+		out.Floor = l.Floor.StringFixed(2)
+		out.FloorSize = l.FloorSize.String()
+		out.WorstLoss = l.WorstLoss.StringFixed(2)
+		out.WorstSize = l.WorstSize.String()
 	}
 	if !l.Reference.AsOf.IsZero() {
 		out.ReferenceAsOf = l.Reference.AsOf.UTC().Format(time.RFC3339)
@@ -567,7 +578,7 @@ func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) Corrid
 		}
 	}
 
-	if l.Recommended != nil {
+	if out.Scored && l.Recommended != nil {
 		out.RecommendedSize = l.RecommendedSize.String()
 	}
 	if l.Curve != nil {
@@ -602,7 +613,7 @@ func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) Corrid
 			Notes:      []string{},
 			Ledger:     r.Ledger,
 		}
-		if r.MarginalCost != nil {
+		if out.Scored && r.MarginalCost != nil {
 			rj.MarginalCost = r.MarginalCost.Cost.String()
 			rj.MarginalFrom = r.MarginalCost.From.String()
 			rj.MarginalTo = r.MarginalCost.To.String()
@@ -618,10 +629,10 @@ func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) Corrid
 			if len(r.Result.Quotes) > 0 {
 				q := &r.Result.Quotes[0]
 				rj.PathCount = q.PathCount
-				rj.Quote = ToQuoteJSON(q)
+				rj.Quote = quoteJSONForScoring(q, out.Scored)
 			}
 		}
-		if len(r.Decomposition.Parts) > 0 {
+		if out.Scored && len(r.Decomposition.Parts) > 0 {
 			rj.Cost = ToCostBlockJSON(r.Decomposition)
 		}
 		out.Rungs = append(out.Rungs, rj)
