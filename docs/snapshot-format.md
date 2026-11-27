@@ -209,8 +209,14 @@ manifest.
 ## Capturing
 
 ```bash
-go run ./cmd/ladder -to NGNC -ref currency-api -record testdata/snapshots
+go run ./cmd/ladder -to NGNC -record testdata/snapshots
 ```
+
+By default the run records the same reference stack the server scores against
+— exchangerate-api, currency-api and, on a disagreement, floatrates — because
+all three share the recording HTTP client. `-ref NAME` forces one provider; the
+manifest then names that provider alone and the run is uncorroborated by
+construction.
 
 `cmd/ladder` recording is **opt-in and off by default**. `wayfared` also
 records complete scheduled sweeps when a persistent data directory is
