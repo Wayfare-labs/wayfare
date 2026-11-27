@@ -492,10 +492,6 @@ func ToCorridorJSON(l *LadderResult, pair string) CorridorJSON {
 	return ToCorridorJSONAt(l, pair, time.Now())
 }
 
-// ToCorridorJSONAt is ToCorridorJSON with the measured_at instant supplied by
-// the caller. It exists so a producer with an injectable clock (cmd/ladder's
-// golden test, issue #668) can render the exact bytes it ships without the
-// wall clock leaking into them; every other field is identical.
 // ReferenceKindOf names how reference_mid was obtained. A ladder that
 // obtained no reference has no source, and its kind is unknown rather than
 // defaulting to observed.
@@ -506,6 +502,10 @@ func ReferenceKindOf(source string, kind refrate.Kind) string {
 	return kind.String()
 }
 
+// ToCorridorJSONAt is ToCorridorJSON with the measured_at instant supplied by
+// the caller. It exists so a producer with an injectable clock (cmd/ladder's
+// golden test, issue #668) can render the exact bytes it ships without the
+// wall clock leaking into them; every other field is identical.
 func ToCorridorJSONAt(l *LadderResult, pair string, measuredAt time.Time) CorridorJSON {
 	out := CorridorJSON{
 		SendAsset:          ToAssetJSON(l.Request.SendAsset),
