@@ -62,6 +62,7 @@ exactly once; the grouping reflects who is most likely to need it first.
 | [correction-records.md](correction-records.md) | How to fix a wrong published figure in an append-only chain |
 | [wrong-published-figure.md](wrong-published-figure.md) | Responding to a wrong published figure |
 | [offline-testing.md](offline-testing.md) | The offline-testing requirement and how to satisfy it |
+| [coverage-floors.md](coverage-floors.md) | Per-package coverage floors for maintainer-owned packages and how to ratchet them |
 | [snapshot-record-replay.md](snapshot-record-replay.md) | Snapshot record-and-replay workflow |
 | [snapshot-workflow.md](snapshot-workflow.md) | Snapshot workflow overview |
 | [dependency-policy.md](dependency-policy.md) | What dependencies the project will and won't take |
@@ -206,6 +207,7 @@ exactly once; the grouping reflects who is most likely to need it first.
 | [qa/artifacts/286-token-contrast.md](qa/artifacts/286-token-contrast.md) | QA artifact #286: token contrast |
 | [qa/artifacts/293-error-preservation.md](qa/artifacts/293-error-preservation.md) | QA artifact #293: error preservation |
 | [qa/artifacts/304-state-legibility.md](qa/artifacts/304-state-legibility.md) | QA artifact #304: state legibility |
+| [qa/artifacts/667-mutation-catalogue.md](qa/artifacts/667-mutation-catalogue.md) | QA artifact #667: pricing-path mutation catalogue |
 | [qa/artifacts/closed-issue-audit.md](qa/artifacts/closed-issue-audit.md) | Closed issue audit — 2026-11-23 |
 | [qa/artifacts/751-scheduled-wcag-audit.md](qa/artifacts/751-scheduled-wcag-audit.md) | QA artifact #751: scheduled WCAG audit |
 

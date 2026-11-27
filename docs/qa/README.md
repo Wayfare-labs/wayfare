@@ -27,6 +27,7 @@ findings in:
 | #293 errors preserve the page | [`artifacts/293-error-preservation.md`](artifacts/293-error-preservation.md) |
 | #304 state legible without colour | [`artifacts/304-state-legibility.md`](artifacts/304-state-legibility.md) |
 | #751 scheduled accessibility re-audit | [`artifacts/751-scheduled-wcag-audit.md`](artifacts/751-scheduled-wcag-audit.md) |
+| #667 mutation catalogue for the pricing path | [`artifacts/667-mutation-catalogue.md`](artifacts/667-mutation-catalogue.md) |
 
 ## Setup
 

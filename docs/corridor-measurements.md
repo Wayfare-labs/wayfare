@@ -10,8 +10,18 @@ the rest of the issuer's set.
 
 All figures are raw output from `cmd/ladder`, which prices each size through
 the same `route.Engine` the product uses. Nothing here is rounded in a
-direction that improves the result; percentages are truncated to two decimals
-as reported.
+direction that improves the result; amounts, rates and percentages are
+rounded to two decimals exactly as the command prints them (`StringFixed(2)`).
+
+Every table below carries a `figures` marker naming where its numbers come
+from, and `corridor_figures_test.go` recomputes them in CI (#702): a snapshot
+table is replayed through `route.Engine` from its recorded bytes, a live table
+has every derived column re-graded by the same engine from the observed receive
+amounts, and a derived table is recomputed from the tables it cites. A pricing
+change that moves a published figure fails the build. The live runs themselves
+were never snapshotted, so what they observed — the receive amounts and the
+paths — is the one thing CI cannot re-derive; the markers say which tables are
+which. See [the figure markers](#the-figure-markers) at the end.
 
 ---
 
@@ -31,6 +41,8 @@ It did not publish `ANCHOR_QUOTE_SERVER`, so only the on-chain leg is measured.
   2026-08-27T00:02:31Z
 - **Send asset:** USDC (`GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`)
 - **Receive asset:** NGNT (`GAWODAROMJ33V5YDFY3NPYTHVYQG7MJXVJ2ND3AOGIHYRWINES6ACCPD`)
+
+<!-- figures: id=ngnt-20260827; kind=live; send=USDC; receive=NGNT; pair=USD/NGN; mid=1345.6228; integrity=DIRECT; measured=2026-08-27T08:00:38Z -->
 
 | Send (USDC) | Receive (NGNT) | Effective rate (NGN/USD) | Loss vs mid | Verdict | Integrity | Best path |
 |---:|---:|---:|---:|:---|:---|:---|
@@ -68,6 +80,8 @@ bank account; Cowrie's SEP-1 file has no machine-readable SEP-38 quote server.
 - **Send asset:** USDC (`GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`)
 - **Receive asset:** NGNC (`GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6`)
 
+<!-- figures: id=ngnc-20260808; kind=live; send=USDC; receive=NGNC; pair=USD/NGN; mid=1364.0070; verdicts=UNUSABLE; measured=2026-08-08T12:53:56Z -->
+
 | Send (USDC) | Receive (NGNC) | Effective rate (NGN/USD) | Loss vs mid | Verdict | Best path |
 |---:|---:|---:|---:|:---|:---|
 | 0.1 | 102.78 | 1027.84 | 24.65% | UNUSABLE | USDC → NGNC |
@@ -86,6 +100,43 @@ bank account; Cowrie's SEP-1 file has no machine-readable SEP-38 quote server.
 Verdict thresholds are Good ≤3%, Fair ≤8%, Poor ≤20%, Unusable >20%.
 **All twelve sizes are Unusable.** The engine declined to recommend a route at
 every size tested.
+
+---
+
+## Snapshot replay of 2026-08-21
+
+The runs above are live output, and the repository holds no recorded bytes for
+them. This section is their replayable counterpart, and it is the one set of
+figures in this document that a pricing change is allowed to break in CI.
+
+`testdata/snapshots/usdc-ngnc-20260821T223040Z` holds the Horizon responses
+behind one ladder. They were replayed offline through the same `route.Engine`
+and scored against the mid recorded in the committed 2026-08-22 run
+(`1349.669672` USD/NGN). The prices are dated 2026-08-21 and the benchmark is
+dated 2026-08-22: this is a replay against a recorded mid, not a measurement
+taken on either day.
+
+<!-- figures: id=ngnc-20260821-replay; kind=snapshot; snapshot=testdata/snapshots/usdc-ngnc-20260821T223040Z; pair=USD/NGN; mid=1349.669672; mid-from=USDC-NGNC; integrity=DIRECT; verdicts=UNUSABLE -->
+
+| Send (USDC) | Receive (NGNC) | Effective rate (NGN/USD) | Loss vs mid | Verdict | Best path |
+|---:|---:|---:|---:|:---|:---|
+| 0.1 | 96.94 | 969.35 | 28.18% | UNUSABLE | USDC → Cleanshave → AQUA → NGNC |
+| 1 | 960.40 | 960.40 | 28.84% | UNUSABLE | USDC → yUSDC → AQUA → NGNC |
+| 5 | 4686.17 | 937.23 | 30.56% | UNUSABLE | USDC → USDZ → XLM → NGNC |
+| 10 | 9127.03 | 912.70 | 32.38% | UNUSABLE | USDC → BTC → XLM → NGNC |
+| 25 | 21142.45 | 845.70 | 37.34% | UNUSABLE | USDC → XLM → NGNC |
+| 50 | 37715.13 | 754.30 | 44.11% | UNUSABLE | USDC → PYUSD → XLM → NGNC |
+| 100 | 62031.79 | 620.32 | 54.04% | UNUSABLE | USDC → PYUSD → XLM → NGNC |
+| 250 | 101172.57 | 404.69 | 70.02% | UNUSABLE | USDC → XLM → NGNC |
+| 500 | 128114.12 | 256.23 | 81.02% | UNUSABLE | USDC → XLM → NGNC |
+| 1000 | 147787.47 | 147.79 | 89.05% | UNUSABLE | USDC → XLM → NGNC |
+| 2500 | 162795.09 | 65.12 | 95.18% | UNUSABLE | USDC → XLM → NGNC |
+| 5000 | 168493.12 | 33.70 | 97.50% | UNUSABLE | USDC → XLM → NGNC |
+
+The replay reproduces the shape the live runs show: a floor just under 30% at
+dust size, a monotonic decline, and no rung the engine is willing to recommend.
+It differs from both live runs in the particular pools it crosses, which is why
+the route is quoted here rather than assumed.
 
 ---
 
@@ -117,6 +168,8 @@ toward usable. Every step up in size is strictly worse than the one below it.
 
 The receive amount asymptotes hard. Marginal return on each additional USDC
 sent:
+
+<!-- figures: id=ngnc-marginal; kind=derived; check=marginal; from=ngnc-20260808 -->
 
 | Size step | Extra USDC sent | Extra NGNC received | Marginal rate (NGN/USD) |
 |:---|---:|---:|---:|
@@ -152,12 +205,22 @@ why the official mid is the charitable benchmark — see
 
 The measurement recorded in the `route` package doc, taken 2026-08-04:
 
+<!-- figures: id=ngnc-comparison; kind=derived; check=comparison; from=ngnc-20260808; recorded-20260804=route/route_test.go:liveStrictSendResponse; mid-20260804=1364.77 -->
+
 | | 2026-08-04 | 2026-08-08 |
 |:---|---:|---:|
-| 100 USDC receives | 65,150.86 NGNC | 62,890.83 NGNC |
-| Effective rate | 651.51 | 628.91 |
+| 100 USDC receives | 65,100.14 NGNC | 62,890.83 NGNC |
+| Effective rate | 651.00 | 628.91 |
 | Reference mid | 1364.77 | 1364.0070 |
 | Loss | 52.3% | 53.89% |
+
+The 2026-08-04 receive amount is the best record in the Horizon response
+committed as `liveStrictSendResponse` in `route/route_test.go`, the only bytes
+the repository holds from that day. **Corrected 2026-11-22 (#702):** this table
+previously printed 65,150.86 NGNC and an effective rate of 651.51, figures with
+no recorded source; the loss, 52.3%, is unchanged by the correction. The
+1364.77 mid is not recorded anywhere in the repository and is carried as
+printed.
 
 Four days apart, the corridor is stable and slightly worse. This is not a
 transient outage or a single bad snapshot.
@@ -178,6 +241,8 @@ whether the NGNC finding is asset-specific or issuer-wide.
 
 Read live from `https://ngnc.online/.well-known/stellar.toml` on 2026-08-08:
 
+<!-- figures: id=issuer-sep1; kind=observation; read=2026-08-08 -->
+
 | Asset | `status` | `anchor_asset` | In service per SEP-1? |
 |:---|:---|:---|:---|
 | NGNC | `live` | `NGN` | yes |
@@ -195,6 +260,8 @@ Two defects in the published document, both reported here as read:
 ### USDC → GHSC
 
 Reference mid: 11.7625 USD/GHS.
+
+<!-- figures: id=ghsc-20260808; kind=live; send=USDC; receive=GHSC; pair=USD/GHS; mid=11.7625; verdicts=UNUSABLE; via=NGNC; measured=2026-08-08T14:26:33Z -->
 
 | Send (USDC) | Receive (GHSC) | Effective rate (GHS/USD) | Loss vs mid | Verdict | Best path |
 |---:|---:|---:|---:|:---|:---|
@@ -221,6 +288,8 @@ NGNC → GHSC leg.
 
 Reference mid: 129.4263 USD/KES.
 
+<!-- figures: id=kesc-20260808; kind=observation; check=ladder-range; read=2026-08-08T14:27Z -->
+
 | Send (USDC) | Result |
 |---:|:---|
 | 0.1 – 5000 | **NO ROUTE** at every size tested |
@@ -235,6 +304,8 @@ not a bad price; it is the absence of a market.
 Re-measured at 14:27:30Z for a same-window comparison. Matches the 12:53 run
 to within normal drift — 0.1 USDC moved from 24.65% to 25.02% loss, 5000 USDC
 unchanged at 97.68%.
+
+<!-- figures: id=ngnc-20260808-window; kind=live; send=USDC; receive=NGNC; pair=USD/NGN; mid=1364.0070; verdicts=UNUSABLE; measured=2026-08-08T14:27:30Z -->
 
 | Send (USDC) | Receive (NGNC) | Effective rate (NGN/USD) | Loss vs mid | Verdict |
 |---:|---:|---:|---:|:---|
@@ -260,6 +331,8 @@ unchanged at 97.68%.
 The three corridors do not fail in the same way. They fail in three different
 ways, and the distinction is the substantive result of this sweep:
 
+<!-- figures: id=failure-modes; kind=derived; check=failure-modes; from=ngnc-20260808-window,ghsc-20260808,kesc-20260808 -->
+
 | Mode | Corridor | Observation |
 |:---|:---|:---|
 | **Live, value-destroying** | USDC → NGNC | Issuer declares `status="live"`. A market exists and prices continuously. It loses 25.02% at 0.1 USDC and 97.68% at 5000. |
@@ -277,6 +350,8 @@ alongside the loss grade.
 
 ### The pattern holds across the issuer's whole set
 
+<!-- figures: id=corridor-pattern; kind=derived; check=pattern; from=issuer-sep1,ngnc-20260808-window,ghsc-20260808,kesc-20260808 -->
+
 | Corridor | Issuer status | Best result, any size | Structural floor | Verdict |
 |:---|:---|:---|---:|:---|
 | USDC → NGNC | live | 25.02% loss at 0.1 USDC | ~25% | Unusable at every size |
@@ -290,6 +365,8 @@ Poor, let alone Fair or Good. The engine recommended nothing, anywhere.
 
 Taking the largest receive amount observed on each corridor and valuing it at
 the reference mid:
+
+<!-- figures: id=depth; kind=derived; check=depth; from=ngnc-20260808-window,ghsc-20260808,kesc-20260808 -->
 
 | Corridor | Max receive (5000 USDC in) | At mid | Value |
 |:---|---:|---:|---:|
@@ -338,3 +415,28 @@ go run ./cmd/ladder -to KESC   # USDC -> KESC
 Requires live network access to Horizon and the reference rate provider. The
 figures will differ from those above — that is the point of measuring rather
 than asserting.
+
+The figures *on this page* are reproduced offline, with no network, by:
+
+```
+go test -run 'TestCorridorFigures' .
+```
+
+## The figure markers
+
+Each table is preceded by an HTML comment the renderer hides:
+
+```
+<!-- figures: id=<unique id>; kind=<kind>; key=value; ... -->
+```
+
+| `kind` | What CI asserts | Keys |
+|:---|:---|:---|
+| `snapshot` | Replays `snapshot` through `route.Engine` scored at `mid`, and requires every cell to equal what the engine produces, formatted as `cmd/ladder` prints it. `mid-from` ties the mid to the latest committed record of that corridor. | `snapshot`, `pair`, `mid`, `mid-from`, `integrity`, `verdicts` |
+| `live` | Serves each row's observed receive amount to `route.Engine` through a stub Horizon and requires the effective rate and loss to agree within the table's two-decimal rounding and the verdict to match exactly. Paths are observations and are checked only for shape (`via`). | `send`, `receive`, `pair`, `mid`, `measured`, `integrity`, `verdicts`, `via` |
+| `derived` | Recomputes the table from the tables named in `from`, by the named `check`. | `check`, `from` |
+| `chain` | Reads the latest records of the named corridors from the committed chain in `data/`. | `check`, `chain` |
+| `observation` | A read of a document or a result with no recorded bytes. It carries no computed figure; tables that cite it are checked against it. | `read`, `check` |
+
+Adding a table without a marker, or a percentage or dollar figure to the prose
+without a derivation in the test, fails the build.

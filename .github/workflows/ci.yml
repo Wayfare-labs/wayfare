@@ -133,6 +133,35 @@ jobs:
           version: v2.15.0
           install-mode: goinstall
 
+  # Coverage floors for the four maintainer-owned packages (#666).
+  #
+  # The build job above already produces a coverage profile, but it goes no
+  # further than the log: a number that is only reported cannot hold a line.
+  # This job measures the packages whose arithmetic publishes the project's
+  # figures and compares them against the committed floors. It is a separate
+  # job rather than a step in the matrix so a coverage miss is one clear check
+  # instead of three timezone runs disagreeing about which axis failed.
+  coverage-floors:
+    name: coverage floors
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: measure the maintainer-owned packages
+        run: |
+          go test -coverprofile=coverage.out -covermode=atomic \
+            ./route/... ./dex/... ./refrate/... ./sep38/...
+
+      - name: enforce the committed floors
+        run: scripts/check-coverage-floors.sh coverage.out coverage-floors.txt
+
   # Every test is meant to run from recorded bytes. snapshot.Replayer returns
   # ErrNotRecorded rather than falling through to the network, so a test that
   # reaches out fails instead of passing intermittently — but that only holds

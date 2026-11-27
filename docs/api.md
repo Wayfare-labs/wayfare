@@ -5,6 +5,13 @@
 
 All endpoints are read-only. The service does not hold funds, issue tokens, sign transactions, or execute payments. The machine-readable OpenAPI 3.0 contract is defined in [`openapi.yaml`](../openapi.yaml).
 
+Every `curl` example below is executed in CI against a local server replaying
+committed snapshots (issue #669). The marker comment above each block names the
+example and the top-level JSON keys it is expected to produce; the test rewrites
+the deployed host to the local server and fails the job if a request errors or a
+declared key is absent. Examples are what consumers copy, so an example that no
+longer runs is a documentation bug that reports itself.
+
 ## Endpoints
 
 | Method | Path | Purpose |
@@ -140,6 +147,7 @@ GET /api/corridor?from=USDC&to=NGNC HTTP/1.1
 
 **cURL — a polling client:**
 
+<!-- api-example: corridor-polling -> - -->
 ```bash
 # Fetch, and remember the tag. (-D - prints the response headers;
 # the endpoint answers GET only, so the header must come from a GET.)
@@ -153,6 +161,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "If-None-Match: $etag" \
 
 **cURL:**
 
+<!-- api-example: corridor -> send_asset,receive_asset,integrity,rungs,floor_loss_pct,recommended,live=true -->
 ```bash
 # History-first (fast, may be stale)
 curl -s "https://wayfare-cdb9.onrender.com/api/corridor?from=USDC&to=NGNC"
@@ -428,6 +437,7 @@ watch the log rather than poll the endpoint.
 
 **cURL:**
 
+<!-- api-example: corridor-trend -> corridor,send_asset,receive_asset,count,runs,integrity_transitions,latest_transition -->
 ```bash
 curl -s "https://wayfare-cdb9.onrender.com/api/corridor/trend?from=USDC&to=NGNC&limit=30"
 curl -s "https://wayfare-cdb9.onrender.com/api/corridor/trend?to=NGNC&limit=7"
@@ -492,8 +502,9 @@ Errors:
 
 **cURL:**
 
+<!-- api-example: corridor-image -> - -->
 ```bash
-curl -s https://wayfare-cdb9.onrender.com/api/corridor/image?from=USDC&to=NGNC
+curl -s "https://wayfare-cdb9.onrender.com/api/corridor/image?from=USDC&to=NGNC"
 ```
 
 ## `GET /api/chain-heads`
@@ -529,6 +540,7 @@ chain. See [ADR 007](adr/007-why-the-committed-chain-is-a-rolling-window.md).
 
 **cURL:**
 
+<!-- api-example: chain-heads -> heads -->
 ```bash
 curl -s https://wayfare-cdb9.onrender.com/api/chain-heads
 ```
@@ -554,6 +566,7 @@ Returns an `assets` array. Each entry contains the asset fields and `can_be_dest
 
 **cURL:**
 
+<!-- api-example: assets -> assets -->
 ```bash
 curl -s https://wayfare-cdb9.onrender.com/api/assets
 ```
@@ -608,6 +621,7 @@ A successful response contains:
 
 **cURL:**
 
+<!-- api-example: market-structure -> issuer_concentrations,corridor_count,concentrated_corridor_count,generated_at -->
 ```bash
 curl -s https://wayfare-cdb9.onrender.com/api/market-structure
 curl -s https://wayfare-cdb9.onrender.com/api/market-structure?pretty=1
@@ -651,6 +665,7 @@ A successful response contains:
 
 **cURL:**
 
+<!-- api-example: thresholds -> verdict_thresholds,divergence_thresholds -->
 ```bash
 curl -s https://wayfare-cdb9.onrender.com/api/thresholds
 ```
@@ -699,6 +714,7 @@ Errors:
 
 **cURL:**
 
+<!-- api-example: og-corridor-svg -> - -->
 ```bash
 curl -s "https://wayfare-cdb9.onrender.com/og/corridor.svg?from=USDC&to=NGNC"
 ```
@@ -708,6 +724,8 @@ curl -s "https://wayfare-cdb9.onrender.com/og/corridor.svg?from=USDC&to=NGNC"
 A healthy service returns status `200` with:
 
 **cURL:**
+
+<!-- api-example: healthz -> status,data -->
 ```bash
 curl -s https://wayfare-cdb9.onrender.com/healthz
 ```
@@ -794,6 +812,8 @@ family's label sets are sorted, so two scrapes of a process that observed nothin
 new are byte-identical.
 
 **cURL:**
+
+<!-- api-example: metrics -> - -->
 ```bash
 curl -s https://wayfare-cdb9.onrender.com/metrics
 ```
@@ -1029,6 +1049,8 @@ gates are reported separately because they fail for different reasons and a
 single boolean would hide which.
 
 **cURL:**
+
+<!-- api-example: readyz -> status,checks -->
 ```bash
 curl -s https://wayfare-cdb9.onrender.com/readyz
 ```

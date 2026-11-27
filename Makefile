@@ -11,7 +11,7 @@ PKGS    := ./...
 IMAGE       ?= wayfare:local
 TRIVY_IMAGE ?= aquasec/trivy:0.74.0
 
-.PHONY: all build test race lint fmt vet cover run clean help offline-test docker-build image-scan build-reproducible
+.PHONY: all build test race lint fmt vet cover coverage-floors run clean help offline-test docker-build image-scan build-reproducible
 
 all: fmt vet test build ## Format, vet, test and build
 
@@ -100,6 +100,13 @@ cover: ## Run tests with coverage and write coverage.html
 	$(GO) test -coverprofile=coverage.out $(PKGS)
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@$(GO) tool cover -func=coverage.out | tail -1
+
+# The four packages that publish numbers under the project's name. Their floors
+# live in coverage-floors.txt and the policy is docs/coverage-floors.md (#666).
+coverage-floors: ## Fail if a maintainer-owned package is below its committed coverage floor
+	$(GO) test -coverprofile=coverage.out -covermode=atomic \
+		./route/... ./dex/... ./refrate/... ./sep38/...
+	scripts/check-coverage-floors.sh coverage.out coverage-floors.txt
 
 run: ## Measure the default corridor (USDC -> NGNC) against live mainnet
 	$(GO) run ./cmd/ladder
