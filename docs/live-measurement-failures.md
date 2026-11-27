@@ -26,8 +26,11 @@ A measurement needs two independent things:
    good deal from a disaster, so it treats a missing reference as a hard
    failure rather than degrading to "no spread shown".
 
-`cmd/ladder` uses one provider chosen by `-ref`; `cmd/wayfared` uses two and
-cross-checks them (`refrate.Cross`). None of them answers from a fixture, and a
+Both `cmd/ladder` and `cmd/wayfared` build their benchmark through
+`refrate.DefaultStack`: exchangerate-api cross-checked with currency-api, plus
+floatrates to attribute a disagreement (`refrate.Cross`). `cmd/ladder`'s
+`-ref NAME` forces a single provider for isolating one feed, and says on stderr
+that the result is uncorroborated. None of them answers from a fixture, and a
 failed fetch is never rewritten into a plausible number.
 
 ---
@@ -64,9 +67,10 @@ corridor. `cmd/ladder` distinguishes the two: it prints the error, still exits
 `1` because nothing is recommendable, and refuses to record a snapshot from a
 run with holes in it.
 
-### 2. Both reference providers are down (the server's two-provider path)
+### 2. Both reference providers are down (the shared two-provider stack)
 
-`cmd/wayfared` uses `refrate.Cross` with two providers. Both failing is an
+Both binaries use `refrate.DefaultStack`, a `refrate.Cross` with two scored
+providers. Both failing is an
 error that names both, and the `... was unavailable (...)` / `... returned an
 unparseable response` phrasing comes from `refrate.classifyError`:
 
@@ -87,7 +91,7 @@ generic outage, because the remedy is different:
 refrate: exchangerate-api rate-limited this request; retry after 1m0s
 ```
 
-Through the cache (`cmd/wayfared`), it reads:
+Through the cache both binaries use, it reads:
 
 ```
 refrate: exchangerate-api is rate-limited and no cached rate is within the age bound; a stale rate will not be presented as current: refrate: exchangerate-api rate-limited this request; retry after 1m0s
@@ -108,18 +112,18 @@ rate limit.
 
 This one is worth knowing before you conclude a provider is broken:
 
-- **`cmd/ladder` does not cache the reference rate.** It wires the provider
-  through `refrate.Checked` with no `MaxAge` and no cache
-  (`cmd/ladder/main.go`). Each priced rung calls it, and `printTable` calls it
-  once more for the "reference mid" line — so one `make run` can make up to
-  thirteen reference requests against a free tier.
-- **`cmd/wayfared` does cache.** Its providers are wrapped in
-  `refrate.Cached`, TTL one hour (`refrate.DefaultCacheTTL`), which collapses
-  a burst of identical requests into one upstream call.
+- **Both binaries cache the reference rate.** `refrate.DefaultStack` wraps
+  each provider in `refrate.Cached`, TTL one hour (`refrate.DefaultCacheTTL`),
+  which collapses a ladder's burst of identical requests into one upstream
+  call per provider — two normally, three when the first two disagree and the
+  diagnostic is consulted. `printTable`'s "reference mid" line is served from
+  the same cache.
+- **`-ref NAME` still caches** the one provider it selects, through
+  `refrate.Checked` wrapping the cached provider.
 
-So: a ladder run can trip a quota that a deployed server would not, and running
-`make run` in a tight loop is the likeliest way to rate-limit yourself. Waiting
-out the interval in the message is the fix.
+So one run is a handful of reference requests, not thirteen, and running
+`make run` in a tight loop is still the likeliest way to rate-limit yourself.
+Waiting out the interval in the message is the fix.
 
 ### 5. Horizon is unreachable or rate-limits, but the reference is fine
 
