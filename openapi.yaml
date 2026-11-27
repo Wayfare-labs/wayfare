@@ -33,6 +33,12 @@ paths:
           required: false
           schema:
             type: string
+        - name: adaptive
+          in: query
+          description: When 1, adds bounded midpoint rungs where adjacent losses differ by more than the threshold; added rungs carry adaptive true
+          required: false
+          schema:
+            type: string
         - name: pretty
           in: query
           description: When 1, returns indented JSON
@@ -491,6 +497,9 @@ components:
           $ref: '#/components/schemas/Decimal'
         ledger:
           type: integer
+        adaptive:
+          type: boolean
+          description: True only for a rung the adaptive midpoint rule added; omitted for requested rungs.
         cost:
           type: object
     Quote:

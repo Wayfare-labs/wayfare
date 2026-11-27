@@ -93,6 +93,9 @@ func main() {
 			"run counterparty checks (anchor toml, SEP-10/SEP-24, issuer flags) and "+
 				"attach the findings; set false to skip them (the JSON document then "+
 				"carries no findings block)")
+		adaptiveFlag = flag.Bool("adaptive", false,
+			"price up to four extra midpoint rungs where adjacent losses differ by "+
+				"more than five percentage points; added rungs are marked adaptive")
 		version = flag.Bool("version", false,
 			"print the build provenance (code commit, embedded data commit, Go version) and exit")
 	)
@@ -197,6 +200,7 @@ func main() {
 		SendAsset:      run.send,
 		ReceiveAsset:   run.recv,
 		Sizes:          sizes,
+		Adaptive:       adaptiveOption(*adaptiveFlag),
 		ReferenceBase:  run.refBase,
 		ReferenceQuote: run.refQuote,
 	})
@@ -285,6 +289,17 @@ func corridorCodes() []string {
 // (issue #586).
 func toHelp() string {
 	return fmt.Sprintf("destination asset code (%s)", strings.Join(corridorCodes(), ", "))
+}
+
+// adaptiveOption turns the -adaptive flag into the rule the engine consumes.
+// Nil means the flag was not passed, which leaves the requested ladder exactly
+// as it was.
+func adaptiveOption(on bool) *route.AdaptiveRule {
+	if !on {
+		return nil
+	}
+	rule := route.DefaultAdaptiveRule()
+	return &rule
 }
 
 // defaultSizesFlag renders the shared ladder as the comma-separated form the
