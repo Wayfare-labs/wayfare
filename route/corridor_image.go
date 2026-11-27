@@ -47,6 +47,14 @@ type CorridorImage struct {
 // SVG renders the corridor snapshot as an inline SVG document sized for a
 // social preview. It is plain UTF-8 SVG with no external references.
 func (c CorridorImage) SVG() string {
+	floor, floorSize := c.Floor+"%", "at "+c.FloorSize+" send"
+	if c.Floor == "" {
+		floor, floorSize = "not scored", ""
+	}
+	worst, worstSize := c.WorstLoss+"%", "at "+c.WorstSize+" send"
+	if c.WorstLoss == "" {
+		worst, worstSize = "not scored", ""
+	}
 	parts := []string{
 		`<?xml version="1.0" encoding="UTF-8"?>`,
 		`<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">`,
@@ -63,12 +71,12 @@ func (c CorridorImage) SVG() string {
 		badge(60, 218, 320, 54, esc(c.Integrity), "#10B981", 30),
 
 		label(60, 312, "FLOOR LOSS", "#F59E0B", 22, "", 1),
-		big(60, 348, esc(c.Floor)+"%", "#F59E0B", 44),
-		label(470, 348, "at "+esc(c.FloorSize)+" send", "#CBD5E1", 24, "", 0),
+		big(60, 348, esc(floor), "#F59E0B", 44),
+		label(470, 348, esc(floorSize), "#CBD5E1", 24, "", 0),
 
 		label(60, 408, "WORST LOSS", "#F97316", 22, "", 1),
-		big(60, 444, esc(c.WorstLoss)+"%", "#F97316", 44),
-		label(470, 444, "at "+esc(c.WorstSize)+" send", "#CBD5E1", 24, "", 0),
+		big(60, 444, esc(worst), "#F97316", 44),
+		label(470, 444, esc(worstSize), "#CBD5E1", 24, "", 0),
 
 		label(60, 502, "REFERENCE", "#F8FAFC", 22, "", 1),
 		big(60, 538, esc(c.ReferenceMid), "#F8FAFC", 30),

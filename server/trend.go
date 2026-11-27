@@ -174,10 +174,10 @@ type TrendRunJSON struct {
 
 	Reference TrendRefJSON `json:"reference"`
 
-	FloorLossPct string `json:"floor_loss_pct"`
-	FloorSize    string `json:"floor_size"`
-	WorstLossPct string `json:"worst_loss_pct"`
-	WorstSize    string `json:"worst_size"`
+	FloorLossPct string `json:"floor_loss_pct,omitempty"`
+	FloorSize    string `json:"floor_size,omitempty"`
+	WorstLossPct string `json:"worst_loss_pct,omitempty"`
+	WorstSize    string `json:"worst_size,omitempty"`
 
 	// RecommendedSize is empty when no size produced an acceptable route,
 	// which is the normal shape of a broken corridor and must survive into
@@ -288,30 +288,32 @@ func toTrendJSON(recs []*runstore.Record, key, pair string, send, recv asset.Ass
 		runJSON := toTrendRunJSON(rec)
 		if rec.IsCorrection() {
 			orig := targetToOrig[rec.Correction.TargetSeq]
-			origFloor := ""
-			origWorst := ""
-			if orig != nil {
-				origFloor = orig.FloorLossPct
-				origWorst = orig.WorstLossPct
-			}
 			runJSON.Correction = &route.CorrectionJSON{
-				TargetSeq:             rec.Correction.TargetSeq,
-				Reason:                rec.Correction.Reason,
-				IsCorrection:          true,
-				OriginalFloorLossPct:  origFloor,
-				CorrectedFloorLossPct: rec.FloorLossPct,
-				OriginalWorstLossPct:  origWorst,
-				CorrectedWorstLossPct: rec.WorstLossPct,
+				TargetSeq:    rec.Correction.TargetSeq,
+				Reason:       rec.Correction.Reason,
+				IsCorrection: true,
+			}
+			if orig != nil && staleScored(&orig.Reference) {
+				runJSON.Correction.OriginalFloorLossPct = orig.FloorLossPct
+				runJSON.Correction.OriginalWorstLossPct = orig.WorstLossPct
+			}
+			if staleScored(&rec.Reference) {
+				runJSON.Correction.CorrectedFloorLossPct = rec.FloorLossPct
+				runJSON.Correction.CorrectedWorstLossPct = rec.WorstLossPct
 			}
 		} else if corr, ok := corrections[rec.Seq]; ok {
 			runJSON.Correction = &route.CorrectionJSON{
-				CorrectedBySeq:        corr.Seq,
-				Reason:                corr.Correction.Reason,
-				Corrected:             true,
-				OriginalFloorLossPct:  rec.FloorLossPct,
-				CorrectedFloorLossPct: corr.FloorLossPct,
-				OriginalWorstLossPct:  rec.WorstLossPct,
-				CorrectedWorstLossPct: corr.WorstLossPct,
+				CorrectedBySeq: corr.Seq,
+				Reason:         corr.Correction.Reason,
+				Corrected:      true,
+			}
+			if staleScored(&rec.Reference) {
+				runJSON.Correction.OriginalFloorLossPct = rec.FloorLossPct
+				runJSON.Correction.OriginalWorstLossPct = rec.WorstLossPct
+			}
+			if staleScored(&corr.Reference) {
+				runJSON.Correction.CorrectedFloorLossPct = corr.FloorLossPct
+				runJSON.Correction.CorrectedWorstLossPct = corr.WorstLossPct
 			}
 		}
 		out.Runs = append(out.Runs, runJSON)
@@ -361,24 +363,30 @@ func toTrendRunJSON(rec *runstore.Record) TrendRunJSON {
 			SecondaryMid:    rec.Reference.SecondaryMid,
 			SecondarySource: rec.Reference.SecondarySource,
 			DivergencePct:   rec.Reference.DivergencePct,
-			ScoredAgainst:   rec.Reference.ScoredAgainst,
 		},
-		FloorLossPct:    rec.FloorLossPct,
-		FloorSize:       rec.FloorSize,
-		WorstLossPct:    rec.WorstLossPct,
-		WorstSize:       rec.WorstSize,
-		RecommendedSize: rec.RecommendedSize,
-		Finding:         rec.Finding,
-		Rungs:           make([]TrendRungJSON, 0, len(rec.Rungs)),
+		Finding: storedUnscoredFinding(rec, rec.Corridor),
+		Rungs:   make([]TrendRungJSON, 0, len(rec.Rungs)),
+	}
+	scored := staleScored(&rec.Reference)
+	if scored {
+		out.Reference.ScoredAgainst = rec.Reference.ScoredAgainst
+		out.RecommendedSize = rec.RecommendedSize
+		out.FloorLossPct = rec.FloorLossPct
+		out.FloorSize = rec.FloorSize
+		out.WorstLossPct = rec.WorstLossPct
+		out.WorstSize = rec.WorstSize
 	}
 	out.DependsOn = append(out.DependsOn, rec.DependsOn...)
 	for _, r := range rec.Rungs {
-		out.Rungs = append(out.Rungs, TrendRungJSON{
+		rung := TrendRungJSON{
 			SendAmount: r.SendAmount,
 			Priced:     r.Priced,
-			LossPct:    r.LossPct,
-			Verdict:    r.Verdict,
-		})
+		}
+		if scored {
+			rung.LossPct = r.LossPct
+			rung.Verdict = r.Verdict
+		}
+		out.Rungs = append(out.Rungs, rung)
 	}
 	return out
 }

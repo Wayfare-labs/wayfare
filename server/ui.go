@@ -64,6 +64,10 @@ func (s *Server) summaryFor(ctx context.Context) *uiSummary {
 	if err != nil || rec == nil {
 		return nil
 	}
+	floor, worst := rec.FloorLossPct, rec.WorstLossPct
+	if !staleScored(&rec.Reference) {
+		floor, worst = "not scored", "not scored"
+	}
 	age := time.Since(rec.RecordedAt)
 	if age < 0 {
 		age = 0
@@ -71,8 +75,8 @@ func (s *Server) summaryFor(ctx context.Context) *uiSummary {
 	return &uiSummary{
 		Corridor:     defaultCorridorKey,
 		Integrity:    rec.Integrity,
-		FloorLossPct: rec.FloorLossPct,
-		WorstLossPct: rec.WorstLossPct,
+		FloorLossPct: floor,
+		WorstLossPct: worst,
 		RecordedAt:   rec.RecordedAt.UTC().Format(time.RFC3339),
 		Age:          uiHumanAge(age),
 	}
@@ -239,8 +243,14 @@ func socialMetadata(r *http.Request, store runstore.Store) string {
 	if store != nil {
 		record, err := store.Latest(r.Context(), key)
 		if err == nil && record != nil {
-			description = "Recorded " + record.Integrity + " integrity; floor loss " + record.FloorLossPct +
-				"% at " + record.FloorSize + " USDC. Recorded at " + record.RecordedAt.UTC().Format(time.RFC3339Nano) + "."
+			if !staleScored(&record.Reference) {
+				description = "Recorded " + record.Integrity +
+					" integrity; no scored floor loss is available. Recorded at " +
+					record.RecordedAt.UTC().Format(time.RFC3339Nano) + "."
+			} else {
+				description = "Recorded " + record.Integrity + " integrity; floor loss " + record.FloorLossPct +
+					"% at " + record.FloorSize + " USDC. Recorded at " + record.RecordedAt.UTC().Format(time.RFC3339Nano) + "."
+			}
 		}
 	}
 

@@ -195,7 +195,7 @@ func benchmarkMovement(prev, curr *Record) *Movement {
 // and whether that mid is scorable. A rate no verdict was graded against is
 // not a benchmark; treating it as one would let an unscored run pose as data.
 func scoredMid(ref Reference) (string, bool) {
-	if ref.ScoredAgainst == "" || ref.Source == "" || ref.Mid == "" {
+	if !ref.Scorable() || ref.Source == "" || ref.Mid == "" {
 		return "", false
 	}
 	return ref.Mid, true
@@ -220,6 +220,9 @@ func storedEffectiveRate(r *Record) (string, bool) {
 // priced rung keeps the "0.00" a NO-MARKET record stores for an unpriced
 // curve from reading as a real zero-percent loss.
 func storedFloorLoss(r *Record) (string, bool) {
+	if !r.Reference.Scorable() {
+		return "", false
+	}
 	if _, priced := storedEffectiveRate(r); !priced {
 		return "", false
 	}

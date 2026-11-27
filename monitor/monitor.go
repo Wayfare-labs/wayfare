@@ -375,17 +375,24 @@ func (s *Scheduler) measure(ctx context.Context, c Corridor) (string, error) {
 	if !ref.DivergencePct.IsZero() {
 		record.Reference.DivergencePct = ref.DivergencePct.StringFixed(4)
 	}
-	record.Reference.ScoredAgainst = ref.Source
+	if ref.Scorable() {
+		record.Reference.ScoredAgainst = ref.Source
+	}
 
-	s.log().Info("corridor measured",
+	attrs := []any{
 		"corridor", c.Key(),
 		"integrity", result.Integrity.String(),
-		"floor_loss_pct", result.Floor.StringFixed(2),
-		"worst_loss_pct", result.WorstLoss.StringFixed(2),
 		"scored", ref.Scorable(),
 		"reference", ref.Source,
 		"agreement", ref.Agreement.String(),
-		"took", s.now().Sub(started).Round(time.Millisecond).String())
+		"took", s.now().Sub(started).Round(time.Millisecond).String(),
+	}
+	if ref.Scorable() {
+		attrs = append(attrs,
+			"floor_loss_pct", result.Floor.StringFixed(2),
+			"worst_loss_pct", result.WorstLoss.StringFixed(2))
+	}
+	s.log().Info("corridor measured", attrs...)
 
 	// A storage failure must not lose the measurement for the caller: it
 	// already happened, and the reader is better served by a logged write
