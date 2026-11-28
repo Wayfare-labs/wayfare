@@ -215,6 +215,9 @@ func Load(dir string) (*Manifest, error) {
 	m.dir = dir
 	m.bodies = make(map[string][]byte, len(m.Interactions))
 	for _, in := range m.Interactions {
+		if in.BodyFile == "" && in.BodySHA256 != "" {
+			continue
+		}
 		bodyPath := filepath.Clean(filepath.FromSlash(in.BodyFile))
 		if filepath.IsAbs(bodyPath) || bodyPath == ".." ||
 			strings.HasPrefix(bodyPath, ".."+string(os.PathSeparator)) ||
@@ -316,4 +319,14 @@ func (m *Manifest) FirstOfKind(kind string) (Interaction, bool) {
 		}
 	}
 	return Interaction{}, false
+}
+
+// Save writes the manifest to the given path.
+func (m *Manifest) Save(path string) error {
+	raw, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return fmt.Errorf("snapshot: marshaling manifest: %w", err)
+	}
+	raw = append(raw, '\n')
+	return os.WriteFile(path, raw, 0644)
 }
