@@ -60,7 +60,7 @@ func TestReplayUnchangedWithStore(t *testing.T) {
 				"method": "GET",
 				"url": "http://example.com/test",
 				"body_file": "responses/body1.bin",
-				"body_sha256": "` + hashStr + `"
+				"body_sha256": "sha256:` + hashStr + `"
 			}
 		]
 	}`
@@ -115,7 +115,7 @@ func TestContentAddressedStoreAndMigration(t *testing.T) {
 		t.Fatalf("Put 2: %v", err)
 	}
 	hash3, err := store.Put(body3)
-if err != nil {
+	if err != nil {
 		t.Fatalf("Put 3: %v", err)
 	}
 
@@ -151,7 +151,7 @@ if err != nil {
 				"method": "GET",
 				"url": "/test",
 				"body_file": "responses/test.json",
-				"body_sha256": "` + hash1 + `"
+				"body_sha256": "sha256:` + hash1 + `"
 			}
 		]
 	}`

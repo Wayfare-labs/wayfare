@@ -3,13 +3,12 @@ package snapshot
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"fmt"
-	"encoding/json"
 )
-
 
 // StoreBody saves a response body into the content-addressed store by its SHA-256 hash.
 func (s *Store) StoreBody(body []byte) (string, error) {
@@ -56,12 +55,11 @@ func MigrateSnapshot(snapDir string, store *Store) error {
 	}
 
 	var raw map[string]interface{}
-	if err := json.Unmarshal(data, &raw);
-		err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf(
 			"snapshot: unmarshaling manifest for migration: %w",
 			err,
-		);
+		)
 	}
 
 	var interactions []map[string]interface{}
@@ -107,13 +105,14 @@ func MigrateSnapshot(snapDir string, store *Store) error {
 		return fmt.Errorf(
 			"snapshot: writing migrated manifest: %w",
 			err,
-		);
+		)
 	}
 
 	// Optionally remove responses directory if empty
 	_ = os.RemoveAll(filepath.Join(snapDir, "responses"))
 	return nil
 }
+
 type Store struct {
 	Dir string
 }
@@ -142,10 +141,10 @@ func (s *Store) Put(data []byte) (string, error) {
 
 	if err := os.WriteFile(objPath, data, 0644); err != nil {
 		return "", err
-}
+	}
 
 	return hashStr, nil
-	}
+}
 
 func (s *Store) Get(hash string) ([]byte, error) {
 	objPath := filepath.Join(s.objectsDir(), hash)

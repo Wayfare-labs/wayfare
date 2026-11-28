@@ -81,7 +81,7 @@ func MigrateSnapshotDir(snapshotDir string, store *Store) error {
 			continue
 		}
 
-	hashStr, err := store.Put(bodyBytes)
+		hashStr, err := store.Put(bodyBytes)
 		if err != nil {
 			return fmt.Errorf("store put during migration: %w", err)
 		}
