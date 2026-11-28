@@ -8,9 +8,9 @@ import (
 
 // SweepResult holds the outcome and duration of a single corridor sweep.
 type SweepResult struct {
-	Corridor   Corridor
-	Duration   time.Duration
-	Err        error
+	Corridor Corridor
+	Duration time.Duration
+	Err      error
 }
 
 // SweepCorridors runs measurements for multiple corridors concurrently using
@@ -25,7 +25,7 @@ func SweepCorridors(ctx context.Context, corridors []Corridor, concurrency int, 
 	}
 
 	type indexedCorridor struct {
-		index int
+		index    int
 		corridor Corridor
 	}
 

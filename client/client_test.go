@@ -2,12 +2,11 @@ package client
 
 import (
 	"context"
+	"github.com/shopspring/decimal"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"github.com/shopspring/decimal"
 )
-
 
 func TestClientCorridorAndAssets(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -39,7 +38,7 @@ func TestClientCorridorAndAssets(t *testing.T) {
 						"verdict": "POOR"
 					}
 				]
-			`))
+			}`))
 			return
 		}
 		if r.URL.Path == "/api/assets" {
@@ -94,7 +93,7 @@ func TestClientGetCorridor(t *testing.T) {
 			"worst_loss_pct": "95.0",
 			"live": false,
 			"measured_at": "2026-08-23T00:00:00Z"
-		}`)) 
+		}`))
 		_ = r
 	}))
 	defer srv.Close()

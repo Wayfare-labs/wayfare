@@ -11,9 +11,6 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-
-
-
 func (c *Client) Corridor(ctx context.Context, p CorridorParams) (*CorridorResponse, error) {
 	u, err := url.Parse(c.BaseURL + "/api/corridor")
 	if err != nil {
@@ -53,6 +50,7 @@ func (c *Client) Corridor(ctx context.Context, p CorridorParams) (*CorridorRespo
 	}
 	return &body, nil
 }
+
 type StaleInfo struct {
 	RecordedAt  string `json:"recorded_at"`
 	AgeSeconds  int64  `json:"age_seconds"`
@@ -93,7 +91,6 @@ type CorridorParams struct {
 	Live bool
 }
 
-
 type AssetListResponse struct {
 	Assets []AssetInfo `json:"assets"`
 }
@@ -132,7 +129,7 @@ type Client struct {
 // New creates a new API client.
 func New(baseURL string) *Client {
 	return &Client{
-		BaseURL: baseURL,
+		BaseURL:    baseURL,
 		HTTPClient: &http.Client{Timeout: 15 * time.Second},
 	}
 }
@@ -150,21 +147,28 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 
 // CorridorResponse represents the response from GET /api/corridor.
 type CorridorResponse struct {
-	SendAsset         string                 `json:"send_asset"`
-	ReceiveAsset      string                 `json:"receive_asset"`
-	Integrity         string                 `json:"integrity"`
-	ReferenceMid      decimal.Decimal        `json:"reference_mid"`
-	ReferenceSource   string                 `json:"reference_source"`
-	Scored            bool                   `json:"scored"`
-	Recommended       *decimal.Decimal       `json:"recommended"`
-	FloorLossPct      decimal.Decimal        `json:"floor_loss_pct"`
-	WorstLossPct      decimal.Decimal        `json:"worst_loss_pct"`
-	Live              bool                   `json:"live"`
-	MeasuredAt        time.Time              `json:"measured_at"`
+	Live            bool             `json:"live"`
+	Stale           *StaleInfo       `json:"stale,omitempty"`
+	Scored          bool             `json:"scored"`
+	Agreement       *decimal.Decimal `json:"agreement,omitempty"`
+	AsOfGap         string           `json:"as_of_gap,omitempty"`
+	Send            AssetInfo        `json:"send"`
+	Receive         AssetInfo        `json:"receive"`
+	SendAsset       string           `json:"send_asset"`
+	ReceiveAsset    string           `json:"receive_asset"`
+	Integrity       string           `json:"integrity"`
+	ReferenceMid    decimal.Decimal  `json:"reference_mid"`
+	ReferenceSource string           `json:"reference_source"`
+	Recommended     *RecommendedRung `json:"recommended"`
+	Rungs           []Rung           `json:"rungs"`
+	Findings        any              `json:"findings,omitempty"`
+	FloorLossPct    decimal.Decimal  `json:"floor_loss_pct"`
+	WorstLossPct    decimal.Decimal  `json:"worst_loss_pct"`
+	MeasuredAt      time.Time        `json:"measured_at"`
 }
 
 // GetCorridor fetches corridor measurements.
-func (c *Client) GetCorridor(ctx context.Context, from, to string, live bool) (*CorridorResponse, error {
+func (c *Client) GetCorridor(ctx context.Context, from, to string, live bool) (*CorridorResponse, error) {
 	u, err := url.Parse(c.BaseURL + "/api/corridor")
 	if err != nil {
 		return nil, err
@@ -197,17 +201,17 @@ func (c *Client) GetCorridor(ctx context.Context, from, to string, live bool) (*
 	}
 
 	var target struct {
-		SendAsset         string           `json:"send_asset"`
-		ReceiveAsset      string           `json:"receive_asset"`
-		Integrity         string           `json:"integrity"`
-		ReferenceMid      string           `json:"reference_mid"`
-		ReferenceSource   string           `json:"reference_source"`
-		Scored            bool             `json:"scored"`
-		Recommended       *string          `json:"recommended"`
-		FloorLossPct      string           `json:"floor_loss_pct"`
-		WorstLossPct      string           `json:"worst_loss_pct"`
-		Live              bool             `json:"live"`
-		MeasuredAt        time.Time        `json:"measured_at"`
+		SendAsset       string           `json:"send_asset"`
+		ReceiveAsset    string           `json:"receive_asset"`
+		Integrity       string           `json:"integrity"`
+		ReferenceMid    string           `json:"reference_mid"`
+		ReferenceSource string           `json:"reference_source"`
+		Scored          bool             `json:"scored"`
+		Recommended     *RecommendedRung `json:"recommended"`
+		FloorLossPct    string           `json:"floor_loss_pct"`
+		WorstLossPct    string           `json:"worst_loss_pct"`
+		Live            bool             `json:"live"`
+		MeasuredAt      time.Time        `json:"measured_at"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&target); err != nil {
@@ -220,6 +224,7 @@ func (c *Client) GetCorridor(ctx context.Context, from, to string, live bool) (*
 		Integrity:       target.Integrity,
 		ReferenceSource: target.ReferenceSource,
 		Scored:          target.Scored,
+		Recommended:     target.Recommended,
 		Live:            target.Live,
 		MeasuredAt:      target.MeasuredAt,
 	}
@@ -232,10 +237,6 @@ func (c *Client) GetCorridor(ctx context.Context, from, to string, live bool) (*
 	}
 	if target.WorstLossPct != "" {
 		res.WorstLossPct, _ = decimal.NewFromString(target.WorstLossPct)
-	}
-	if target.Recommended != nil {
-		d, _ := decimal.NewFromString(*target.Recommended)
-		res.Recommended = &d
 	}
 
 	return res, nil

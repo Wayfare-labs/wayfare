@@ -3,23 +3,22 @@ package monitor
 import (
 	"context"
 	"errors"
-	"testing"
-	"time"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"path/filepath"
-	"strings"
-	"github.com/shopspring/decimal"
 	"github.com/Wayfare-labs/wayfare/asset"
 	"github.com/Wayfare-labs/wayfare/dex"
 	"github.com/Wayfare-labs/wayfare/refrate"
 	"github.com/Wayfare-labs/wayfare/route"
 	"github.com/Wayfare-labs/wayfare/runstore"
 	"github.com/Wayfare-labs/wayfare/snapshot"
+	"github.com/shopspring/decimal"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
 )
-
 
 // failHandler wraps a snapshot replayer and returns HTTP 500 for requests
 // whose query contains the given receive-asset code.  This simulates a
@@ -714,14 +713,14 @@ func TestRestartAfterCrashMidSweep(t *testing.T) {
 func TestSweepCorridors_BoundedAndIsolated(t *testing.T) {
 	ctx := context.Background()
 	corridors := []Corridor{
-		{Send: "USDC", Receive: "NGNC"},
-		{Send: "USDC", Receive: "GHSC"},
-		{Send: "USDC", Receive: "KESC"},
+		{Send: asset.Asset{Code: "USDC"}, Receive: asset.Asset{Code: "NGNC"}},
+		{Send: asset.Asset{Code: "USDC"}, Receive: asset.Asset{Code: "GHSC"}},
+		{Send: asset.Asset{Code: "USDC"}, Receive: asset.Asset{Code: "KESC"}},
 	}
 
 	measure := func(ctx context.Context, c Corridor) error {
 		time.Sleep(10 * time.Millisecond)
-		if c.Receive == "GHSC" {
+		if c.Receive.Code == "GHSC" {
 			return errors.New("ghsc failed")
 		}
 		return nil
