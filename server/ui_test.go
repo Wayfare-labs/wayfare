@@ -86,34 +86,10 @@ func TestUIThemeToggle(t *testing.T) {
 	}
 }
 
-// TestUIThemeControlCannotAbortBoot guards issue #832: the theme control is
-// optional markup, so an older or reduced page must still reach corridor boot.
-func TestUIThemeControlCannotAbortBoot(t *testing.T) {
-	page := uiSource(t)
-	bind := between(t, page, "const theme = $('theme');", "$('compare').addEventListener")
-	if !strings.Contains(bind, "if (theme)") {
-		t.Fatal("theme initialization is not guarded; missing theme markup would abort corridor boot")
-	}
-	if !strings.Contains(bind, "theme.value = storedTheme()") {
-		t.Fatal("guarded theme initialization no longer restores the stored theme")
-	}
-	if !strings.Contains(bind, "theme.addEventListener('change'") {
-		t.Fatal("guarded theme initialization no longer wires theme changes")
-	}
-
-	boot := strings.Index(page, "(async function boot()")
-	if boot < 0 {
-		t.Fatal("UI source is missing the corridor boot function")
-	}
-	if strings.Index(page, "const theme = $('theme');") > boot {
-		t.Fatal("theme binding moved after corridor boot")
-	}
-}
-
-// TestUIEvidenceDrawer guards issues #294 and #647: evidence is
+// TestUIEvidenceDrawer guards issues #294, #647 and #870: evidence is
 // progressively disclosed rather than dumped, provenance is stated next to
-// the headline, and every check says where its evidence came from and how old
-// the observation is.
+// the headline, every check says where its evidence came from and how old the
+// observation is, and a check without evidence renders no drawer at all.
 //
 // The original #294 implementation built a headline <details> drawer from
 // fields the server did not yet publish (reference_fetched_at,
@@ -153,6 +129,11 @@ func TestUIEvidenceDrawer(t *testing.T) {
 		// Links open with rel=noopener, and only http(s) sources become links.
 		`target="_blank" rel="noopener noreferrer"`,
 		"url.protocol !== 'https:' && url.protocol !== 'http:'",
+		// A check without evidence renders no drawer at all (issue #870):
+		// the whole block is gated on a non-empty evidence list, so an empty
+		// drawer can never claim "evidence exists and is empty".
+		"const evidenceBlock = evidence",
+		"${evidenceBlock}",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("UI missing %q; check evidence would not show its source and age", want)

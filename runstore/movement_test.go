@@ -190,6 +190,37 @@ func TestBenchmarkMovementUnscoredBenchmark(t *testing.T) {
 	}
 }
 
+func TestBenchmarkMovementRejectsLegacyMalfunctionScore(t *testing.T) {
+	at := func(day int) time.Time {
+		return time.Date(2026, 8, day, 12, 0, 0, 0, time.UTC)
+	}
+	unscored := movementRecord(1, at(20), "1350", "1300", "0.00")
+	unscored.Reference = Reference{
+		Mid: "1350", Source: "currency-api",
+		SecondaryMid: "1620", SecondarySource: "exchangerate-api",
+		DivergencePct: "20.00", ScoredAgainst: "currency-api",
+	}
+	scored := movementRecord(2, at(21), "1400", "1300", "7.14")
+	store := seedMovement(t, unscored, scored)
+
+	m, err := BenchmarkMoved(context.Background(), store, "USDC-NGNC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m == nil {
+		t.Fatal("expected the independently measured corridor-rate movement")
+	}
+	if m.BenchmarkFrom != "" || m.BenchmarkPct != "" {
+		t.Errorf("legacy malfunction reference produced benchmark movement: %+v", m)
+	}
+	if m.LossPctChange != "" {
+		t.Errorf("legacy malfunction reference produced a loss change: %q", m.LossPctChange)
+	}
+	if m.CorridorPct != "0" {
+		t.Errorf("corridor movement = %q, want measured zero independent of the reference", m.CorridorPct)
+	}
+}
+
 // TestBenchmarkMovementNoPrices pins that unpriced runs contribute no
 // corridor figure: there is no price, so there is nothing to compare, and
 // synthesising one from an unpriced curve is the one thing this must never

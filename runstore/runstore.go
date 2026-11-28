@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/Wayfare-labs/wayfare/checks"
 	"github.com/Wayfare-labs/wayfare/route"
 )
@@ -80,6 +82,23 @@ type Reference struct {
 	DiagnosticOutlierDistancePct string `json:"diagnostic_outlier_distance_pct,omitempty"`
 	DiagnosticOtherDistancePct   string `json:"diagnostic_other_distance_pct,omitempty"`
 	DiagnosticReason             string `json:"diagnostic_reason,omitempty"`
+}
+
+// Scorable reports whether a stored reference can support the record's
+// verdicts. Older monitor versions recorded ScoredAgainst even when the
+// cross-check was MALFUNCTION, so the persisted divergence is authoritative
+// for that known-invalid case.
+func (r Reference) Scorable() bool {
+	if r.ScoredAgainst == "" {
+		return false
+	}
+	if r.SecondaryMid == "" && r.SecondarySource == "" {
+		return true
+	}
+	divergence, err := decimal.NewFromString(r.DivergencePct)
+	// Keep runstore independent from refrate (ADR 005). This is the
+	// persisted MALFUNCTION boundary from refrate.DivergenceMalfunction.
+	return err != nil || !divergence.GreaterThan(decimal.NewFromInt(10))
 }
 
 // Rung is one size's stored result.

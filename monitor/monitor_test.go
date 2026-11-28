@@ -29,6 +29,19 @@ func quiet() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+type fixedReference struct {
+	name string
+	mid  string
+}
+
+func (r fixedReference) Name() string { return r.name }
+
+func (r fixedReference) Rate(_ context.Context, base, quote string) (refrate.Rate, error) {
+	return refrate.Rate{
+		Base: base, Quote: quote, Mid: decimal.RequireFromString(r.mid), Source: r.name,
+	}, nil
+}
+
 // schedulerOver builds a scheduler measuring one corridor from a snapshot, so
 // the whole test runs offline.
 func schedulerOver(t *testing.T, prefix string, recv asset.Asset, quote, mid string, store runstore.Store) *Scheduler {
@@ -96,6 +109,41 @@ func TestRunOnceWritesOneRecordPerCorridor(t *testing.T) {
 	}
 	if rec.Reference.ScoredAgainst == "" {
 		t.Error("the record must name which mid produced its verdicts")
+	}
+}
+
+func TestRunOnceDoesNotRecordUnscoredLossesOrScoringSource(t *testing.T) {
+	store, err := runstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := schedulerOver(t, "usdc-ngnc", asset.NGNC(), "NGN", "1350.2568", store)
+	s.Engine.RefRate = &refrate.Cross{
+		Primary:   fixedReference{"primary", "1350.2568"},
+		Secondary: fixedReference{"secondary", "135.02568"},
+	}
+
+	if err := s.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	rec, err := store.Latest(context.Background(), "USDC-NGNC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec == nil {
+		t.Fatal("RunOnce wrote no record")
+	}
+	if rec.Reference.ScoredAgainst != "" {
+		t.Errorf("ScoredAgainst = %q, want empty for an unscored benchmark", rec.Reference.ScoredAgainst)
+	}
+	if rec.FloorLossPct != "" || rec.WorstLossPct != "" {
+		t.Errorf("unscored summary persisted loss values: floor=%q worst=%q",
+			rec.FloorLossPct, rec.WorstLossPct)
+	}
+	for i, rung := range rec.Rungs {
+		if rung.LossPct != "" || rung.Verdict != "UNKNOWN" {
+			t.Errorf("unscored rung %d persisted loss=%q verdict=%q", i, rung.LossPct, rung.Verdict)
+		}
 	}
 }
 

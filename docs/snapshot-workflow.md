@@ -66,11 +66,11 @@ normal `wayfared` request; capture is a deliberate act.
 ### Run the ladder with `-record`
 
 ```bash
-# Default corridor (USDC → NGNC), using currency-api:
-go run ./cmd/ladder -to NGNC -ref currency-api -record testdata/snapshots
+# Default corridor (USDC → NGNC), using the server's cross-checked stack:
+go run ./cmd/ladder -to NGNC -record testdata/snapshots
 
 # A different corridor:
-go run ./cmd/ladder -to GHSC -ref currency-api -record testdata/snapshots
+go run ./cmd/ladder -to GHSC -record testdata/snapshots
 
 # Custom sizes:
 go run ./cmd/ladder -to NGNC -sizes "10,100,1000" -record testdata/snapshots
@@ -454,7 +454,7 @@ When adding a new corridor to the test set:
    [docs/adding-a-corridor.md](adding-a-corridor.md).
 2. **Record a snapshot:**
    ```bash
-   go run ./cmd/ladder -to <CODE> -ref currency-api -record testdata/snapshots
+   go run ./cmd/ladder -to <CODE> -record testdata/snapshots
    ```
 3. **Verify the snapshot loads:**
    ```bash
