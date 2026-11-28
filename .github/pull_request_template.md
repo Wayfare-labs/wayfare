@@ -39,6 +39,20 @@ If a line does not apply to your change, tick it and say why underneath.
       inconclusive finding is reported as a valid result.
 - [ ] **`make fmt vet test race lint offline-test` is clean.**
 
+## Acceptance criteria
+
+<!--
+  List every acceptance criterion from the linked issue, then name the test,
+  `make` target, or command that proves each one is met, and paste its output.
+  A criterion that cannot be verified mechanically must name the maintainer who
+  confirmed it manually.  Leaving a criterion unmapped routes this PR to
+  needs-maintainer-review regardless of CI status.
+-->
+
+| Criterion | Test / command | Result |
+|-----------|---------------|--------|
+| <!-- copy from issue --> | <!-- e.g. `go test ./...` or `make lint` --> | <!-- paste output or "passed" --> |
+
 ## How you verified it
 
 <!-- The exact command, and what it printed. If you measured something live,

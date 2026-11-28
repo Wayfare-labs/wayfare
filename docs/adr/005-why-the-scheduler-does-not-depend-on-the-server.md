@@ -40,6 +40,7 @@ monitor                 → asset, checks, failover, metrics, route, runstore, s
 refrate                 → transport
 route                   → asset, checks, dex, refrate, sep38
 runstore                → asset, checks, route, snapshot
+scripts/walkthrough-ci  →
 sep38                   → asset
 server                  → analysis, asset, buildinfo, checks, failover, metrics, refrate, route, runstore, transport
 snapshot                →
@@ -48,6 +49,8 @@ transport               →
 
 `.` is the repository root package. `cmd/*` and `examples/*` are leaves: they
 may import from the graph above, and nothing in it may import them.
+`scripts/walkthrough-ci` is a standard-library-only leaf that extracts and
+runs the explicitly annotated offline commands in the first-15-minutes guide.
 
 Neither `monitor` nor `server` imports the other. Measurements pass between
 them only through the hash-chained history on disk. When both run in one

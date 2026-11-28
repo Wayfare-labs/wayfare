@@ -631,18 +631,22 @@ func (l *LadderResult) summarise() {
 			}
 		}
 
-		// The decomposition answers "where did the money go" for this
-		// size — the per-quote component breakdown behind the single loss
-		// percentage, computed against the corridor's reference mid.
-		l.Rungs[i].Decomposition = Decompose(q, l.ReferenceMid)
+		// The decomposition, floor and worst loss are all measured against
+		// the reference mid, so an unscored benchmark leaves them unknown.
+		if l.Reference.Scorable() {
+			// The decomposition answers "where did the money go" for this
+			// size — the per-quote component breakdown behind the single loss
+			// percentage, computed against the corridor's reference mid.
+			l.Rungs[i].Decomposition = Decompose(q, l.ReferenceMid)
 
-		if l.FloorSize.IsZero() {
-			l.Floor = q.LossPct
-			l.FloorSize = r.SendAmount
-			l.FloorEffectiveRate = q.EffectiveRate
-		}
-		if q.LossPct.GreaterThanOrEqual(l.WorstLoss) {
-			l.WorstLoss, l.WorstSize = q.LossPct, r.SendAmount
+			if l.FloorSize.IsZero() {
+				l.Floor = q.LossPct
+				l.FloorSize = r.SendAmount
+				l.FloorEffectiveRate = q.EffectiveRate
+			}
+			if q.LossPct.GreaterThanOrEqual(l.WorstLoss) {
+				l.WorstLoss, l.WorstSize = q.LossPct, r.SendAmount
+			}
 		}
 
 		// The first acceptable quote on an ascending ladder is also the
@@ -680,7 +684,11 @@ func (l *LadderResult) summarise() {
 	}
 
 	l.Curve = l.buildCurve()
-	l.computeMarginalCosts()
+	if l.Reference.Scorable() {
+		l.computeMarginalCosts()
+	} else {
+		l.MarginalClassification = MarginalUndetermined
+	}
 	l.Finding = l.finding(anyPriced, firstErr)
 }
 
@@ -695,6 +703,28 @@ func (l *LadderResult) summarise() {
 // able to tell a full curve from a partial one.
 func (l *LadderResult) finding(anyPriced bool, firstErr error) string {
 	send, recv := l.Request.SendAsset.Code, l.Request.ReceiveAsset.Code
+
+	if !l.Reference.Scorable() {
+		priced := 0
+		for _, rung := range l.Rungs {
+			if rung.Priced() {
+				priced++
+			}
+		}
+		finding := fmt.Sprintf(
+			"No verdict or recommendation was derived for %s to %s. The ladder "+
+				"priced %d of %d sizes; integrity is %s.",
+			send, recv, priced, len(l.Rungs), l.Integrity)
+		if len(l.DependsOn) > 0 {
+			finding += " Depends on " + describeAssets(l.DependsOn) + "."
+		}
+		if l.Reference.Note != "" {
+			finding += " Reference cross-check: " + l.Reference.Note
+		} else {
+			finding += " Reference cross-check: " + l.Reference.Agreement.String() + "."
+		}
+		return finding
+	}
 
 	if l.Integrity == IntegrityNoMarket {
 		return fmt.Sprintf(

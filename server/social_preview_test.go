@@ -54,6 +54,53 @@ func TestSocialPreviewUsesLatestRecordedCorridorData(t *testing.T) {
 	}
 }
 
+func TestSocialPreviewDoesNotPublishUnscoredLoss(t *testing.T) {
+	at := time.Date(2026, 8, 22, 12, 34, 56, 123000000, time.UTC)
+	store := seedTrendStore(t, []trendSeed{{
+		at: at, integrity: "DIRECT", mid: "1350", source: "currency-api",
+		loss: "0.00", verdict: "UNKNOWN", unscored: true,
+	}})
+	srv := trendServer(t, store)
+
+	resp, err := http.Get(srv.URL + "/og/corridor.svg?to=NGNC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	if err := xml.Unmarshal(body, new(struct {
+		XMLName xml.Name `xml:"svg"`
+	})); err != nil {
+		t.Fatalf("SVG is not well-formed XML: %v", err)
+	}
+	for _, forbidden := range []string{"0.00%", "0.00 percent", "at 0.1 USDC"} {
+		if strings.Contains(content, forbidden) {
+			t.Errorf("unscored social preview contains %q: %s", forbidden, content)
+		}
+	}
+	if !strings.Contains(content, "not scored") || !strings.Contains(content, "no floor loss was derived") {
+		t.Errorf("unscored social preview does not explain the missing score: %s", content)
+	}
+
+	page, err := http.Get(srv.URL + "/?to=NGNC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer page.Body.Close()
+	pageBody, err := io.ReadAll(page.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(pageBody), "floor loss 0.00%") ||
+		!strings.Contains(string(pageBody), "no scored floor loss is available") {
+		t.Errorf("unscored social metadata contains a fabricated floor: %s", pageBody)
+	}
+}
+
 func TestSocialMetadataUsesRequestedCorridorAndStoredSnapshot(t *testing.T) {
 	at := time.Date(2026, 8, 22, 12, 34, 56, 0, time.UTC)
 	store := seedTrendStore(t, []trendSeed{{
