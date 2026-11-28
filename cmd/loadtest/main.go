@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net/http"
@@ -51,7 +52,11 @@ func runLoad(targetURL string, concurrency int, totalRequests int) Result {
 			defer wg.Done()
 			for range reqChan {
 				reqStart := time.Now()
-				resp, err := client.Get(targetURL)
+				var resp *http.Response
+				req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, targetURL, nil)
+				if err == nil {
+					resp, err = client.Do(req)
+				}
 				reqDur := time.Since(reqStart)
 
 				if err == nil && resp.StatusCode < 500 {

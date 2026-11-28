@@ -1,6 +1,6 @@
 # Docs index
 
-154 documents in `docs/`, grouped by primary audience. Every file is listed
+156 documents in `docs/`, grouped by primary audience. Every file is listed
 exactly once; the grouping reflects who is most likely to need it first.
 
 ---
@@ -141,6 +141,8 @@ exactly once; the grouping reflects who is most likely to need it first.
 | [account-level-concentration-research.md](account-level-concentration-research.md) | Can account-level concentration be measured at all? |
 | [ecosystem-mapping.md](ecosystem-mapping.md) | Mapping the Stellar ecosystem projects Wayfare could inform |
 | [research-measurement-noise.md](research-measurement-noise.md) | How much does a rung move between back-to-back measurements? |
+| [soroban-amm-liquidity-research.md](soroban-amm-liquidity-research.md) | Is fiat-token liquidity hiding in Soroban AMMs? |
+| [soroban-aggregator-comparison-research.md](soroban-aggregator-comparison-research.md) | Wayfare's best route against Soroban router quotes, at the same moment |
 | [spike-measured-intervals.md](spike-measured-intervals.md) | Spike: representing a measured figure with an interval |
 | [research-remittance-benchmark.md](research-remittance-benchmark.md) | Research: Wayfare loss versus published remittance prices |
 | [research-moneygram-cashout-observability.md](research-moneygram-cashout-observability.md) | Research: MoneyGram Stellar cash-out observability |

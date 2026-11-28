@@ -380,7 +380,7 @@ func sizeStrings(sizes []decimal.Decimal) []string {
 // gitRevision records which build captured a snapshot. Absent rather than
 // guessed when git cannot answer.
 func gitRevision() string {
-	out, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+	out, err := exec.CommandContext(context.Background(), "git", "rev-parse", "--short", "HEAD").Output()
 	if err != nil {
 		return ""
 	}
@@ -391,7 +391,7 @@ func gitRevision() string {
 // provenance rule cmd/ladder applies (see its requireCleanTree for the full
 // argument). A dirty tree names a revision that did not produce the bytes.
 func requireCleanTree(dir string, allowDirty bool) (bool, error) {
-	out, err := exec.Command("git", "-C", dir, "status", "--porcelain").Output()
+	out, err := exec.CommandContext(context.Background(), "git", "-C", dir, "status", "--porcelain").Output()
 	if err != nil {
 		return false, nil
 	}

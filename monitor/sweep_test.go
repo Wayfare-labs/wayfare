@@ -429,7 +429,7 @@ func TestRunContinuesAfterSweepFailure(t *testing.T) {
 	// Ladder returns a result (not an error) when all rungs fail, so the
 	// sweep succeeds and Run keeps ticking.
 	err = s.Run(ctx)
-	if err != context.DeadlineExceeded {
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("Run returned %v, want context.DeadlineExceeded (meaning it kept running after failure)", err)
 	}
 }

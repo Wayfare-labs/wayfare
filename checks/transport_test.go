@@ -3,6 +3,7 @@ package checks
 import (
 	"context"
 	"net"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -37,7 +38,7 @@ func TestGuardedControlRejectsAdversarialAddresses(t *testing.T) {
 
 func TestDNSRebindingRefusedAtConnectTime(t *testing.T) {
 	// A local UDP listener acts as a simulated DNS server for rebinding.
-	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	pc, err := (&net.ListenConfig{}).ListenPacket(context.Background(), "udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("ListenPacket failed: %v", err)
 	}
@@ -107,7 +108,14 @@ func TestDNSRebindingRefusedAtConnectTime(t *testing.T) {
 
 	// 2. Connect time: guarded client connects to the same hostname, but DNS rebinds to loopback.
 	client := guardedClient(3*time.Second, resolver)
-	_, err = client.Get("http://rebind.example.test/latest/meta-data/")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://rebind.example.test/latest/meta-data/", nil)
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	resp, err := client.Do(req)
+	if resp != nil {
+		resp.Body.Close()
+	}
 	if err == nil {
 		t.Fatal("guarded client allowed connection to rebound address; expected refusal")
 	}

@@ -71,7 +71,7 @@ func slowHorizonURL(t *testing.T) string {
 // scrape reads /metrics from an API under test.
 func scrape(t *testing.T, api *httptest.Server) string {
 	t.Helper()
-	resp, err := http.Get(api.URL + "/metrics")
+	resp, err := httpGet(api.URL + "/metrics")
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestMetricsServesEveryFamilyWithNothingObserved(t *testing.T) {
 func TestMetricsCarriesTheScrapersHeaders(t *testing.T) {
 	api := metricsServer(t, metrics.New(), closedHorizonURL(t), 0, nil)
 
-	resp, err := http.Get(api.URL + "/metrics")
+	resp, err := httpGet(api.URL + "/metrics")
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestMetricsHeadMatchesGet(t *testing.T) {
 	api := metricsServer(t, metrics.New(), closedHorizonURL(t), 0, nil)
 	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
 
-	getReq, err := http.NewRequest(http.MethodGet, api.URL+"/metrics", nil)
+	getReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, api.URL+"/metrics", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestMetricsHeadMatchesGet(t *testing.T) {
 		t.Fatalf("reading GET /metrics: %v", err)
 	}
 
-	headReq, err := http.NewRequest(http.MethodHead, api.URL+"/metrics", nil)
+	headReq, err := http.NewRequestWithContext(context.Background(), http.MethodHead, api.URL+"/metrics", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestEveryLiveOutcomeIsCountedOnce(t *testing.T) {
 			}
 			api := metricsServer(t, collector, tc.horizon(t), tc.timeout, store)
 
-			resp, err := http.Get(api.URL + "/api/corridor?to=NGNC&sizes=100")
+			resp, err := httpGet(api.URL + "/api/corridor?to=NGNC&sizes=100")
 			if err != nil {
 				t.Fatalf("GET /api/corridor: %v", err)
 			}
@@ -341,7 +341,7 @@ func TestHistoryServedReadIsNotALiveRequest(t *testing.T) {
 	api := httptest.NewServer(s.Handler())
 	t.Cleanup(api.Close)
 
-	resp, err := http.Get(api.URL + "/api/corridor?to=NGNC&sizes=100")
+	resp, err := httpGet(api.URL + "/api/corridor?to=NGNC&sizes=100")
 	if err != nil {
 		t.Fatalf("GET /api/corridor: %v", err)
 	}
@@ -376,7 +376,7 @@ func TestMetricsCountsRateLimitRejections(t *testing.T) {
 	t.Cleanup(api.Close)
 
 	for i := 0; i < 3; i++ {
-		resp, err := http.Get(api.URL + "/healthz")
+		resp, err := httpGet(api.URL + "/healthz")
 		if err != nil {
 			t.Fatalf("request %d: %v", i, err)
 		}

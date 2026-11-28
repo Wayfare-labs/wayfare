@@ -15,7 +15,7 @@ import (
 func TestUISecurityHeaders(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
 
-	resp, err := http.Get(srv.URL + "/")
+	resp, err := httpGet(srv.URL + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestJSONResponsesCarryNosniff(t *testing.T) {
 
 	for _, ep := range endpoints {
 		t.Run(ep, func(t *testing.T) {
-			resp, err := http.Get(srv.URL + ep)
+			resp, err := httpGet(srv.URL + ep)
 			if err != nil {
 				t.Fatalf("GET %s: %v", ep, err)
 			}
@@ -113,7 +113,7 @@ func TestJSONResponsesCarryNosniff(t *testing.T) {
 // TestUINotFoundHasNosniff asserts that non-root paths on uiHandler also set nosniff.
 func TestUINotFoundHasNosniff(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
-	resp, err := http.Get(srv.URL + "/not-found-page")
+	resp, err := httpGet(srv.URL + "/not-found-page")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}

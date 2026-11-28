@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,7 +34,7 @@ func recordAgainst(t *testing.T, handler http.HandlerFunc, paths ...string) (str
 	rec := &Recorder{Corridor: ngncCorridor(), Sizes: []string{"100"}}
 	client := &http.Client{Transport: rec}
 	for _, p := range paths {
-		resp, err := client.Get(srv.URL + p)
+		resp, err := clientGet(client, srv.URL+p)
 		if err != nil {
 			t.Fatalf("GET %s: %v", p, err)
 		}
@@ -104,7 +105,7 @@ func TestReplayServesRecordedResponse(t *testing.T) {
 	}
 
 	// Replayed against a completely different base URL, which is the point.
-	resp, err := m.HTTPClient().Get("https://open.er-api.com/v6/latest/USD")
+	resp, err := clientGet(m.HTTPClient(), "https://open.er-api.com/v6/latest/USD")
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
@@ -129,7 +130,7 @@ func TestUnrecordedRequestErrorsRatherThanReachingTheNetwork(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	_, err = m.HTTPClient().Get("https://horizon.stellar.org/paths/strict-send?source_amount=999")
+	_, err = clientGet(m.HTTPClient(), "https://horizon.stellar.org/paths/strict-send?source_amount=999")
 	if err == nil {
 		t.Fatal("a request the snapshot does not contain returned no error; " +
 			"a silent passthrough would make replayed tests intermittently live")
@@ -340,7 +341,7 @@ func TestOldSnapshotVersion1StillLoads(t *testing.T) {
 
 	// Verify headers replay
 	client := m.HTTPClient()
-	req, _ := http.NewRequest(http.MethodGet, "https://horizon.stellar.org/paths/strict-send?source_amount=100", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://horizon.stellar.org/paths/strict-send?source_amount=100", nil)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("replaying request: %v", err)
@@ -451,7 +452,7 @@ func TestSaveContentAddressed(t *testing.T) {
 		}, nil
 	})
 	client := &http.Client{Transport: rec}
-	resp, err := client.Get("https://example.test/info")
+	resp, err := clientGet(client, "https://example.test/info")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,3 +472,14 @@ func TestSaveContentAddressed(t *testing.T) {
 type roundTripper func(*http.Request) (*http.Response, error)
 
 func (f roundTripper) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+// clientGet is client.Get with an explicit context. The noctx linter rejects
+// the context-free helpers; the tests route through this one function rather
+// than suppressing it.
+func clientGet(client *http.Client, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return client.Do(req)
+}

@@ -16,7 +16,7 @@ func TestSocialPreviewUsesLatestRecordedCorridorData(t *testing.T) {
 	}})
 	srv := trendServer(t, store)
 
-	resp, err := http.Get(srv.URL + "/og/corridor.svg?to=NGNC")
+	resp, err := httpGet(srv.URL + "/og/corridor.svg?to=NGNC")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestSocialMetadataUsesRequestedCorridorAndStoredSnapshot(t *testing.T) {
 	}})
 	srv := trendServer(t, store)
 
-	resp, err := http.Get(srv.URL + "/?to=NGNC")
+	resp, err := httpGet(srv.URL + "/?to=NGNC")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestSocialMetadataUsesRequestedCorridorAndStoredSnapshot(t *testing.T) {
 
 func TestSocialPreviewWithoutStoredHistoryIsNotFound(t *testing.T) {
 	srv := trendServer(t, seedTrendStore(t, nil))
-	resp, err := http.Get(srv.URL + "/og/corridor.svg?to=NGNC")
+	resp, err := httpGet(srv.URL + "/og/corridor.svg?to=NGNC")
 	if err != nil {
 		t.Fatal(err)
 	}

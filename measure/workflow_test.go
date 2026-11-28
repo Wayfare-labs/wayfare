@@ -1,6 +1,7 @@
 package measure
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -289,7 +290,7 @@ func runStep(t *testing.T, s step) stepResult {
 		workdir = root
 	}
 
-	cmd := exec.Command("bash", scriptPath)
+	cmd := exec.CommandContext(context.Background(), "bash", scriptPath)
 	cmd.Dir = workdir
 	cmd.Env = mergeEnv(env)
 	var stdout, stderr strings.Builder
@@ -639,7 +640,7 @@ func (r *repo) git(dir string, args ...string) string {
 		"-c", "user.name=test", "-c", "user.email=test@example.com",
 		"-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main",
 	}, args...)
-	cmd := exec.Command("git", full...)
+	cmd := exec.CommandContext(context.Background(), "git", full...)
 	cmd.Dir = dir
 	cmd.Env = mergeEnv(map[string]string{
 		"GIT_CONFIG_GLOBAL":   filepath.Join(r.bare, "..", "gitconfig-none"),

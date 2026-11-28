@@ -454,7 +454,7 @@ func TestRunnerHandsTheClientToDefaultChecks(t *testing.T) {
 	plain := &Runner{}
 	if got := plain.client(); got == nil {
 		t.Fatal("runner with no HTTPClient must supply a client")
-	} else if _, err := got.Get("http://127.0.0.1:1/"); err == nil ||
+	} else if _, err := clientGet(got, "http://127.0.0.1:1/"); err == nil ||
 		!strings.Contains(err.Error(), "refusing to") {
 		t.Errorf("the default client must be the guarded one; got %v", err)
 	}

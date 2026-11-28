@@ -105,7 +105,7 @@ func readyServer(t *testing.T, s *Server) *httptest.Server {
 
 func fetchReadyz(t *testing.T, url string) (int, readinessJSON, []byte) {
 	t.Helper()
-	resp, err := http.Get(url)
+	resp, err := httpGet(url)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -181,7 +181,7 @@ func TestReadyzRefusesAnUnverifiedChainIsNotARefusedHealthz(t *testing.T) {
 		t.Errorf("store.state = %q, want %q", doc.Checks.Store.State, stateReadable)
 	}
 
-	health, err := http.Get(api.URL + "/healthz")
+	health, err := httpGet(api.URL + "/healthz")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestReadyzIsCheap(t *testing.T) {
 	// The control, on the same server: liveness does ask the upstream, so a
 	// count of zero above is a statement about readiness rather than about a
 	// fixture nothing ever reaches.
-	health, err := http.Get(api.URL + "/healthz")
+	health, err := httpGet(api.URL + "/healthz")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +339,11 @@ func TestReadyzDocumentShape(t *testing.T) {
 func TestReadyzAcceptsGETAndHEADOnly(t *testing.T) {
 	api := readyServer(t, &Server{Store: readyStore(t), Verification: verifiedHistory("shape")})
 
-	resp, err := http.Post(api.URL+"/readyz", "", nil)
+	post, err := http.NewRequestWithContext(context.Background(), http.MethodPost, api.URL+"/readyz", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(post)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +352,11 @@ func TestReadyzAcceptsGETAndHEADOnly(t *testing.T) {
 		t.Errorf("POST status = %d, want 405", resp.StatusCode)
 	}
 
-	head, err := http.Head(api.URL + "/readyz")
+	headReq, err := http.NewRequestWithContext(context.Background(), http.MethodHead, api.URL+"/readyz", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := http.DefaultClient.Do(headReq)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -448,7 +448,7 @@ func TestNilStoreBehavesAsBefore(t *testing.T) {
 func TestLiveMeasurementIsMarkedLive(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
 
-	resp, err := http.Get(srv.URL + "/api/corridor?to=NGNC&sizes=100")
+	resp, err := httpGet(srv.URL + "/api/corridor?to=NGNC&sizes=100")
 	if err != nil {
 		t.Fatal(err)
 	}

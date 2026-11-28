@@ -28,7 +28,7 @@ import (
 // catch it.
 func jsonBody(t *testing.T, url string) []byte {
 	t.Helper()
-	resp, err := http.Get(url)
+	resp, err := httpGet(url)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -136,7 +136,7 @@ func TestAssetsJSONContentType(t *testing.T) {
 // client can rely on one decoder for the whole endpoint.
 func TestErrorResponseContentType(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
-	resp, err := http.Get(srv.URL + "/api/corridor?to=SCAMC")
+	resp, err := httpGet(srv.URL + "/api/corridor?to=SCAMC")
 	if err != nil {
 		t.Fatalf("GET corridor (unknown asset): %v", err)
 	}
@@ -156,7 +156,7 @@ func TestErrorResponseContentType(t *testing.T) {
 // nothing that could be mistaken for a measurement.
 func TestErrorResponseShape(t *testing.T) {
 	srv := testServer(t, liveNGNCPaths, "1500")
-	resp, err := http.Get(srv.URL + "/api/corridor?to=SCAMC")
+	resp, err := httpGet(srv.URL + "/api/corridor?to=SCAMC")
 	if err != nil {
 		t.Fatalf("GET corridor (unknown asset): %v", err)
 	}

@@ -88,7 +88,7 @@ func emptyStore(t *testing.T) runstore.Store {
 
 func getRaw(t *testing.T, url string) (int, map[string]any, error) {
 	t.Helper()
-	resp, err := http.Get(url)
+	resp, err := httpGet(url)
 	if err != nil {
 		return 0, nil, err
 	}

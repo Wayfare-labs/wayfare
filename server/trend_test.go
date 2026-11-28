@@ -852,7 +852,7 @@ func TestTrendMoneyCrossesTheWireAsStrings(t *testing.T) {
 		loss: "25.00", verdict: "UNUSABLE",
 	}}))
 
-	resp, err := http.Get(srv.URL + "/api/corridor/trend?to=NGNC")
+	resp, err := httpGet(srv.URL + "/api/corridor/trend?to=NGNC")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -896,7 +896,12 @@ func TestTrendMoneyCrossesTheWireAsStrings(t *testing.T) {
 // TestTrendRejectsOtherMethods pins that the endpoint is a read.
 func TestTrendRejectsOtherMethods(t *testing.T) {
 	srv := trendServer(t, nil)
-	resp, err := http.Post(srv.URL+"/api/corridor/trend?to=NGNC", "application/json", nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+"/api/corridor/trend?to=NGNC", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -990,7 +995,7 @@ func TestTrendShowsCorrectedRecordsWithBothValues(t *testing.T) {
 	}
 
 	api := trendServer(t, st)
-	resp, err := http.Get(api.URL + "/api/corridor/trend?to=NGNC")
+	resp, err := httpGet(api.URL + "/api/corridor/trend?to=NGNC")
 	if err != nil {
 		t.Fatalf("GET /api/corridor/trend: %v", err)
 	}

@@ -15,6 +15,7 @@ package server
 // pass.
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -30,7 +31,7 @@ const browserOrigin = "https://consumer.example"
 // pageRequest fetches a URL with an optional method and headers.
 func pageRequest(t *testing.T, method, url string, headers map[string]string) (int, http.Header, []byte) {
 	t.Helper()
-	req, err := http.NewRequest(method, url, nil)
+	req, err := http.NewRequestWithContext(context.Background(), method, url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

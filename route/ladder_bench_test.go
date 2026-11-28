@@ -110,7 +110,7 @@ func BenchmarkLadderReplayOnly(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, u := range urls {
-			req, err := http.NewRequest(http.MethodGet, u, nil)
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
 			if err != nil {
 				b.Fatalf("building %s: %v", u, err)
 			}

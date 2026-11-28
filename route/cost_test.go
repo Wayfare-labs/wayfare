@@ -834,7 +834,7 @@ func TestReconcileComponents_MismatchError(t *testing.T) {
 	tolerance := decimal.NewFromFloat(0.001)
 
 	err := ReconcileComponents(total, comps, undetermined, tolerance)
-	if err != ErrComponentSumMismatch {
+	if !errors.Is(err, ErrComponentSumMismatch) {
 		t.Fatalf(
 			"expected ErrComponentSumMismatch, got %v",
 			err,

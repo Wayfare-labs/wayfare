@@ -103,7 +103,7 @@ func TestChainHeadsRejectsUnsupportedMethodAndUnknownParameters(t *testing.T) {
 		{method: http.MethodPost, path: "/api/chain-heads", want: http.StatusMethodNotAllowed},
 		{method: http.MethodGet, path: "/api/chain-heads?unknown=1", want: http.StatusBadRequest},
 	} {
-		req, err := http.NewRequest(tc.method, api.URL+tc.path, nil)
+		req, err := http.NewRequestWithContext(context.Background(), tc.method, api.URL+tc.path, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -132,7 +132,7 @@ func TestChainHeadsResponseCanBeDecodedByConsumers(t *testing.T) {
 
 	api := httptest.NewServer((&Server{Store: store}).Handler())
 	t.Cleanup(api.Close)
-	resp, err := http.Get(api.URL + "/api/chain-heads?pretty=1")
+	resp, err := httpGet(api.URL + "/api/chain-heads?pretty=1")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -325,7 +325,11 @@ func targetCorridors(targets []e2eTarget) []monitor.Corridor {
 
 func getJSONDoc(t *testing.T, url string, dst any) {
 	t.Helper()
-	resp, err := http.Get(url)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
