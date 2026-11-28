@@ -4,6 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Wayfare-labs/wayfare/asset"
+	"github.com/Wayfare-labs/wayfare/dex"
+	"github.com/Wayfare-labs/wayfare/refrate"
+	"github.com/Wayfare-labs/wayfare/route"
+	"github.com/Wayfare-labs/wayfare/runstore"
+	"github.com/Wayfare-labs/wayfare/snapshot"
+	"github.com/shopspring/decimal"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,15 +18,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/shopspring/decimal"
-
-	"github.com/Wayfare-labs/wayfare/asset"
-	"github.com/Wayfare-labs/wayfare/dex"
-	"github.com/Wayfare-labs/wayfare/refrate"
-	"github.com/Wayfare-labs/wayfare/route"
-	"github.com/Wayfare-labs/wayfare/runstore"
-	"github.com/Wayfare-labs/wayfare/snapshot"
 )
 
 // failHandler wraps a snapshot replayer and returns HTTP 500 for requests
@@ -709,6 +707,42 @@ func TestRestartAfterCrashMidSweep(t *testing.T) {
 		}
 		if err := reopened.Verify(context.Background(), key); err != nil {
 			t.Errorf("chain for %s does not verify after restart: %v", key, err)
+		}
+	}
+}
+func TestSweepCorridors_BoundedAndIsolated(t *testing.T) {
+	ctx := context.Background()
+	corridors := []Corridor{
+		{Send: asset.Asset{Code: "USDC"}, Receive: asset.Asset{Code: "NGNC"}},
+		{Send: asset.Asset{Code: "USDC"}, Receive: asset.Asset{Code: "GHSC"}},
+		{Send: asset.Asset{Code: "USDC"}, Receive: asset.Asset{Code: "KESC"}},
+	}
+
+	measure := func(ctx context.Context, c Corridor) error {
+		time.Sleep(10 * time.Millisecond)
+		if c.Receive.Code == "GHSC" {
+			return errors.New("ghsc failed")
+		}
+		return nil
+	}
+
+	results := SweepCorridors(ctx, corridors, 2, measure)
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+
+	for _, r := range results {
+		if r.Duration <= 0 {
+			t.Errorf("expected non-zero duration for corridor %s", r.Corridor.Receive)
+		}
+		if r.Corridor.Receive.Code == "GHSC" {
+			if r.Err == nil {
+				t.Errorf("expected error for GHSC corridor isolation, got nil")
+			}
+		} else {
+			if r.Err != nil {
+				t.Errorf("expected no error for corridor %s, got %v", r.Corridor.Receive, r.Err)
+			}
 		}
 	}
 }
